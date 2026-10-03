@@ -676,6 +676,15 @@ async fn main() -> anyhow::Result<()> {
         }
     });
 
+    // Fork-local one-shot repair for hides left sticky by older relays, plus
+    // failed snapshot publications. Startup never waits for this worker.
+    tokio::spawn({
+        let state = Arc::clone(&state);
+        async move {
+            buzz_relay::handlers::dm_visibility::reconcile_dm_visibility(&state).await;
+        }
+    });
+
     // Ephemeral channel reaper — archives channels whose TTL deadline has passed.
     // Runs every 60s, matching the workflow cron loop pattern. The SQL UPDATE
     // uses `archived_at IS NULL` as a guard, so concurrent runs from multiple

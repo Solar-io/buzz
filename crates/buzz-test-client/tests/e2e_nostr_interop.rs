@@ -24,6 +24,9 @@ use std::time::Duration;
 use buzz_test_client::{BuzzTestClient, RelayMessage, TestClientError};
 use nostr::{Alphabet, EventBuilder, Filter, Keys, Kind, SingleLetterTag, Tag};
 
+#[path = "e2e_nostr_interop/dm_resurface.rs"]
+mod dm_resurface;
+
 fn relay_url() -> String {
     std::env::var("RELAY_URL").unwrap_or_else(|_| "ws://localhost:3000".to_string())
 }

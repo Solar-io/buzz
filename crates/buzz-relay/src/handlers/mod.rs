@@ -10,6 +10,8 @@ pub mod command_executor;
 pub mod community_provisioning;
 /// NIP-45 COUNT handler.
 pub mod count;
+/// Message-driven DM visibility and startup repair.
+pub mod dm_visibility;
 /// EVENT handler — WS dispatcher → ingest pipeline → fan-out.
 pub mod event;
 /// NIP-IA identity archive request handler (kinds 9035–9036).

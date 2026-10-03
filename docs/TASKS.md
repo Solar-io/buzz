@@ -207,3 +207,7 @@ Evidence: [W9b2 current-main composition](TEST_REPORTS/parity-w9b2.md#w9b2-compo
 - [ ] Huddle archive discovery full-suite gate: unchanged `api::mesh_demo::tests::demo_join_forwarded_arm_round_trips_echo` returns 504 instead of 200 before and after this change; no approval to waive the gate.
 
 - [x] Huddle archive isolated runtime QA: HTTP readiness with correlated logs; Agent Brave parent-message golden path; real audio grace fire and signed archived metadata readback; owned-fixture cleanup. Sidebar transition/desktop acceptance is not established by this check.
+- [x] DM resurface: accepted kind-9/40002 messages clear other active DM members' hides and publish NIP-DV asynchronously; exclude duplicates and non-message/stream events.
+- [x] DM resurface: bounded, tenant-scoped startup backfill for messages newer than hidden_at; idempotence and snapshot-publication retries.
+- [x] DM resurface: isolated Postgres regressions, NIP-DV relay E2E, before/after crate counts and named mutation failures.
+- [x] DM resurface: fork manifest, NIP-DV extension, committed coding handoff and exact deployment command.
