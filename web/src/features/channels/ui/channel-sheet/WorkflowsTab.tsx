@@ -33,9 +33,11 @@ export function WorkflowsTab({ channelId, writable, onBusyChange }: Props) {
   );
   const runs = useLatestRuns(
     connected ? visible.map((workflow) => workflow.id) : [],
+    { poll: true },
   );
   const [viewer, setViewer] = useState<string | null>(null);
   const [editor, setEditor] = useState<WorkflowSummary | "new" | null>(null);
+  const [draftId, setDraftId] = useState<string>();
   const [receipt, setReceipt] = useState<string | null>(null);
   const enabled = writable && canSign && connected && viewer !== null;
   useEffect(() => {
@@ -62,7 +64,7 @@ export function WorkflowsTab({ channelId, writable, onBusyChange }: Props) {
           onSave={async (yaml) => {
             const existing = editor === "new" ? undefined : editor;
             const event = await signNostrEvent(
-              workflowEventTemplate(channelId, yaml, existing),
+              workflowEventTemplate(channelId, yaml, existing, draftId),
             );
             const result = await session.publish(event);
             if (!result.ok) throw new Error(result.message);
@@ -83,6 +85,7 @@ export function WorkflowsTab({ channelId, writable, onBusyChange }: Props) {
           disabled={!enabled}
           onClick={() => {
             setReceipt(null);
+            setDraftId(crypto.randomUUID());
             setEditor("new");
           }}
         >

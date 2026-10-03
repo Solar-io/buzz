@@ -48,6 +48,7 @@ export function workflowEventTemplate(
   channelId: string,
   yaml: string,
   existing?: WorkflowSummary,
+  draftId?: string,
 ): Omit<UnsignedNostrEvent, "created_at"> {
   const error = workflowYamlError(yaml);
   if (error !== null) throw new Error(error);
@@ -55,7 +56,7 @@ export function workflowEventTemplate(
     throw new Error("This workflow belongs to another channel.");
   }
   const tags = [
-    ["d", existing?.id ?? crypto.randomUUID()],
+    ["d", existing?.id ?? draftId ?? crypto.randomUUID()],
     ["h", channelId],
   ];
   if (existing !== undefined)

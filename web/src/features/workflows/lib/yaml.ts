@@ -446,7 +446,7 @@ function parseMapping(reader: Reader, indent: number): YamlValue {
     }
     const rest = line.content.slice(separator + 1).trim();
     const rawIndex = line.number - 1;
-    if (Object.hasOwn(map, String(key))) {
+    if (Object.getOwnPropertyDescriptor(map, String(key)) !== undefined) {
       throw new YamlError(`duplicate key on line ${line.number}: ${key}`);
     }
     reader.index += 1;
