@@ -123,6 +123,48 @@
 .buzz-content-scrollbar {
   container: shell-row / inline-size;
 }
+
+/* A wide viewport can still have narrow messages beside Canvas or inside an
+   indented thread. Keep quick reactions in priority order as the row shrinks;
+   Add reaction and More actions stay reachable. rem thresholds scale with the
+   buttons. Wrapping is the last resort for exceptionally narrow rows. */
+.buzz-message-row {
+  container: message-row / inline-size;
+}
+.buzz-message-actions {
+  max-width: calc(100% - 1.25rem);
+}
+@container message-row (width < 24rem) {
+  .buzz-quick-reactions > button:nth-child(n + 5) {
+    display: none;
+  }
+}
+@container message-row (width < 22rem) {
+  .buzz-quick-reactions > button:nth-child(n + 4) {
+    display: none;
+  }
+}
+@container message-row (width < 20rem) {
+  .buzz-quick-reactions > button:nth-child(n + 3) {
+    display: none;
+  }
+}
+@container message-row (width < 18rem) {
+  .buzz-quick-reactions > button:nth-child(n + 2) {
+    display: none;
+  }
+}
+@container message-row (width < 16rem) {
+  .buzz-message-feedback-label {
+    display: none;
+  }
+}
+@container message-row (width < 14rem) {
+  .buzz-quick-reactions,
+  .buzz-quick-reactions-divider {
+    display: none;
+  }
+}
 @media (min-width: 64rem) {
   .buzz-content-scrollbar:has(.buzz-right-dock) > main {
     min-width: min(100%, 400px);

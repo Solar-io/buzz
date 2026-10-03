@@ -5,8 +5,10 @@ import { channelPath, mainComposer, openShell } from "./helpers/shellPage";
 
 const ROOT = hexId(90001);
 const NEXT = hexId(90003);
+const GROUPED = hexId(90005);
 
 async function openConversation(page: Page, theme: string, sidebar = 260) {
+  let channelId = "";
   await page.addInitScript(
     ({ sidebar }) => {
       localStorage.setItem("buzz.sidebar-width.v1", String(sidebar));
@@ -15,11 +17,20 @@ async function openConversation(page: Page, theme: string, sidebar = 260) {
     },
     { sidebar },
   );
-  await openShell(page, {
+  const session = await openShell(page, {
     theme,
     path: channelPath(),
+    relay: {
+      onPublish: (event, relay) => {
+        if (event.kind === 7) {
+          // The real relay derives reaction scope from the target event.
+          relay.push({ ...event, tags: [...event.tags, ["h", channelId]] });
+        }
+      },
+    },
     extra: (fixture) => {
       const channel = fixture.channels["flight-path"];
+      channelId = channel;
       fixture.events = fixture.events.filter((event) => event.kind !== 9);
       const now = Math.floor(Date.now() / 1000) - 100;
       return [
@@ -52,6 +63,14 @@ async function openConversation(page: Page, theme: string, sidebar = 260) {
           content: "Hover this neighbouring message to show its actions.",
         }),
         mockEvent({
+          id: GROUPED,
+          kind: 9,
+          pubkey: fixture.agents.gilfoyle.pubkey,
+          created_at: now + 21,
+          tags: [["h", channel]],
+          content: "Grouped row.",
+        }),
+        mockEvent({
           id: hexId(90004),
           kind: 40100,
           pubkey: fixture.viewer,
@@ -67,6 +86,7 @@ async function openConversation(page: Page, theme: string, sidebar = 260) {
     "aria-expanded",
     "true",
   );
+  return session;
 }
 
 async function openCanvas(page: Page) {
@@ -89,6 +109,120 @@ async function noOverflow(page: Page) {
 }
 
 for (const theme of ["buzz", "buzz-dark"]) {
+  test(`Neighbour toolbar stays inside conversation width and reacts at 1054 ${theme}`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 1054, height: 900 });
+    const { fixture, relay } = await openConversation(page, theme);
+    await openCanvas(page);
+    const main = page.locator(".buzz-content-scrollbar > main");
+    await expect
+      .poll(async () => (await main.boundingBox())?.width ?? 0)
+      .toBe(400);
+    const neighbour = page.getByTestId(`message-row-${NEXT}`);
+    await neighbour.hover();
+    const toolbar = page.getByTestId(`message-action-bar-${NEXT}`);
+    await expect(toolbar).toHaveCSS("opacity", "1");
+    const chat = await main.boundingBox();
+    expect(chat).not.toBeNull();
+    const buttons = toolbar.getByRole("button").filter({ visible: true });
+    expect(await buttons.count()).toBeGreaterThan(0);
+    for (const button of await buttons.all()) {
+      const bounds = await button.boundingBox();
+      const label = await button.getAttribute("aria-label");
+      expect(bounds, label ?? "toolbar button").not.toBeNull();
+      if (!chat || !bounds) throw new Error("Missing painted toolbar bounds");
+      expect(bounds.x, label ?? "left edge").toBeGreaterThanOrEqual(chat.x);
+      expect(
+        bounds.x + bounds.width,
+        label ?? "right edge",
+      ).toBeLessThanOrEqual(chat.x + chat.width);
+      expect(
+        await button.evaluate((element) => {
+          const rect = element.getBoundingClientRect();
+          return element.contains(
+            document.elementFromPoint(
+              rect.x + rect.width / 2,
+              rect.y + rect.height / 2,
+            ),
+          );
+        }),
+        `${label} receives pointer input`,
+      ).toBe(true);
+    }
+    await expect(
+      toolbar.getByRole("button", { name: "More actions", exact: true }),
+    ).toBeVisible();
+    await expect(
+      toolbar
+        .locator('[data-testid^="quick-react-"]')
+        .filter({ visible: true }),
+    ).toHaveCount(1);
+    const quick = toolbar.getByRole("button", {
+      name: "React with 👍",
+      exact: true,
+    });
+    await expect(quick).toBeVisible();
+    await quick.click();
+    await expect
+      .poll(() => relay.published.filter((event) => event.kind === 7))
+      .toHaveLength(1);
+    const reaction = relay.published.find((event) => event.kind === 7);
+    expect(reaction?.content).toBe("👍");
+    expect(reaction?.pubkey).toBe(fixture.viewer);
+    expect(reaction?.tags).toContainEqual(["e", NEXT]);
+    await expect(
+      neighbour.getByRole("button", {
+        name: "Remove your 👍 reaction",
+        exact: true,
+      }),
+    ).toHaveAttribute("aria-pressed", "true");
+  });
+
+  test(`Neighbour toolbar adapts to conversation width and fits compact rows ${theme}`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 1054, height: 900 });
+    await openConversation(page, theme);
+    await openCanvas(page);
+    const row = page.getByTestId(`message-row-${GROUPED}`);
+    const toolbar = page.getByTestId(`message-action-bar-${GROUPED}`);
+    // Fixed counts pin priority: narrow Canvas retains 👍; widening restores
+    // the next quick reactions rather than shrinking the click targets.
+    for (const [width, count] of [
+      [1054, 1],
+      [1280, 1],
+      [1320, 2],
+      [1360, 3],
+      [1400, 4],
+      [1440, 5],
+    ]) {
+      await page.setViewportSize({ width, height: 900 });
+      await row.hover();
+      await expect(toolbar).toHaveCSS("opacity", "1");
+      await expect(
+        toolbar
+          .locator('[data-testid^="quick-react-"]')
+          .filter({ visible: true }),
+      ).toHaveCount(count);
+      const rowBounds = await row.boundingBox();
+      const barBounds = await toolbar.boundingBox();
+      expect(rowBounds && barBounds).toBeTruthy();
+      if (!rowBounds || !barBounds)
+        throw new Error("Missing compact row bounds");
+      expect(rowBounds.height).toBe(32);
+      expect(barBounds.height).toBe(32);
+      expect(barBounds.x).toBeGreaterThanOrEqual(rowBounds.x);
+      expect(barBounds.x + barBounds.width).toBeLessThanOrEqual(
+        rowBounds.x + rowBounds.width,
+      );
+      expect(barBounds.y).toBeGreaterThanOrEqual(rowBounds.y);
+      expect(barBounds.y + barBounds.height).toBeLessThanOrEqual(
+        rowBounds.y + rowBounds.height,
+      );
+    }
+  });
+
   for (const width of [1440, 1280, 1054, 900]) {
     test(`Canvas preserves conversation width at ${width} ${theme}`, async ({
       page,
