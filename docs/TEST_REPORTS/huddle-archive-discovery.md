@@ -41,8 +41,9 @@ removes that failure. The requested full-suite pass is **not achieved**, and no
 waiver or deferral was approved. These unrelated source paths were not edited.
 
 The full command stops on the library failure, so binary tests were run explicitly.
-Client UI/E2E testing was outside this relay-only test handoff; no live UI behavior
-is claimed. Actual check output is collected in `logs/verification.log`.
+An isolated running relay and Agent Brave golden path were exercised after the QA
+check. Runtime evidence and the sidebar acceptance boundary are below. Actual
+check output is collected in `logs/verification.log`.
 
 ## Mutation proof
 
@@ -71,3 +72,53 @@ Reproduce the Postgres suite:
 DATABASE_URL=postgres://buzz:buzz_dev@localhost:5432/buzz \
   cargo test -p buzz-relay --lib audio::transcript_tests -- --ignored --test-threads=1
 ```
+
+## Isolated runtime QA
+
+Built this worktree's relay (`cargo build -p buzz-relay`) and web bundle
+(`pnpm install --frozen-lockfile`, `pnpm build`), then ran the built relay on
+loopback ports 5410/5411/5412 and a disposable Redis container on 5413. These
+ports came from the registry's reserved testing block. A fresh database,
+`huddle_archive_qa_20261003_125102`, was created only on the designated
+`buzz-postgres` test server; the live DB was not accessed. This was a temporary
+foreground test process, with no service or deployment changes.
+
+HTTP: `http://127.0.0.1:5410/_readiness` returned **200**, body
+`{"status":"ready"}`. The request ran between 18:23:04.583839Z and
+18:23:04.607246Z. The relay logged GET processing at 18:23:04.595177Z and
+completion at 18:23:04.606834Z, status 200, latency 11 ms. Raw headers/body and
+correlated logs are in `logs/huddle-archive-http-readiness.log`,
+`logs/huddle-archive-http-receipt.json` and
+`logs/huddle-archive-request-logs.json`.
+
+Agent Brave URL:
+`http://127.0.0.1:5410/repos?c=1a58dd26-6cda-435a-9ee0-8f05d55c525d`.
+Clicked manual sign-in with a generated test identity, selected **QA parent**,
+entered **QA golden path: real relay message**, and pressed Enter. The message
+rendered and its persisted kind:9 was read back through the running relay. The
+accessibility snapshot showed the parent channel, both messages and the composer.
+The inspected screenshot is `.scratch/huddle-archive-live/parent-golden.png`.
+There were zero page exceptions. Console errors included the test origin's CSP
+refusal of the optional external host-stats service; this is not a clean-console
+claim.
+
+A real audio WebSocket authenticated, joined the fixture huddle and disconnected.
+The relay logged the 30 s grace firing at **18:21:37.745748Z** and archive at
+**18:21:37.748083Z**. `POST http://127.0.0.1:5410/query` returned **200** and a
+new kind:39000 event, id
+`961c05b571eda87db726071264d81665af4b05433a6b15c2463909430fee5a8e`,
+with `["archived","true"]`; its relay signature verified. The parent still held
+exactly two kind:9 messages (seed plus browser send), with no end-of-call chat
+noise. Raw before/join/after responses are in
+`logs/huddle-archive-live-end-call.log`.
+
+The web sidebar omitted the ended room, but it had already hidden that transport
+room under its existing TTL rule. An attempt to give the isolated fixture a
+listed lifetime and observe it live timed out. Therefore its post-end absence
+is **not** proof of live sidebar disappearance. Desktop/physical-client acceptance
+remains unmeasured. The verified runtime mechanism is the grace-fire metadata
+refresh, and the verified UI golden path is parent-channel messaging.
+
+Cleanup: closed the owned Brave tab, sent SIGTERM only to the verified worktree
+relay PID 77519, stopped/removed the owned disposable Redis container, and dropped
+only the fresh QA database. The original full-suite baseline blocker is unchanged.

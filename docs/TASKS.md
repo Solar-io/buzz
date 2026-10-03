@@ -201,3 +201,5 @@ Evidence: [W9b2 current-main composition](TEST_REPORTS/parity-w9b2.md#w9b2-compo
 - [x] Huddle archive discovery: bounded, tenant-scoped, fail-open startup repair; prove selector, batching and idempotence.
 - [x] Huddle archive discovery: mutation proof, relay baseline/final counts, strict Clippy and committed handoff. Evidence: [report](TEST_REPORTS/huddle-archive-discovery.md).
 - [ ] Huddle archive discovery full-suite gate: unchanged `api::mesh_demo::tests::demo_join_forwarded_arm_round_trips_echo` returns 504 instead of 200 before and after this change; no approval to waive the gate.
+
+- [x] Huddle archive isolated runtime QA: HTTP readiness with correlated logs; Agent Brave parent-message golden path; real audio grace fire and signed archived metadata readback; owned-fixture cleanup. Sidebar transition/desktop acceptance is not established by this check.
