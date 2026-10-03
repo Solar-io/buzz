@@ -9,7 +9,7 @@ import {
 test("the static mirror is pinned exactly (updating it is deliberate)", () => {
   assert.deepEqual(MODEL_SUGGESTIONS_BY_PROVIDER, {
     anthropic: ["claude-opus-4-6", "claude-opus-4-5"],
-    openai: ["gpt-5.5", "gpt-5.4", "gpt-5.4-mini"],
+    openai: ["gpt-6.1-sol", "gpt-6-sol", "gpt-6-luna", "gpt-6-astra"],
     zai: ["glm-5.3", "glm-5.3-flash"],
   });
 });
@@ -17,9 +17,10 @@ test("the static mirror is pinned exactly (updating it is deliberate)", () => {
 test("known provider merges mirror entries with registry models, sorted + deduped", () => {
   assert.deepEqual(modelSuggestions("openai", ["glm-5.3"]), [
     "glm-5.3",
-    "gpt-5.4",
-    "gpt-5.4-mini",
-    "gpt-5.5",
+    "gpt-6-astra",
+    "gpt-6-luna",
+    "gpt-6-sol",
+    "gpt-6.1-sol",
   ]);
   // Registry model that also sits in the mirror must not duplicate.
   assert.deepEqual(modelSuggestions("zai", ["glm-5.3"]), [
@@ -38,9 +39,10 @@ test("unknown/custom provider falls back to the union including registry models"
     "claude-opus-4-6",
     "glm-5.3",
     "glm-5.3-flash",
-    "gpt-5.4",
-    "gpt-5.4-mini",
-    "gpt-5.5",
+    "gpt-6-astra",
+    "gpt-6-luna",
+    "gpt-6-sol",
+    "gpt-6.1-sol",
   ]);
 });
 
@@ -50,9 +52,10 @@ test("empty provider string is unknown, not a provider named ''", () => {
     "claude-opus-4-6",
     "glm-5.3",
     "glm-5.3-flash",
-    "gpt-5.4",
-    "gpt-5.4-mini",
-    "gpt-5.5",
+    "gpt-6-astra",
+    "gpt-6-luna",
+    "gpt-6-sol",
+    "gpt-6.1-sol",
     "solo-model",
   ]);
 });

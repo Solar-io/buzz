@@ -113,6 +113,8 @@ function engineName(engine: AgentVoiceSelection["engine"]): string {
   switch (engine) {
     case "chatterbox":
       return "Chatterbox";
+    case "fish":
+      return "Fish Audio";
     case "eleven":
       return "ElevenLabs";
     case "pocket":

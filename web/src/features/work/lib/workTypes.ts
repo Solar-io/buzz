@@ -77,9 +77,17 @@ export type RunRowState = "live" | "stalled" | "lost" | "reacting";
  * Where a running row's lifecycle came from: the owner's observer frames, a
  * member-readable 30624 status head (Phase 8), or an agent's 💬 reaction.
  */
-export type RunSource = "observer" | "status" | "reaction";
+export type RunSource = "observer" | "status" | "reaction" | "job";
+
+/** Label metadata shared by Running, Done and the conversation strip. */
+export interface JobLabel {
+  id: string;
+  role: string;
+  engine: string | null;
+}
 
 export interface RunRow {
+  job?: JobLabel | null;
   /** `turn:<agent>:<turnId>` for both lifecycle sources, so they converge. */
   key: string;
   agentPubkey: string;
@@ -114,6 +122,7 @@ export interface QueuedRow {
 }
 
 export interface DoneLast {
+  job?: JobLabel | null;
   agentPubkey: string;
   channelId: string | null;
   at: number;

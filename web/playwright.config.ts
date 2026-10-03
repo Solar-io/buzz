@@ -40,6 +40,7 @@ export default defineConfig({
         "**/shell-views.spec.ts",
         "**/settings.spec.ts",
         "**/settings-w6.spec.ts",
+        "**/settings-w9a.spec.ts",
         "**/parity-surfaces.spec.ts",
         "**/forum.spec.ts",
         "**/new-channel.spec.ts",
@@ -56,6 +57,8 @@ export default defineConfig({
         "**/shelf.spec.ts",
         "**/favorites-sync.spec.ts",
         "**/channel-sheet.spec.ts",
+        "**/canvas-edit.spec.ts",
+        "**/channel-members.spec.ts",
       ],
       use: {
         ...devices["Desktop Chrome"],

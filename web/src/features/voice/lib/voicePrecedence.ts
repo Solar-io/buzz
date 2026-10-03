@@ -27,7 +27,7 @@ export interface EffectiveVoice {
 
 /** A per-channel override row, shape-compatible with `HuddleVoiceOverride`. */
 export interface ChannelVoiceOverride {
-  engine: "pocket" | "chatterbox" | "eleven";
+  engine: "pocket" | "chatterbox" | "eleven" | "fish";
   key: string;
 }
 

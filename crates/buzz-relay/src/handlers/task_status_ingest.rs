@@ -39,4 +39,32 @@ mod tests {
             _ => panic!("expected a rejection"),
         }
     }
+    fn job(id: &str) -> Event {
+        let ch = "0f5c1e8a-2b3d-4c5e-8f60-718293a4b5c6";
+        EventBuilder::new(Kind::Custom(30624), "")
+            .tags([
+                Tag::parse(["d", &format!("job:{ch}:{id}")]).unwrap(),
+                Tag::parse(["h", ch]).unwrap(),
+                Tag::parse(["role", "coder"]).unwrap(),
+                Tag::parse(["state", "running"]).unwrap(),
+                Tag::parse(["started", "1000"]).unwrap(),
+            ])
+            .sign_with_keys(&Keys::generate())
+            .unwrap()
+    }
+
+    #[test]
+    fn accepts_job_head() {
+        assert!(validate(&job("j1")).is_ok());
+    }
+
+    #[test]
+    fn job_rejection_is_prefixed() {
+        match validate(&job("bad id")) {
+            Err(IngestError::Rejected(msg)) => {
+                assert!(msg.starts_with("invalid: task-status: "), "{msg}")
+            }
+            _ => panic!("expected job rejection"),
+        }
+    }
 }

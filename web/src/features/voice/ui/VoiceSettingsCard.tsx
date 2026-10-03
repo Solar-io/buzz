@@ -3,12 +3,13 @@ import { useMemo, useState } from "react";
 import { useRelaySession } from "@/shared/api/RelaySessionProvider";
 import { Button } from "@/shared/ui/button";
 
-import { useAgentVoiceSelections } from "../hooks.ts";
+import { useAgentVoiceSelections, useBridgeVoices } from "../hooks.ts";
 import { publishAgentVoiceSelection } from "../lib/agentVoiceApi.ts";
 import type {
   AgentVoiceSelection,
   AgentVoiceSelectionRow,
 } from "../lib/agentVoiceSelection.ts";
+import { isOutsideLibrary } from "../lib/voiceLibraryModel.ts";
 import { VoicePickerDialog } from "./VoicePickerDialog.tsx";
 
 function describeSelection(selection: AgentVoiceSelection | undefined): string {
@@ -20,6 +21,9 @@ function describeSelection(selection: AgentVoiceSelection | undefined): string {
   }
   if (selection.engine === "chatterbox") {
     return `Chatterbox voice ${selection.key}`;
+  }
+  if (selection.engine === "fish") {
+    return `Fish Audio voice ${selection.key}`;
   }
   if (selection.engine === "eleven") {
     return `ElevenLabs voice ${selection.key}`;
@@ -55,6 +59,8 @@ export function VoiceSettingsCard({
 }) {
   const { session } = useRelaySession();
   const { byPubkey, agentVoiceSelectionFor } = useAgentVoiceSelections();
+  const eleven = useBridgeVoices("eleven");
+  const fish = useBridgeVoices("fish");
   const [pickerOpen, setPickerOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -66,6 +72,12 @@ export function VoiceSettingsCard({
     () => (selfPubkey ? byPubkey.get(selfPubkey.toLowerCase()) : undefined),
     [selfPubkey, byPubkey],
   );
+
+  const library = current?.engine === "fish" ? fish : eleven;
+  const missing =
+    library.ready &&
+    !library.error &&
+    isOutsideLibrary(current, library.voices);
 
   async function confirm(
     selection: AgentVoiceSelection,
@@ -109,6 +121,14 @@ export function VoiceSettingsCard({
       <p className="text-sm text-muted-foreground">
         {describeSelection(current)}
         {currentRow !== undefined ? ` — set as “${currentRow.label}”.` : ""}
+        {missing && (
+          <span
+            className="ml-2 rounded-full border border-border px-1.5 text-2xs"
+            data-testid="voice-not-in-library"
+          >
+            not in library
+          </span>
+        )}
       </p>
       {error !== null && (
         <p className="text-sm text-red-400" role="alert">
@@ -117,6 +137,7 @@ export function VoiceSettingsCard({
       )}
       <VoicePickerDialog
         current={current}
+        currentLabel={currentRow?.label}
         onConfirm={confirm}
         onOpenChange={setPickerOpen}
         open={pickerOpen}

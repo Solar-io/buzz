@@ -202,7 +202,14 @@ export function AgentsAdminPage({
             sections={rosterSections}
             teamNamesByPersona={teamBadges}
             selectedPubkey={selected?.pubkey ?? null}
-            onSelect={(pubkey) => selectMode({ kind: "agent", pubkey })}
+            onSelect={(pubkey) => {
+              if (embedded)
+                void navigate({
+                  to: "/repos/settings",
+                  search: { group: "agents", agent: pubkey },
+                });
+              else selectMode({ kind: "agent", pubkey });
+            }}
             registry={registry}
             catalogs={catalogs}
             admin={admin}

@@ -2,6 +2,8 @@ import { expect, test } from "@playwright/test";
 import * as nip44 from "nostr-tools/nip44";
 import { getPublicKey } from "nostr-tools/pure";
 
+import { codexFixture, routeCodexUsage } from "./helpers/codexFixture";
+import { installHatchMock } from "./helpers/hatchMock";
 import { hexId, mockEvent } from "./helpers/mockRelay";
 import { buildWorkFixture } from "./helpers/workFixture";
 import {
@@ -31,6 +33,185 @@ import {
 
 const REFUSAL = "invalid: root tag does not match thread ancestry";
 const channelPath = shellChannelPath();
+
+test.describe("Codex Vitals", () => {
+  test.use({ viewport: { width: 1440, height: 960 }, serviceWorkers: "block" });
+
+  test("zero weekly usage has its own sidebar line and details before crichton", async ({
+    page,
+  }) => {
+    const errors: string[] = [];
+    page.on("pageerror", (error) => errors.push(error.message));
+    await installHatchMock(page);
+    await open(page, { theme: "buzz", path: channelPath });
+    const block = page.getByTestId("vitals-block");
+    const row = block.getByTestId("vitals-codex-row");
+    await expect(row).toContainText("Codex");
+    await expect(row).toContainText("0% used");
+    await expect(row).toContainText("100% free · resets Fri");
+    await expect(row).not.toContainText("dry");
+    await expect(block).toHaveAttribute(
+      "aria-label",
+      "Vitals: Claude and Codex usage and crichton",
+    );
+    await expect(page.getByTestId("vitals-row-cpu")).toBeVisible();
+    expect(
+      await row.evaluate((el) => {
+        const next = document.querySelector('[data-testid="vitals-row-cpu"]');
+        return (
+          next !== null &&
+          !!(
+            el.compareDocumentPosition(next) & Node.DOCUMENT_POSITION_FOLLOWING
+          )
+        );
+      }),
+    ).toBe(true);
+    await block.click();
+    const panel = page.getByRole("region", { name: "Codex", exact: true });
+    await expect(panel).toBeVisible();
+    await expect(panel).toContainText("ChatGPT Pro (Codex)");
+    await expect(panel).toContainText("Weekly");
+    await expect(panel).toContainText("0% used");
+    await expect(panel).toContainText("resets Fri");
+    await expect(panel).toContainText("Short window");
+    await expect(panel).toContainText("25% used");
+    await expect(panel).toContainText("Credits · 12,345");
+    const rows = panel.getByRole("table").locator("tbody tr");
+    await expect(rows).toHaveCount(4);
+    await expect(rows.nth(0)).toContainText(
+      "TodayDirect (Codex CLI)1212K / 3.4K$0.15",
+    );
+    await expect(rows.nth(1)).toContainText(
+      "TodayRouted (OmniRoute)3434K / 5.6K—",
+    );
+    await expect(rows.nth(2)).toContainText(
+      "Last 7 daysDirect (Codex CLI)8591.2M / 34K$7.15",
+    );
+    await expect(rows.nth(3)).toContainText(
+      "Last 7 daysRouted (OmniRoute)6,7242.4M / 56K~$13.23",
+    );
+    await expect(panel).toContainText("Incomplete usage totals");
+    await shot(page, "codex-vitals-desktop");
+    expect(
+      await panel.evaluate((el) => {
+        const next = document.querySelector(
+          '[data-testid="vitals-crichton-panel"]',
+        );
+        return (
+          next !== null &&
+          !!(
+            el.compareDocumentPosition(next) & Node.DOCUMENT_POSITION_FOLLOWING
+          )
+        );
+      }),
+    ).toBe(true);
+    expect(errors).toEqual([]);
+  });
+
+  test("stale weekly usage remains visible and unlimited credits need no balance", async ({
+    page,
+  }) => {
+    await open(page, { theme: "buzz-dark", path: channelPath });
+    const data = codexFixture();
+    if (!data.weekly) throw new Error("Codex fixture needs a weekly window");
+    data.weekly = { ...data.weekly, usedFraction: 0.42, stale: true };
+    data.credits = { balance: null, unlimited: true, capturedAt: null };
+    data.short = null;
+    await routeCodexUsage(page, data);
+    await page.getByTestId("vitals-block").click();
+    await expect(page.getByTestId("vitals-codex-row")).toContainText(
+      "42% used · stale",
+    );
+    await expect(page.getByTestId("vitals-codex-row")).toContainText(
+      "58% free",
+    );
+    const panel = page.getByTestId("vitals-codex-panel");
+    await expect(panel).toContainText("42% used · stale");
+    await expect(panel).toContainText("Credits · unlimited");
+    await expect(panel).not.toContainText("Short window");
+  });
+
+  test("a 500 refresh clears the old Codex reading without clearing Claude", async ({
+    page,
+  }) => {
+    await open(page, { theme: "buzz", path: channelPath });
+    await expect(page.getByTestId("vitals-codex-row")).toContainText("0% used");
+    await routeCodexUsage(page, codexFixture(), 500);
+    await page.getByTestId("vitals-block").click();
+    await expect(page.getByTestId("vitals-codex-row")).toHaveText(
+      "Codex usage unavailable",
+    );
+    await expect(page.getByTestId("vitals-codex-panel")).toContainText(
+      "Codex usage unavailable",
+    );
+    await expect(page.getByTestId("vitals-codex-row")).not.toContainText("0%");
+    await expect(page.getByTestId("vitals-block")).toContainText("45% free");
+  });
+
+  test("null weekly quota stays unavailable while the usage breakdown remains visible", async ({
+    page,
+  }) => {
+    await open(page, { theme: "buzz", path: channelPath });
+    const data = codexFixture();
+    data.weekly = null;
+    await routeCodexUsage(page, data);
+    await page.getByTestId("vitals-block").click();
+    await expect(page.getByTestId("vitals-codex-row")).toHaveText(
+      "Codex usage unavailable",
+    );
+    const panel = page.getByTestId("vitals-codex-panel");
+    await expect(panel).toContainText("Codex usage unavailable");
+    await expect(panel.getByRole("table")).toBeVisible();
+  });
+});
+
+test.describe("Codex Vitals phone", () => {
+  test.use({
+    viewport: { width: 390, height: 844 },
+    hasTouch: true,
+    serviceWorkers: "block",
+  });
+
+  for (const theme of ["buzz", "buzz-dark"]) {
+    test(`phone strip keeps Codex with Claude beside crichton · ${theme}`, async ({
+      page,
+    }) => {
+      await installHatchMock(page);
+      await open(page, { theme, path: () => "/repos?view=work" });
+      const strip = page.getByTestId("vitals-strip");
+      await expect(strip.getByTestId("vitals-codex-strip")).toContainText(
+        "100% free",
+      );
+      await expect(strip.getByTestId("vitals-strip-gpu")).toContainText(
+        "GPU71%",
+      );
+      await expect(strip).toHaveAttribute(
+        "aria-label",
+        "Vitals: Claude and Codex usage and crichton",
+      );
+      expect(
+        await strip.evaluate(
+          (el) => getComputedStyle(el).gridTemplateColumns.split(" ").length,
+        ),
+      ).toBe(2);
+      expect(
+        await strip.evaluate((el) => el.scrollWidth <= el.clientWidth),
+      ).toBe(true);
+      await shot(page, `codex-vitals-strip-${theme}`);
+      await strip.click();
+      const panel = page.getByTestId("vitals-codex-panel");
+      await expect(panel).toBeVisible();
+      await expect(panel).toContainText("0% used");
+      await expect(panel.getByRole("table").locator("tbody tr")).toHaveCount(4);
+      expect(
+        await page.evaluate(
+          () => document.documentElement.scrollWidth <= window.innerWidth,
+        ),
+      ).toBe(true);
+      await shot(page, `codex-vitals-popout-${theme}`);
+    });
+  }
+});
 
 for (const theme of ["buzz", "buzz-dark"] as const) {
   test.describe(`desktop 1440 · ${theme}`, () => {
@@ -107,11 +288,13 @@ for (const theme of ["buzz", "buzz-dark"] as const) {
 
       // Vitals popover.
       await sidebar.getByTestId("vitals-block").click();
-      // The runway's 72 h calendar projection: B runs dry before its reset,
-      // A lasts (fixture in workFixture.routeUsageHub).
-      await expect(sidebar.getByTestId("vitals-block")).toContainText("B dry");
+      // The combined runway (397649842): the whole pool runs dry before A's
+      // reset, so the headline says "both" (fixture in workFixture.routeUsageHub).
+      await expect(sidebar.getByTestId("vitals-block")).toContainText(
+        "both dry",
+      );
       await expect(page.getByTestId("vitals-outlook")).toContainText(
-        "Account B runs dry around",
+        "Both run dry around",
       );
       await expect(page.getByTestId("vitals-popover")).toContainText(
         "A won't run dry — about 64% used when it resets",
@@ -569,7 +752,7 @@ for (const theme of ["buzz", "buzz-dark"] as const) {
       const vitals = rail.getByTestId("vitals-block");
       await expect(vitals).toBeVisible();
       await expect(vitals).toContainText("45% free");
-      await expect(vitals).toContainText("B dry");
+      await expect(vitals).toContainText("both dry");
       await expect(rail.getByTestId("vitals-crichton")).toHaveCount(0);
       // No profile row: Settings opens from the B, as on desktop.
       await expect(rail.locator("footer")).not.toContainText("Connected");

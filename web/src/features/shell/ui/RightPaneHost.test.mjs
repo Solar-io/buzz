@@ -39,6 +39,8 @@ globalThis.__BUZZ_TEST_REACT__ = React;
 globalThis.__CANVAS_TEST_STATE__ = { doc: null, phase: "idle" };
 
 globalThis.__BUZZ_TEST_MODULE_STUBS__ = {
+  "@/shared/api/RelaySessionProvider": `export function useRelaySession() { return { session: {}, status: 'open' }; }`,
+  "@/features/channels/hooks": `export function useChannelMembers() { return []; }`,
   "@/features/work/useWorkCounts.ts": `
     export function useWorkCounts() {
       return { needs: 2, running: 1, markers: new Map() };

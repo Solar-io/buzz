@@ -1102,3 +1102,12 @@ Three sub-traps from the same hour:
 - Lifetime is an idle timeout, not an absolute creation deadline. Ongoing
   omits `ttl`; a plain temporary channel uses the existing expiry badge,
   whereas a scratch channel additionally requires its parent marker in `about`.
+
+## Web canvas editing (earned on parity W5a, 2026-10-02)
+
+- About > Canvas must keep an explicitly selected empty canvas reachable for
+  creation and after Clear. Below the dock breakpoint it opens a document sheet.
+- Canvas Save/Clear append a regular 40100 event with an `h` tag; an empty set
+  clears. Inspect the publish verdict, preserve refused drafts, and render the
+  document from its channel-scoped live echo. Rapid writes must beat the current
+  canvas timestamp so the event-id tie breaker cannot hide a successful edit.

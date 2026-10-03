@@ -103,8 +103,15 @@ final class NativeAgentVoice: NSObject, AVAudioPlayerDelegate {
     func setCaptureAllowed(_ value: Bool) { captureAllowed = value; if !value { pcm.removeAll() } }
     func setOutputMuted(_ value: Bool) { outputMuted = value; player?.volume = value ? 0 : 1 }
     func setVoiceOverride(_ value: [String: Any]) {
-        if let engine = value["engine"] as? String, ["pocket", "chatterbox", "eleven"].contains(engine), let key = value["key"] as? String, key.hasPrefix(engine + ":") { overrideVoice = (engine, String(key.dropFirst(engine.count + 1))) }
+        if let engine = value["engine"] as? String, ["pocket", "chatterbox", "eleven", "fish"].contains(engine), let key = value["key"] as? String, key.hasPrefix(engine + ":") { overrideVoice = (engine, String(key.dropFirst(engine.count + 1))) }
         else { overrideVoice = nil }
+    }
+    /// Effective bridge route used by native playback after channel override updates.
+    func bridgeVoice(for pubkey: String) -> (engine: String, voice: String) {
+        NativeVoicePolicy.bridgeVoice(
+            pubkey: pubkey, override: overrideVoice,
+            assignment: assignments[pubkey].map { ($0.2, $0.3) },
+            selection: voices[pubkey].map { ($0.1, $0.2) })
     }
     func interruptSpeech() {
         speechGeneration += 1
@@ -325,10 +332,7 @@ final class NativeAgentVoice: NSObject, AVAudioPlayerDelegate {
         guard alive, speech, !speaking, !speechQueue.isEmpty else { return }
         let (author, text) = speechQueue.removeFirst()
         if audioPeers().contains(author) { playNext(); return }
-        let (engineName, voiceName) = NativeVoicePolicy.bridgeVoice(
-            pubkey: author, override: overrideVoice,
-            assignment: assignments[author].map { ($0.2, $0.3) },
-            selection: voices[author].map { ($0.1, $0.2) })
+        let (engineName, voiceName) = bridgeVoice(for: author)
         var request = URLRequest(url: ttsURL); request.httpMethod = "POST"; request.timeoutInterval = Double(text.utf16.count) * 0.09 + 5
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try? JSONSerialization.data(withJSONObject: ["engine": engineName, "voice": voiceName, "text": text])

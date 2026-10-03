@@ -386,12 +386,12 @@ pub enum VoicesCmd {
     },
     /// Select your own speaking voice (kind 30182, signed as you)
     ///
-    /// KEY is `chatterbox:<slug>`, `pocket:<slug>`, or `eleven:<voice id>`.
+    /// KEY is `chatterbox:<slug>`, `pocket:<slug>`, `eleven:<id>`, or `fish:<id>`.
     #[command(
-        after_help = "Examples:\n  buzz voices select chatterbox:evie\n  buzz voices select pocket:anna --label Anna"
+        after_help = "Examples:\n  buzz voices select chatterbox:evie\n  buzz voices select pocket:anna --label Anna\n  buzz voices select fish:0123456789abcdef0123456789abcdef"
     )]
     Select {
-        /// Voice key (`chatterbox:<slug>`, `pocket:<slug>`, or `eleven:<id>`)
+        /// Voice key (`chatterbox:<slug>`, `pocket:<slug>`, `eleven:<id>`, or `fish:<id>`)
         key: String,
         /// Human label (defaults to the key's slug)
         #[arg(long)]
@@ -402,13 +402,13 @@ pub enum VoicesCmd {
     /// The relay refuses the write unless you are the agent's registered owner.
     /// An owner assignment takes precedence over the agent's own selection.
     #[command(
-        after_help = "Examples:\n  buzz voices assign --agent <HEX> chatterbox:evie\n  buzz voices assign --agent <HEX> --clear"
+        after_help = "Examples:\n  buzz voices assign --agent <HEX> chatterbox:evie\n  buzz voices assign --agent <HEX> fish:0123456789abcdef0123456789abcdef\n  buzz voices assign --agent <HEX> --clear"
     )]
     Assign {
         /// Agent pubkey (64 hex)
         #[arg(long)]
         agent: String,
-        /// Voice key (`chatterbox:<slug>`, `pocket:<slug>`, or `eleven:<id>`)
+        /// Voice key (`chatterbox:<slug>`, `pocket:<slug>`, `eleven:<id>`, or `fish:<id>`)
         #[arg(required_unless_present = "clear", conflicts_with = "clear")]
         key: Option<String>,
         /// Human label (defaults to the key's slug)
@@ -977,6 +977,9 @@ pub enum CanvasCmd {
 
 #[derive(Subcommand)]
 pub enum StatusCmd {
+    /// Long background jobs; the Work rail drops jobs after 5 min without a beat
+    #[command(subcommand)]
+    Job(commands::status_job::StatusJobCmd),
     /// Set the title and/or progress of your running turn in a channel
     ///
     /// Your running/done state is published automatically by the harness;

@@ -48,6 +48,7 @@ import { KeyboardShortcutsCard } from "@/features/settings/ui/KeyboardShortcutsC
 import { useFeatureEnabled } from "@/features/settings/useFeatureFlags";
 import { AgentVoicesCard } from "@/features/voice/ui/AgentVoicesCard.tsx";
 import { VoiceSettingsCard } from "@/features/voice/ui/VoiceSettingsCard.tsx";
+import { VoiceLibraryCard } from "@/features/voice/ui/VoiceLibraryCard.tsx";
 import { useOwnPubkey } from "@/shared/lib/useOwnPubkey";
 
 import { AppearanceSection } from "./AppearanceSection";
@@ -65,6 +66,7 @@ import { useDesktopCatalogs } from "@/features/agents/useDesktopCatalogs";
 import { ownsSettingsAgents } from "@/features/agents/lib/desktopConnection";
 import { DesktopConnectionFooter } from "@/features/agents/settings/DesktopConnectionFooter";
 import { AgentsAdminPage } from "@/features/agents/ui/AgentsAdminPage";
+import { AgentScreen } from "@/features/agents/settings/agent-screen/AgentScreen";
 import { ClaudePoolsSection } from "./settings/ClaudePoolsSection";
 import { FilesSitesSection } from "@/features/webPanels/ui/FilesSitesSection";
 import { SettingsNav } from "./settings/SettingsNav";
@@ -219,26 +221,28 @@ export function SettingsPage({ group, agent, tab }: SettingsPageProps) {
 
       <div className="flex min-w-0 flex-1 flex-col">
         {/* Narrow viewports: back header plus the nav as a chip row. */}
-        <header
-          className="flex shrink-0 items-center justify-between gap-2 px-4 pt-[max(0.75rem,env(safe-area-inset-top))] md:hidden"
-          data-testid="settings-header"
-        >
-          <Button
-            className="min-h-11 min-w-11 md:min-h-8 md:min-w-0"
-            size="sm"
-            variant="ghost"
-            onClick={() => {
-              void navigate(
-                showPhoneRoot
-                  ? { to: "/repos" }
-                  : { to: "/repos/settings", search: {} },
-              );
-            }}
+        {!agent && (
+          <header
+            className="flex shrink-0 items-center justify-between gap-2 px-4 pt-[max(0.75rem,env(safe-area-inset-top))] md:hidden"
+            data-testid="settings-header"
           >
-            ← {showPhoneRoot ? "Back" : "Settings"}
-          </Button>
-          <h1 className="text-lg font-semibold">Settings</h1>
-        </header>
+            <Button
+              className="min-h-11 min-w-11 md:min-h-8 md:min-w-0"
+              size="sm"
+              variant="ghost"
+              onClick={() => {
+                void navigate(
+                  showPhoneRoot
+                    ? { to: "/repos" }
+                    : { to: "/repos/settings", search: {} },
+                );
+              }}
+            >
+              ← {showPhoneRoot ? "Back" : "Settings"}
+            </Button>
+            <h1 className="text-lg font-semibold">Settings</h1>
+          </header>
+        )}
         {showPhoneRoot ? (
           <SettingsNav
             active={active}
@@ -265,7 +269,7 @@ export function SettingsPage({ group, agent, tab }: SettingsPageProps) {
             className={`mx-auto ${active === "agents" || active === "library" ? "max-w-6xl" : "max-w-[45rem]"} px-4 py-6 pb-[max(1.5rem,env(safe-area-inset-bottom))] md:px-8`}
           >
             <div data-testid={`settings-pane-${active}`}>
-              {activeMeta ? <PaneHeading group={activeMeta} /> : null}
+              {activeMeta && !agent ? <PaneHeading group={activeMeta} /> : null}
 
               {active === "account" ? (
                 <>
@@ -286,6 +290,7 @@ export function SettingsPage({ group, agent, tab }: SettingsPageProps) {
                 <div className="space-y-4">
                   <VoiceSettingsCard selfPubkey={self} />
                   <AgentVoicesCard />
+                  <VoiceLibraryCard />
                 </div>
               ) : null}
               {active === "notifications" ? (
@@ -336,26 +341,25 @@ export function SettingsPage({ group, agent, tab }: SettingsPageProps) {
               ) : null}
               {active === "agents" ? (
                 agent ? (
-                  <section
-                    className="rounded-xl border border-border bg-card p-5"
-                    data-testid="agent-settings-placeholder"
-                  >
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      onClick={() => selectGroup("agents")}
-                    >
-                      ← All agents
-                    </Button>
-                    <h2 className="mt-3 text-lg font-semibold">
-                      {registry.find((entry) => entry.pubkey === agent)?.name ??
-                        "Agent settings"}
-                    </h2>
-                    <p className="mt-2 text-sm text-muted-foreground">
-                      The new agent screen is coming next. Use the agent list to
-                      change settings.
+                  self ? (
+                    <AgentScreen
+                      key={agent}
+                      agentPubkey={agent}
+                      tab={tab}
+                      onBack={() => selectGroup("agents")}
+                      onSelect={selectAgent}
+                      onTab={(nextTab) =>
+                        void navigate({
+                          to: "/repos/settings",
+                          search: { group: "agents", agent, tab: nextTab },
+                        })
+                      }
+                    />
+                  ) : (
+                    <p className="text-sm text-muted-foreground">
+                      Unlock your key to manage this agent.
                     </p>
-                  </section>
+                  )
                 ) : (
                   <AgentsAdminPage embedded />
                 )

@@ -6,6 +6,7 @@ import { blockVitalRows, stripGpuPercent } from "../lib/hostStats.ts";
 import { percent, vitalsSummary } from "../lib/vitalsMath.ts";
 import { refreshHostStats, useHostStats } from "../useHostStats.ts";
 import { refreshVitals, useVitals } from "../useVitals.ts";
+import { CodexRow, CodexStrip } from "./CodexVitals";
 import {
   CrichtonPanel,
   CrichtonRows,
@@ -90,8 +91,8 @@ export function VitalsBlock({
             data-testid="vitals-strip"
             aria-label={
               stripHost
-                ? "Vitals: Claude usage and crichton"
-                : "Vitals: Claude usage"
+                ? "Vitals: Claude and Codex usage and crichton"
+                : "Vitals: Claude and Codex usage"
             }
             className={cn(
               "w-full rounded-xl bg-vit px-3 py-2.5 text-left font-mono text-2xs text-foreground",
@@ -117,6 +118,7 @@ export function VitalsBlock({
                 </span>
               </span>
               {known && <span className="mt-1.5 block">{bar("h-0.75")}</span>}
+              <CodexStrip data={data.codex} />
             </span>
             {stripHost ? <CrichtonStripColumn data={stripHost} /> : null}
           </button>
@@ -126,8 +128,8 @@ export function VitalsBlock({
             data-testid="vitals-block"
             aria-label={
               blockHost
-                ? "Vitals: Claude usage and crichton"
-                : "Vitals: Claude usage"
+                ? "Vitals: Claude and Codex usage and crichton"
+                : "Vitals: Claude and Codex usage"
             }
             className="block w-full rounded-[10px] bg-vit px-2.5 pt-2.5 pb-2.75 text-left text-foreground transition-colors hover:brightness-[0.98]"
           >
@@ -160,6 +162,7 @@ export function VitalsBlock({
                 usage unavailable
               </span>
             )}
+            <CodexRow data={data.codex} />
             {blockHost ? <CrichtonRows data={blockHost} /> : null}
           </button>
         )}
@@ -169,7 +172,7 @@ export function VitalsBlock({
         align={variant === "strip" ? "center" : "end"}
         sideOffset={10}
         collisionPadding={12}
-        className="w-[min(35rem,calc(100vw-1.5rem))] overflow-hidden rounded-2xl border border-border bg-popover p-0 shadow-elev"
+        className="max-h-[calc(100dvh-1.5rem)] w-[min(35rem,calc(100vw-1.5rem))] overflow-y-auto rounded-2xl border border-border bg-popover p-0 shadow-elev"
       >
         <VitalsPanel
           data={data}
