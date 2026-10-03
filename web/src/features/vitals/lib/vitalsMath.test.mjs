@@ -1,5 +1,12 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import {
+  accountLines,
+  combinedOutlook,
+  VitalsPanel,
+} from "../ui/VitalsPopover.tsx";
 import {
   accountDryText,
   accountRowText,
@@ -277,7 +284,7 @@ function chicago(iso) {
   });
 }
 
-function pool(rows, { weekendFactor = 1.5 } = {}) {
+function pool(rows, { weekendFactor = 1.5, computedAt } = {}) {
   const p = pace(
     rows.map((row) =>
       account({
@@ -289,6 +296,7 @@ function pool(rows, { weekendFactor = 1.5 } = {}) {
       }),
     ),
   );
+  p.computedAt = computedAt ?? p.computedAt;
   const runway = parseRunway({
     v: 2,
     lookbackHours: 72,
@@ -300,8 +308,9 @@ function pool(rows, { weekendFactor = 1.5 } = {}) {
       resetsAt: row.resetsAt,
       historyHours: 72,
       burnPerHour: row.burn,
-      projectedAtReset: 0.5,
-      dryAt: null,
+      projectedAtReset:
+        row.projectedAtReset === undefined ? 0.5 : row.projectedAtReset,
+      dryAt: row.dryAt ?? null,
       status: "ok",
     })),
   });
@@ -427,6 +436,193 @@ test("combined: nothing to simulate → null", () => {
     combinedRunway(bare, null, Date.parse("2026-10-05T11:00:00.000Z")),
     null,
   );
+});
+
+const OCT3_NOW = "2026-10-03T14:21:30.000Z";
+const OCT3_ROWS = [
+  {
+    id: "A",
+    used: 0.83,
+    burn: 0.0233,
+    resetsAt: "2026-10-06T12:59:00.000Z",
+    dryAt: "2026-10-03T19:13:00.000Z",
+    projectedAtReset: null,
+  },
+  {
+    id: "B",
+    used: 0.01,
+    burn: 0.00139,
+    resetsAt: "2026-10-08T20:00:00.000Z",
+    inUse: false,
+    dryAt: null,
+    projectedAtReset: 0.21,
+  },
+];
+
+function octoberForecast(rows = OCT3_ROWS) {
+  // Run the exact wire readings through the production summary, including
+  // the hub's solo projections, which must not leak into the pool lines.
+  const { summary, runway } = pool(rows, { computedAt: OCT3_NOW });
+  return { summary, runway, combined: combinedOutlook(summary, runway) };
+}
+
+test("combined accounts: exact Oct 3 live demand preserves the headline and traces the handoff", () => {
+  const { summary, combined } = octoberForecast();
+  assert.equal(combined.kind, "dry");
+  // Hand calculation: 116% room at 3.7035% per weekend hour = 31h 19m 18s.
+  // The existing soonest-reset allocator gives A ALL pool demand: its 17%
+  // lasts 4h 35m 25s, 16m earlier than the hub's A-only 19:13Z forecast.
+  assert.ok(
+    Math.abs(Date.parse(combined.at) - Date.parse("2026-10-04T21:40:48Z")) <
+      180_000,
+  );
+  const [a, b] = combined.projections;
+  assert.equal(a.id, "A");
+  assert.equal(b.id, "B");
+  assert.ok(
+    Math.abs(Date.parse(a.dryAt) - Date.parse("2026-10-03T18:56:55Z")) < 60_000,
+  );
+  assert.equal(a.beforeReset, true);
+  assert.equal(b.beforeReset, true);
+  assert.equal(b.dryAt, combined.at);
+  assert.deepEqual(b.takeover, { account: "A", at: a.dryAt });
+  assert.deepEqual(combinedHeadline(combined, chicago), {
+    lead: "Both run dry around ",
+    strong: "Sun 4:40 PM",
+    rest: "",
+  });
+  assert.equal(combinedShort(combined, chicago), "both dry Sun 4:40 PM");
+  // Lower hot-account row must not keep the hub's different empty time.
+  assert.equal(
+    accountDryText(
+      { ...summary.accounts[0], status: "warn" },
+      chicago,
+      combined,
+    ),
+    "runs dry Sat 1:56 PM",
+  );
+});
+
+test("account lines: Oct 3 parked B takes over from A and never claims it won't run dry", () => {
+  const { summary, combined } = octoberForecast();
+  const lines = accountLines(summary.accounts, combined, chicago);
+  assert.equal(lines.length, 2);
+  assert.equal(
+    lines[0].strong + lines[0].rest,
+    "A runs dry around Sat 1:56 PM, before it resets Tue 7:59 AM.",
+  );
+  assert.equal(
+    lines[1].strong + lines[1].rest,
+    "B takes over when A runs dry (Sat 1:56 PM) and runs dry around Sun 4:40 PM, before it resets Thu 3:00 PM.",
+  );
+  assert.ok(!lines[1].strong.includes("won't run dry"));
+});
+
+test("Vitals panel: the live fixture wires its combined result to the rendered account lines", () => {
+  const { summary, runway } = octoberForecast();
+  const html = renderToStaticMarkup(
+    createElement(VitalsPanel, {
+      summary,
+      data: { runway, codex: null },
+      onClose() {},
+    }),
+  );
+  assert.ok(html.includes("Both run dry around"));
+  assert.ok(html.includes("B takes over when A runs dry"));
+  assert.ok(!html.includes("B won't run dry"));
+  assert.ok(!html.includes("about 21% used"));
+});
+
+test("account lines: surviving pool uses simulated reset percentages instead of solo projections", () => {
+  const { summary, combined } = octoberForecast(
+    OCT3_ROWS.map((row) => ({ ...row, burn: 0.0001 })),
+  );
+  assert.equal(combined.kind, "lasts");
+  // Sat 14:21:30Z to Mon 05:00Z: 38.6417 weekend hours; then 31.9833
+  // weekday hours to A's reset. 0.02%/h -> A adds 1.7989 points = 85%.
+  // After A refills, B is next to reset and takes 55.0167h of demand:
+  // 1% + 1.1003 points = 2.1003%, displayed as 2%.
+  assert.ok(
+    Math.abs(combined.projections[0].projectedAtReset - 0.8479891667) < 1e-8,
+  );
+  assert.ok(
+    Math.abs(combined.projections[1].projectedAtReset - 0.0210033333) < 1e-8,
+  );
+  assert.deepEqual(
+    combined.projections.map((row) => [row.dryAt, row.beforeReset]),
+    [
+      [null, false],
+      [null, false],
+    ],
+  );
+  const lines = accountLines(summary.accounts, combined, chicago);
+  assert.equal(lines.length, 2);
+  assert.equal(
+    lines[0].strong + lines[0].rest,
+    "A won't run dry — about 85% used when it resets Tue 7:59 AM.",
+  );
+  assert.equal(
+    lines[1].strong + lines[1].rest,
+    "B won't run dry — about 2% used when it resets Thu 3:00 PM.",
+  );
+});
+
+test("combined accounts: spillover is included in a survivor's next-reset percentage", () => {
+  const { summary, runway } = pool([
+    { id: "A", used: 0.98, burn: 0.01, resetsAt: "2026-10-06T13:00:00Z" },
+    { id: "B", used: 0.1, burn: 0.002, resetsAt: "2026-10-08T20:00:00Z" },
+  ]);
+  const combined = combinedRunway(
+    summary,
+    runway,
+    Date.parse("2026-10-06T11:00:00Z"),
+  );
+  // A empties Tue 12:40Z. B takes .4% before A refills at 13:00Z;
+  // as next to reset, B then takes 66% until Thu 20:00Z: 76.4% used.
+  const b = combined.projections[1];
+  assert.ok(Math.abs(b.projectedAtReset - 0.764) < 1e-9);
+  assert.equal(b.beforeReset, false);
+  const lines = accountLines(summary.accounts, combined, chicago);
+  assert.equal(
+    lines[1].strong + lines[1].rest,
+    "B won't run dry — about 76% used when it resets Thu 3:00 PM.",
+  );
+});
+
+test("combined accounts: dry at its reset is not dry before its reset", () => {
+  const combined = run(
+    [{ id: "A", used: 0.5, burn: 0.25, resetsAt: "2026-10-06T13:00:00Z" }],
+    "2026-10-06T11:00:00Z",
+  );
+  assert.equal(combined.at, "2026-10-06T13:00:00.000Z");
+  assert.equal(combined.projections[0].beforeReset, false);
+});
+
+test("combined accounts: already dry and stale-reset readings get consistent first-empty times", () => {
+  const dry = run(
+    [{ id: "A", used: 1, burn: 0.01, resetsAt: "2026-10-06T13:00:00Z" }],
+    "2026-10-06T11:00:00Z",
+  );
+  assert.equal(dry.projections[0].dryAt, "2026-10-06T11:00:00.000Z");
+  assert.equal(dry.projections[0].beforeReset, true);
+  const stale = run(
+    [{ id: "A", used: 1, burn: 0, resetsAt: "2026-09-29T13:00:00Z" }],
+    "2026-10-06T11:00:00Z",
+  );
+  assert.equal(stale.projections[0].dryAt, null);
+  assert.equal(stale.projections[0].projectedAtReset, 0);
+  assert.equal(stale.projections[0].resetsAt, "2026-10-06T13:00:00.000Z");
+});
+
+test("account lines: missing combined forecast keeps the hub's original solo behavior", () => {
+  const { summary } = octoberForecast();
+  const lines = accountLines(summary.accounts, null, chicago);
+  assert.equal(lines[0].strong, "A runs dry around Sat 2:13 PM");
+  assert.equal(
+    lines[1].strong + lines[1].rest,
+    "B won't run dry — about 21% used when it resets Thu 3:00 PM.",
+  );
+  assert.deepEqual(accountLines([], null, chicago), []);
 });
 
 test("past-reset span: hours under a day, rounded days beyond", () => {
