@@ -246,6 +246,13 @@ test("W8a stale desktop reports lock lifecycle controls", async ({ page }) => {
   await expect(
     page.getByRole("menuitem", { name: "Restart", exact: true }),
   ).toBeDisabled();
+  await page.keyboard.press("Escape");
+  await page
+    .getByRole("button", { name: "Actions for Cereal Killer", exact: true })
+    .click();
+  await expect(
+    page.getByRole("menuitem", { name: "Unregister…", exact: true }),
+  ).toBeDisabled();
   expect(commands).toHaveLength(0);
 });
 

@@ -30,6 +30,9 @@ export function BulkBar({
   onClear: () => void;
 }) {
   const [confirm, setConfirm] = useState(false);
+  const unregisterReady = catalogs.some((catalog) =>
+    agentDesktopReady(catalogs, [catalog.machine], Date.now() / 1000),
+  );
   if (!selected.length) return null;
   return (
     <div className="space-y-2" data-testid="roster-bulk-bar">
@@ -46,8 +49,9 @@ export function BulkBar({
                 cleanupKeys,
                 controlsEnabled(catalogs, row.machines),
               ) &&
-              (action === "unregister" ||
-                agentDesktopReady(catalogs, row.machines, Date.now() / 1000)),
+              (action === "unregister"
+                ? unregisterReady
+                : agentDesktopReady(catalogs, row.machines, Date.now() / 1000)),
           );
           return (
             <Button
@@ -60,7 +64,7 @@ export function BulkBar({
                 allowed
                   ? undefined
                   : action === "unregister"
-                    ? "Only confirmed stale registrations can be unregistered."
+                    ? "Needs a recent desktop report and confirmed stale registration."
                     : "Needs a recent report from a compatible claiming desktop."
               }
               onClick={() =>
@@ -106,7 +110,7 @@ export function BulkBar({
             ))}
           </ul>
           <Button
-            disabled={busy}
+            disabled={busy || !unregisterReady}
             onClick={() => {
               setConfirm(false);
               onAction("unregister", selected);

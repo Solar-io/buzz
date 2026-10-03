@@ -85,6 +85,9 @@ export function RosterTable({
       catalogs,
     ).map((row) => row.pubkey),
   );
+  const unregisterReady = catalogs.some((catalog) =>
+    agentDesktopReady(catalogs, [catalog.machine], Date.now() / 1000),
+  );
   const allowed = (row: AgentRow, action: RosterAction) =>
     rosterActionAllowed(
       row,
@@ -92,8 +95,9 @@ export function RosterTable({
       cleanupKeys,
       controlsEnabled(catalogs, row.machines),
     ) &&
-    (action === "unregister" ||
-      agentDesktopReady(catalogs, row.machines, Date.now() / 1000));
+    (action === "unregister"
+      ? unregisterReady
+      : agentDesktopReady(catalogs, row.machines, Date.now() / 1000));
   const run = (action: RosterAction, rows: readonly AgentRow[]) => {
     if (rows.length && rows.every((row) => allowed(row, action)))
       void actions.run(action, rows);

@@ -197,3 +197,23 @@ test("bulk toolbar locks mixed selections, old restart targets and busy commands
       },
     );
 });
+
+test("Unregister locks when all desktop reports are stale", async () => {
+  await fixture(
+    {
+      selected: [row("stale", null)],
+      cleanupKeys: new Set(["stale"]),
+      catalogs: [{ ...catalogs[0], updatedAt: Date.now() / 1000 - 8 * 3600 }],
+      onAction() {
+        throw new Error("must not send while offline");
+      },
+    },
+    async (node) => {
+      const button = [...node.querySelectorAll("button")].find(
+        (button) => button.textContent === "Unregister",
+      );
+      assert.equal(button.disabled, true);
+      await act(() => button.click());
+    },
+  );
+});
