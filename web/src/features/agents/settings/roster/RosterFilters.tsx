@@ -21,8 +21,7 @@ export function RosterFilters({
   onQuery: (value: string) => void;
 }) {
   return (
-    <div
-      role="group"
+    <fieldset
       className="flex flex-wrap items-center gap-2"
       aria-label="Roster filters"
     >
@@ -55,6 +54,6 @@ export function RosterFilters({
         onChange={(event) => onQuery(event.target.value)}
         className="h-11 min-w-0 flex-1 rounded-lg border border-input bg-background px-3 text-sm"
       />
-    </div>
+    </fieldset>
   );
 }

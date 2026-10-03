@@ -55,13 +55,13 @@ test("roster receipts wait for application acknowledgements and quote refusals",
       assert.deepEqual(get().receipts, []);
       await render(new Map([["a", { ok: true }]]));
       assert.equal(get().busy, true);
+      await render(
+        new Map([
+          ["a", { ok: true }],
+          ["b", { ok: false, error: "Exact refusal" }],
+        ]),
+      );
       await act(async () => {
-        await render(
-          new Map([
-            ["a", { ok: true }],
-            ["b", { ok: false, error: "Exact refusal" }],
-          ]),
-        );
         await pending;
       });
       assert.equal(get().busy, false);

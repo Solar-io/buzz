@@ -1,11 +1,8 @@
 import { useEffect, useState } from "react";
 import { useRelaySession } from "@/shared/api/RelaySessionProvider";
 import { ownPubkey } from "@/shared/lib/nostr-signer";
-import {
-  agentFromEvent,
-  mergeAgentEntry,
-  type AgentRegistryEntry,
-} from "@/features/agents/lib/agentRegistry";
+import type { AgentRegistryEntry } from "@/features/agents/lib/agentRegistry";
+import { applyRegistryEvent, type RegistryState } from "./lib/registryEvents";
 
 /**
  * The owner's kind-30177 agent registry, live from the relay. Replaceable
@@ -13,9 +10,10 @@ import {
  */
 export function useAgentRegistry(): AgentRegistryEntry[] {
   const { session, status } = useRelaySession();
-  const [registry, setRegistry] = useState<Map<string, AgentRegistryEntry>>(
-    () => new Map(),
-  );
+  const [state, setState] = useState<RegistryState>(() => ({
+    registry: new Map(),
+    tombstones: new Map(),
+  }));
 
   useEffect(() => {
     if (!session || status !== "open") {
@@ -28,13 +26,13 @@ export function useAgentRegistry(): AgentRegistryEntry[] {
         return;
       }
       cleanup = session.subscribe(
-        { kinds: [30177], authors: [pubkey], limit: 200 },
+        [
+          { kinds: [30177], authors: [pubkey], limit: 200 },
+          { kinds: [5], authors: [pubkey], limit: 500 },
+        ],
         {
           onEvent: (event) => {
-            const entry = agentFromEvent(event);
-            if (entry) {
-              setRegistry((previous) => mergeAgentEntry(previous, entry));
-            }
+            setState((previous) => applyRegistryEvent(previous, event, pubkey));
           },
         },
       );
@@ -45,7 +43,7 @@ export function useAgentRegistry(): AgentRegistryEntry[] {
     };
   }, [session, status]);
 
-  return Array.from(registry.values()).sort((a, b) =>
+  return Array.from(state.registry.values()).sort((a, b) =>
     a.name.localeCompare(b.name),
   );
 }
