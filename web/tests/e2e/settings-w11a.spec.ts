@@ -2,6 +2,7 @@ import { expect, type Page } from "@playwright/test";
 import { mkdirSync } from "node:fs";
 import path from "node:path";
 import * as nip44 from "nostr-tools/nip44";
+import { finalizeEvent } from "nostr-tools/pure";
 import { test } from "./helpers/agentBraveTest";
 import {
   installMockRelay,
@@ -74,19 +75,22 @@ async function settings(page: Page, reject = false) {
         persona_ids: ["w11a-definition"],
       }),
     }),
-    event({
-      kind: 30175,
-      pubkey: fixture.agents.acid.pubkey,
-      tags: [
-        ["d", "w11a-publication"],
-        ["shared", "true"],
-      ],
-      content: JSON.stringify({
-        display_name: "W11a shared catalog",
-        system_prompt: "Shared instructions.",
-        runtime: "codex",
-      }),
-    }),
+    finalizeEvent(
+      {
+        kind: 30175,
+        created_at: Math.floor(Date.now() / 1000),
+        tags: [
+          ["d", "w11a-publication"],
+          ["shared", "true"],
+        ],
+        content: JSON.stringify({
+          display_name: "W11a shared catalog",
+          system_prompt: "Shared instructions.",
+          runtime: "codex",
+        }),
+      },
+      fixture.agents.acid.secretKey,
+    ),
   );
   await page.addInitScript(() => {
     localStorage.setItem("buzz-theme", "buzz-dark");
