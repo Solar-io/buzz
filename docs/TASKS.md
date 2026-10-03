@@ -191,7 +191,9 @@ W8a integration evidence: [current-main composition](TEST_REPORTS/parity-w8a.md#
 
 ## W9b2 current-main composition
 
-- [ ] Compose the retired page into AgentManagementSection using W8a RosterTable, filters, bulk/row actions and P0 presence locks.
-- [ ] Preserve Identity/Environment/Remove, Library W11a/W11b, guarded creation, footer, embedded navigation and W9b1.
-- [ ] Retain every Playwright spec; run full web units with count, typecheck, changed-file Biome, build and all eight requested E2E groups.
-- [ ] Record evidence and commit the integration in the provisioned branch.
+- [x] Compose the retired page into AgentManagementSection using W8a RosterTable, filters, bulk/row actions and P0 presence locks.
+- [x] Preserve Identity/Environment/Remove, Library W11a/W11b, guarded creation, footer, embedded navigation and W9b1.
+- [x] Retain every Playwright spec; run full web units with count, typecheck, changed-file Biome, build and all eight requested E2E groups.
+- [x] Record evidence and commit the integration in the provisioned branch.
+
+Evidence: [W9b2 current-main composition](TEST_REPORTS/parity-w9b2.md#w9b2-composition-with-current-main--2026-10-03).

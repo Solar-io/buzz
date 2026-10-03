@@ -1,6 +1,6 @@
 # Parity W9b2 coding receipt
 
-Worktree: `/Users/sgallant/software_development/.evie-worktrees/buzz-codex-20261003-093359`  
+Worktree: `/Users/sgallant/software_development/.evie-worktrees/buzz-codex-20261003-093359`
 Branch: `codex/buzz-codex-20261003-093359`
 
 Identity & instructions, blind patch-only Environment variables, and Remove are part of the W9b1 screen draft. Phone rows open dedicated sub-pages. Avatar Change uploads through Blossom, validates the server descriptor and stages the URL. Linked instructions open the exact Library definition; standalone instructions and names use the existing update builder. Unregister preserves the local key; Delete confirms the channel count and both actions await desktop apply acknowledgement. Failed writes retain the draft/confirmation. Environment values stay in transient form state, outside W7 drafts/receipts/storage, and clear after successful acknowledgement. No full environment replacement is reachable from these cards.
@@ -117,3 +117,29 @@ A	web/tests/e2e/helpers/agentSettingsFixture.ts
 M	web/tests/e2e/settings-w9b1.spec.ts
 A	web/tests/e2e/settings-w9b2.spec.ts
 ```
+
+## W9b2 composition with current main — 2026-10-03
+
+Source: `5e66e7718be7b5ef56b3a8f5cd02a9944a8027c6`, composed from W9b2 parent `14a53f7b1` and main parent `775f6db5f`. The renamed `settings/AgentManagementSection.tsx` uses W8a's `RosterTable` with profiles, team filters, observer/claim/stale status, row menus, bulk lifecycle and P0 `controlLock`. Its create flow retains `DesktopControlBoundary`; the standalone footer and embedded Settings navigation remain. Identity/Environment/Remove and W9b1 cards stay intact, as do W11a/W11b Library flows and main's other additions.
+
+`AgentRosterList.tsx` is removed. Its shared working indicator is retained in `ui/AgentWorkingDot.tsx` for member and DM pickers. Stale cleanup is covered by W8a's filter/actions, and the old owner profile form duplicated Account. The four retired legacy paths remain absent; roster action imports now use the extracted `ui/useAdminCommands.tsx` hook.
+
+The documentation conflicts were reconstructed from main plus W9b2's proven append-only changes, preserving every entry. The Playwright configuration keeps all 33 W9b2-parent and 35 main-parent registered specs (36 in the union).
+
+| Check | Result |
+| --- | --- |
+| `pnpm --dir web test` | 4,421 tests; 4,421 pass, zero failures/skips; +12 over main's 4,409 |
+| `pnpm --dir web typecheck` | exit 0 |
+| Changed-file Biome | 39 files, no errors/fixes in the final check |
+| `pnpm --dir web build` | exit 0; existing bundle-size and dynamic-import warnings |
+| All eight requested E2E groups, served rebuilt dist via Agent Brave CDP | 50 passed, zero failures/skips (3.8 minutes) |
+| Named composition-lock mutation | 1 failed with lock removed; same 1 passed after restore/rebuild |
+| All four conflict-marker forms | none; five existing Markdown/TLA separators are unchanged |
+
+The initial full E2E run passed 49 cases and timed out on W9b1's API-key fixture `page.goto` before assertions. That unchanged case passed alone, then all 50 passed together without runner or assertion changes. Both full-run logs are retained.
+
+Mutation proof removes only the composed `RosterTable`'s `controlLock` prop, after committing the composition. The compiling/rebuilt mutant fails **W8a desktop presence lock disables roster row actions and bulk lifecycle until recovery**, at `settings-w8a.spec.ts:291`: expected disabled, received enabled for Start. Restored source matches the committed bytes, and the rebuilt named case and complete final suite pass.
+
+Raw output: `logs/w9b2-integration-{unit,typecheck,biome,build,e2e,e2e-final,api-key-repeat,lock-mutant,lock-restored,mutant-build,restored-build}.log`; output excerpts appended to `logs/verification.log`. Fresh 1440/390 roster screenshots in `.scratch/w8a/screenshots/` were inspected, along with the W9b2 phone Environment screenshot. Browser suites use their own contexts and an unused loopback preview port; the additional MCP inspection tab was closed.
+
+The earlier live owner/desktop acceptance item remains separate from this requested source-integration gate.

@@ -174,3 +174,7 @@ Web baseline 4,320; eight added tests give 4,328. Typecheck, four-file Biome and
 2026-10-03 — Parity W9b2
 
 Identity/upload, linked Library entry, patch-only environment rows and confirmed removal are integrated into the existing W7/W9b1 draft. Secret values never enter draft receipts/storage. Active shared hooks and Library/creation/roster responsibilities were extracted before removing the four legacy module paths. Public settings keep their existing version gates. Source checks and the built Agent Brave journeys pass; the operator acceptance item needs an authorized test owner signer. Full counts, mutation kills, artifact paths and deviations: [W9b2 report](TEST_REPORTS/parity-w9b2.md).
+
+2026-10-03 — W9b2 current-main composition
+
+Source `5e66e7718` composes W9b2 parent `14a53f7b1` with main parent `775f6db5f`. AgentManagementSection now uses W8a RosterTable with P0 presence controlLock; the duplicate AgentRosterList is removed and its shared working dot lives in AgentWorkingDot. All Library/create/footer/navigation/cards and both parents' Playwright registrations are preserved. 4,421 units and 50 requested browser cases pass, as do TypeScript, 39-file Biome and build. Withdrawing the composed lock fails the named row-disable case; exact restoration/rebuild passes. The first combined run had one pre-assertion navigation timeout; the unchanged named and full reruns pass. [Full receipt](TEST_REPORTS/parity-w9b2.md#w9b2-composition-with-current-main--2026-10-03).
