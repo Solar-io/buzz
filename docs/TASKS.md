@@ -123,9 +123,11 @@ W9b1 agent settings cards:
 - [x] Safe markdown details: recognise blank/nonblank body boundaries, own-line summaries, open, missing close, nested blocks, literal code, formatted labels and unrelated HTML in both clients.
 - [x] Safe markdown details: wire desktop chat and web chat/Pulse, preserve downstream markdown features and inherited styling.
 - [x] Safe markdown details: record both baseline/final test counts, typechecks, palette/text checks, DOM/browser acceptance and named mutation failures. Evidence: [details renderer report](TEST_REPORTS/markdown-details.md).
+
 ## Vitals shared account forecast (2026-10-03)
 
-- [ ] Record first-empty times, handoffs and next-reset usage from the existing combined simulation.
-- [ ] Use that forecast in the sidebar, headline, account lines and row dry text; preserve fallback behavior.
-- [ ] Live-number and low-burn regressions, named simulation-withdrawal mutation proof, full web counts/static/build checks.
-- [ ] Render the fixture at 1440 and 390 widths and capture screenshots; commit with the required trailers.
+- [x] Record first-empty times, handoffs and next-reset usage from the existing combined simulation.
+- [x] Use that forecast in the sidebar, headline, account lines and row dry text; preserve fallback behavior.
+- [x] Live-number and low-burn regressions, named simulation-withdrawal mutation proof, full web counts/static/build checks.
+- [x] Render the fixture at 1440 and 390 widths and capture screenshots; commit with the required trailers.
+- [ ] Resolve the contradictory A-time criterion: the unchanged allocator gives 18:56:55Z, while the requested 19:13Z uses A's solo rate. No approval to change allocation or waive that criterion was received. [Receipt](TEST_REPORTS/vitals-account-runway.md).
