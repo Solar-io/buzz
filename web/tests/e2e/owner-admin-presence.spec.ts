@@ -116,8 +116,8 @@ test("P0 presence locks offline controls, recovers, and handles old catalogs at 
   expect(commands[0].requires).toEqual(["ping"]);
   expect(commands[0].target).toBe("crichton.local");
   await page.getByRole("button", { name: /P0 Test Agent/ }).click();
-  const start = page.getByRole("button", { name: "Start", exact: true });
-  await expect(start).toBeEnabled();
+  const stop = page.getByRole("button", { name: "Stop", exact: true });
+  await expect(stop).toBeEnabled();
   responding = false;
   await page.evaluate(() => window.dispatchEvent(new Event("focus")));
   await page.clock.runFor(40_001);
@@ -128,14 +128,14 @@ test("P0 presence locks offline controls, recovers, and handles old catalogs at 
       .first()
       .evaluate((element) => getComputedStyle(element).color)) === onlineColor,
   ).toBe(false);
-  await expect(start).toBeDisabled();
+  await expect(stop).toBeDisabled();
   await expect(
     page.getByText("Needs the desktop", { exact: false }),
   ).toBeVisible();
   const mutationsBefore = commands.filter(
     (command) => command.action !== "ping",
   ).length;
-  await start.evaluate((element: HTMLButtonElement) => element.click());
+  await stop.evaluate((element: HTMLButtonElement) => element.click());
   expect(commands.filter((command) => command.action !== "ping")).toHaveLength(
     mutationsBefore,
   );
@@ -150,13 +150,13 @@ test("P0 presence locks offline controls, recovers, and handles old catalogs at 
   responding = true;
   await page.evaluate(() => window.dispatchEvent(new Event("focus")));
   await expect(footer).toContainText("online");
-  await expect(start).toBeEnabled();
+  await expect(stop).toBeEnabled();
   relay.push(catalog(4, now + 1));
   await expect(footer).toContainText("status unknown — update Buzz Desktop");
-  await expect(start).toBeEnabled();
-  await start.click();
+  await expect(stop).toBeEnabled();
+  await stop.click();
   await expect
-    .poll(() => commands.filter((command) => command.action === "start").length)
+    .poll(() => commands.filter((command) => command.action === "stop").length)
     .toBe(1);
   relay.push(catalog(5, now + 2));
   await expect(footer).toContainText("online");

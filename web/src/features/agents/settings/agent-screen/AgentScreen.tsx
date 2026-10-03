@@ -119,10 +119,11 @@ export function AgentScreen({
       </section>
     );
 
+  const controlLock = presence.lock(row.machines);
   const enabled =
     status === "open" &&
     agentDesktopReady(catalogs, row.machines, nowS) &&
-    !presence.lock(row.machines).locked;
+    !controlLock.locked;
   const pending = admin.pending.filter((entry) =>
     entry.summary.endsWith(row.name),
   );
@@ -271,7 +272,8 @@ export function AgentScreen({
         <p className="rounded-lg border border-border bg-muted p-3 text-sm text-muted-foreground">
           {status !== "open"
             ? "Connect to the relay to change this agent."
-            : "Needs a current report from one Buzz Desktop. Saved values remain visible."}
+            : (controlLock.reason ??
+              "Needs a current report from one Buzz Desktop. Saved values remain visible.")}
         </p>
       ) : null}
       {pending.length ? (
