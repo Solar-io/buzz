@@ -1,3 +1,5 @@
+Item capture descriptions support composer-backed picker/paste/drop, bounded cursor markdown and authenticated timeline media rendering. The kind-30623 body is carried through create. 4,437 units and two Agent Brave fixture workflows pass; enrolled relay acceptance remains a separate check. [Attachment receipt](TEST_REPORTS/item-attachments.md).
+
 Work rows resolve an agent's own kind-9 message within the turn window after a 30624 title. Short trigger asks recover their NIP-10 parent. WorkProvider uses bounded, debounced history requests, closed on EOSE; only running query keys renew each minute.
 
 Work and Canvas share a 320px usable dock minimum and the existing 723px shell-row overlay query. Narrow rows retain both tabs and an explicit Back to chat control that closes Canvas and folds Work; widening restores the stored width. Twelve painted sidebar/tab cases, eight named mutation failures, 4,421 units and the restored 38-case browser selection prove the follow-up. [Work dock evidence](TEST_REPORTS/web-layout-bugs.md#work-dock-minimum-follow-up--2026-10-03).
