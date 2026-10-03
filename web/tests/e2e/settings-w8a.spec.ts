@@ -111,6 +111,13 @@ test("W8a bulk Restart targets each machine, waits for both acks and cycles Work
   working(agents[0].pubkey, true);
   working(agents[1].pubkey, true);
   await expect(
+    page.getByTestId("roster-row").filter({ hasText: "Acid Burn" }),
+  ).toContainText("Working");
+  await expect(
+    page.getByTestId("roster-row").filter({ hasText: "Gilfoyle" }),
+  ).toContainText("Working");
+  await bulk.getByRole("button", { name: "Clear", exact: true }).click();
+  await expect(
     page.getByRole("button", { name: "Working 2", exact: true }),
   ).toBeVisible();
 });
