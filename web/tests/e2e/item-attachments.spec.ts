@@ -144,11 +144,19 @@ for (const [theme, width] of [
     await expect(detail.getByRole("link", { name: "steps.txt" })).toBeVisible();
     expect(putCount).toBe(3);
     expect(getCount).toBeGreaterThanOrEqual(2);
-    expect(
-      await detail
-        .getByRole("img", { name: "button.png", exact: true })
-        .evaluate((image: HTMLImageElement) => image.naturalWidth),
-    ).toBeGreaterThan(0);
+    await expect
+      .poll(() =>
+        detail
+          .locator("img")
+          .evaluateAll(
+            (images) =>
+              images.length === 2 &&
+              images.every(
+                (image) => (image as HTMLImageElement).naturalWidth > 0,
+              ),
+          ),
+      )
+      .toBe(true);
     await shot(page, `detail-${theme}-${width}`);
     await detail.locator("[data-lightbox-trigger]").first().click();
     await expect(page.getByRole("dialog", { name: /Image:/i })).toBeVisible();
