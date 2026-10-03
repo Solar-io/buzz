@@ -88,3 +88,9 @@ Evidence: [P3 report](TEST_REPORTS/fish-web.md): 4,175 baseline / 4,212 final te
 Scope excludes fleet scripts/plugin, live relay/DB, installation, deployment and service restarts.
 
 Background-job evidence: [work-rail-jobs report](TEST_REPORTS/work-rail-jobs.md). Added job checks pass with named mutation failures; full just test passes on repeat. The existing relay mesh echo 504 and CLI all-target test-loop lint remain separate open repository gates.
+
+W5a canvas editing:
+- [x] Markdown Edit / Save / Clear with signed channel-scoped append events and relay refusal handling.
+- [x] Empty-canvas and phone reachability through About > Canvas; live echo and second-viewer rendering through mocked relay traffic.
+- [x] Behaviour tests, fail-first proof, required web checks, and 1440 / 390 screenshots. Evidence: [W5a report](TEST_REPORTS/parity-w5a.md).
+- [ ] W5a live acceptance: edit and clear a private test channel canvas with an enrolled throwaway identity; verify a second browser receives both updates. The worktree has no live test signing credentials.

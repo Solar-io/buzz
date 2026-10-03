@@ -9,7 +9,10 @@ import {
 import { FileIcon } from "@/features/shelf/ui/FileIcon";
 import { FilePreview } from "@/features/shelf/ui/FilePreview";
 import { cn } from "@/shared/lib/cn";
-import type { ChannelCanvasDoc } from "../lib/channelCanvas.ts";
+import type {
+  ChannelCanvasDoc,
+  ChannelCanvasPhase,
+} from "../lib/channelCanvas.ts";
 import { ChannelCanvasView } from "./ChannelCanvasView";
 
 /** The pinned glyph for the channel canvas: a notebook on leaf. */
@@ -142,7 +145,11 @@ export function CanvasPane({
   selected: string | null;
   files: readonly OpenFile[];
   /** The conversation's canvas, when it is one of `items`. */
-  channelCanvas: { channelId: string; doc: ChannelCanvasDoc | null } | null;
+  channelCanvas: {
+    channelId: string;
+    doc: ChannelCanvasDoc | null;
+    phase?: ChannelCanvasPhase;
+  } | null;
   expanded: boolean;
   onSelect: (key: string) => void;
   onClose: (key: string) => void;
@@ -207,6 +214,7 @@ export function CanvasPane({
             channelId={channelCanvas.channelId}
             doc={channelCanvas.doc}
             expanded={expanded}
+            phase={channelCanvas.phase}
           />
         ) : file ? (
           <FilePreview

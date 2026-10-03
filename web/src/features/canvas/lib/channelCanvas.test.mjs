@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  buildCanvasEvent,
   canvasFromEvent,
   channelCanvasFilter,
   channelCanvasListed,
@@ -9,6 +10,22 @@ import {
   KIND_CANVAS,
   newerCanvas,
 } from "./channelCanvas.ts";
+
+test("clear emits empty content with h tag", () => {
+  assert.deepEqual(buildCanvasEvent("test-channel", ""), {
+    kind: 40100,
+    tags: [["h", "test-channel"]],
+    content: "",
+  });
+});
+
+test("canvas set preserves raw markdown and appends a regular scoped event", () => {
+  assert.deepEqual(buildCanvasEvent("test-channel", " # Notes\n\n**Raw**\n"), {
+    kind: 40100,
+    tags: [["h", "test-channel"]],
+    content: " # Notes\n\n**Raw**\n",
+  });
+});
 
 /**
  * The channel canvas as the right pane's Canvas reads it. The wire shape is
@@ -100,8 +117,8 @@ test("Canvas lists the channel canvas when it has content, or while it loads und
   const cases = [
     ["ready", doc, null, true],
     ["ready", doc, "f1", true],
-    ["ready", blank, "canvas:channel", false],
-    ["ready", null, "canvas:channel", false],
+    ["ready", blank, "canvas:channel", true],
+    ["ready", null, "canvas:channel", true],
     ["loading", null, "canvas:channel", true],
     ["loading", null, "f1", false],
     ["loading", null, null, false],
