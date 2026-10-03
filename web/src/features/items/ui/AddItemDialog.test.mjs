@@ -360,7 +360,7 @@ test("closing the dialog invalidates an upload and unmount releases previews", a
   assert.equal(body().value, "");
 });
 
-test("immediately resolved multi-file uploads keep selection order before React paints", async () => {
+test("immediately resolved multi-file uploads keep selection order", async () => {
   await mount();
   globalThis.__ITEM_UPLOAD__ = async (file) => descriptor(file);
   await fill(body(), "before after");

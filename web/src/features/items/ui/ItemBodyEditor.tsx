@@ -38,8 +38,8 @@ export function ItemBodyEditor({
       const input = textarea.current;
       const inserted = insertItemAttachment(
         latestBody.current,
-        caret.current ?? input?.selectionStart ?? latestBody.current.length,
-        caret.current ?? input?.selectionEnd ?? latestBody.current.length,
+        input?.selectionStart ?? latestBody.current.length,
+        input?.selectionEnd ?? latestBody.current.length,
         itemAttachmentMarkdown(descriptor, row.name),
       );
       latestBody.current = inserted.body;
