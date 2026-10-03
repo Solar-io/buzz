@@ -167,6 +167,24 @@ export async function setup(
         : "channel-sidebar",
     ),
   ).toBeVisible();
+  if ((page.viewportSize()?.width ?? 1440) < 768) {
+    await page.getByRole("button", { name: "More", exact: true }).click();
+    await page
+      .getByTestId("phone-more-sheet")
+      .getByText("Settings", { exact: true })
+      .click();
+  } else {
+    await page.getByTestId("sidebar-app-menu").click();
+    await page.getByRole("link", { name: "Settings", exact: true }).click();
+  }
+  // Manual entry intentionally locks on reload. Remember this disposable key
+  // through the actual setting before exercising deep links and reloads.
+  await page.getByTestId("settings-nav-item-security").click();
+  const staySignedIn = page
+    .getByText("Stay signed in", { exact: true })
+    .locator("..");
+  await staySignedIn.getByRole("button").click();
+  await expect(staySignedIn.getByRole("button")).toHaveText("On");
   await page.goto(`/repos/settings?group=agents&agent=${agent.pubkey}`);
   await expect(page.getByTestId("model-thinking-card")).toBeVisible();
   return { fixture, agent, commands, relay, release: () => release() };

@@ -203,7 +203,7 @@ function AgentRosterRow({
             {row.duplicate && (
               <span
                 title="An older registration shares this name — see cleanup below"
-                className="ml-2 rounded bg-amber-500/20 px-1.5 py-0.5 text-badge font-normal uppercase tracking-wide text-amber-500"
+                className="ml-2 rounded bg-honey-soft px-1.5 py-0.5 text-badge font-normal uppercase tracking-wide text-honey-ink"
               >
                 duplicate
               </span>
@@ -314,7 +314,7 @@ function StaleCleanupCard({
   };
 
   return (
-    <section className="space-y-3 rounded-lg border border-amber-500/40 bg-card p-4">
+    <section className="space-y-3 rounded-lg border border-honey-line bg-card p-4">
       <div className="flex items-center justify-between">
         <h2 className="font-medium">Clean up stale registrations</h2>
         <Button
