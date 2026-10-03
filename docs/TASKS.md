@@ -154,6 +154,8 @@ Evidence: [P0 verifier fixes](TEST_REPORTS/parity-p0-verifier-fixes.md).
 W8a integration with current main:
 - [x] Compose roster with Library, New agent creation, DetailPane, W9b1 and connection footer; retain every Playwright spec.
 - [x] Carry P0 desktop presence lock through row mutations and bulk lifecycle/confirmation controls.
-- [ ] Verify a named row-lock regression fails with the lock removed and passes after restoration.
-- [ ] Run full web unit/static/build gates and all six requested E2E groups; inspect 1440/390 screenshots.
-- [ ] Commit the integration and record handoff evidence.
+- [x] Verify a named row-lock regression fails with the lock removed and passes after restoration.
+- [x] Run full web unit/static/build gates and all six requested E2E groups; inspect 1440/390 screenshots.
+- [x] Commit the integration and record handoff evidence.
+
+W8a integration evidence: [current-main composition](TEST_REPORTS/parity-w8a.md#current-main-integration--2026-10-03); 4,373 units and 37 browser cases pass, including restored row-lock proof.

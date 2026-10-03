@@ -107,3 +107,27 @@ The approved roster/hex/status-ring treatment uses existing semantic tokens. Sel
 ## Live acceptance handoff
 
 Use the plan's target `https://crichton.tailb3d4b8.ts.net:6351` with an enrolled owner test identity. Create two throwaway agents and a private channel, confirm model/team projections, restart both while observing Working cycles, unregister a throwaway stale key and confirm removal, then check the phone list. Browser evidence here exercises the real compiled client/signing/decryption paths with simulated desktop responses; it does not establish that a physical desktop restarted an agent.
+
+## Current-main integration — 2026-10-03
+
+Composed merge parents `61e7218a1` (W8a) and `ba0d96200` (main). The Agents section uses the full-width RosterTable; LibraryTabs, NewAgentMenu, CreateAgentScreen and its DesktopControlBoundary, DetailPane, embedded agent navigation, desktop connection footer, W9b1 settings cards and W5b remain reachable. The Playwright registry contains every spec from both parents; a tracked-file scan found no conflict markers, including diff3 base markers.
+
+The roster receives P0's `presence.lock(...)`. Row Start/Stop/Restart/Unregister, bulk lifecycle and unregister confirmations lock while desktop presence is unavailable, and recover after a successful ping. Open and Message remain reachable. A stale unregister broadcast checks every receiving desktop even though no catalog claims its key; other unclaimed mutation commands remain locked. W11a and P0 tests now select the explicit roster Open button rather than matching both Open and Actions.
+
+Source commits: `9ca341a56` (composition and presence wiring), `c2a086670` (stale unregister and selector integration).
+
+| Check | Result |
+|---|---|
+| `pnpm --dir web test` | 4,373 pass, zero fail/skip; +28 over the supplied 4,345 main count |
+| `pnpm --dir web typecheck` | Pass |
+| Biome on all 26 changed web source/config/test files relative to the main merge parent | Pass; no fixes required |
+| `pnpm --dir web build` | Pass after mutation restoration |
+| `npx playwright test settings-w8a settings-w6 settings-w9a settings-w9b1 settings-w11a owner-admin-presence --headed` | 37/37 pass, zero skips |
+
+Local E2E used the supported isolated headed fallback with `BUZZ_E2E_CDP` unset: shared Agent Brave returned SOCKET_ERROR on a standalone routed WebSocket echo canary, and its first four app cases could not receive mocked relay records. Those failures preceded fallback; the final suite executes real built UI against simulated relay/desktop boundaries.
+
+Mutation proof: removed the RosterTable `controlLock` prop from the committed page, rebuilt dist and ran only `W8a desktop presence lock disables roster row actions and bulk lifecycle until recovery`. Exactly one test ran and failed: Start was enabled while the footer reported offline. Restored the committed page, rebuilt, and the same named test passes in the final 37-case suite. The stale-unregister unit regression also failed before its fix and passes afterward: 11 tests in both runs (10/11 then 11/11).
+
+Screenshots: `.scratch/w8a/screenshots/roster-1440.png` and `roster-390.png`; both inspected for readable rows, reachable selection and overflow. SHA-256 respectively `bbe96c22dab8d7588139584b2f9e8e9e33c52258049b82d32d89b48ba9593ef9` and `0b839360c6174f886a6ec7f55c271e92a3a16aa398a6de571dc16d8362bcccec`.
+
+Receipts: `logs/w8a-integration-*.log`, appended excerpts in `logs/verification.log`, and `.scratch/w8a/integration/lock-mutant-error-context.md`. These checks establish client integration; existing live throwaway-agent acceptance remains separately listed above. The optional fleet focus-status command lacked BUZZ_PRIVATE_KEY in this coding shell.

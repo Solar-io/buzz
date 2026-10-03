@@ -148,3 +148,9 @@ Desktop units 5,762 → 5,779; web 4,252 → 4,272, both full suites green at fo
 2026-10-03 — Parity W8a roster
 
 Finished the interrupted roster work using existing admin wire paths and W9a URL navigation. Added live owner tombstone application, acknowledgement timeout/unmount safety, offline locks, readable phone filters and reachable wide columns. Before/after web counts: 4,252 / 4,278; final eight Agent Brave workflows pass, including actual snapshot download and DM navigation. Six named unit mutants fail at 26 tests each; two rebuilt-browser mutants fail their selected case. Screenshots and receipts live under .scratch/w8a/ and logs/verification.log. The existing speech-order timing case and shared-browser transient failures are documented in TEST_REPORTS/parity-w8a.md. Live throwaway-agent acceptance remains for an enrolled owner test environment.
+
+2026-10-03 — W8a integration with current main
+
+Composed W8a's roster with main's Library/New agent/CreateAgentScreen/DetailPane, P0 presence boundaries/footer, W9b1 cards and W5b. Presence gates now disable row mutations and bulk lifecycle/confirmation controls. Fixed stale Unregister's empty-claim lock by checking all receiving desktops; other unclaimed mutations stay locked. Updated W11a/P0 roster selectors. Source commits: 9ca341a56 and c2a086670.
+
+All 4,373 web units, typecheck, 26-file Biome, restored build and all 37 requested browser cases pass. A rebuilt one-case lock-withdrawal mutation fails at the row Start control; restoration passes. Shared Brave's standalone WebSocket canary failed, so E2E used the isolated headed fallback. Inspected 1440/390 roster screenshots and full evidence: [W8a integration receipt](TEST_REPORTS/parity-w8a.md#current-main-integration--2026-10-03). The scoped integration has no remaining tasks; earlier live-relay acceptance stays separate.
