@@ -53,3 +53,12 @@ W1 channel settings:
 - [ ] Clean unfiltered relay + CLI gate: CLI 483 pass; relay lib 1047 pass / 2 fail / 64 ignored. Parent control reproduces mesh echo 504; telemetry callsite failure is intermittent. [Evidence](TEST_REPORTS/fish-relay-cli.md).
 - [ ] Execute the Fish E2E case against an isolated relay containing this patch.
 - [x] Live baseline QA: HTTP 200 Buzz page and 46-row ElevenLabs JSON; Agent Brave Settings/Voice/ElevenLabs/filter/Cancel flow, inspected screenshot and console/network receipts. Fish integration acceptance remains open.
+## P3 Fish Audio web and voice library
+
+Evidence: [P3 report](TEST_REPORTS/fish-web.md): 4,175 baseline / 4,212 final tests, 34 mutation kills, scoped static/build checks and built Settings Agent Brave workflow.
+
+- [x] Fish selection grammar, precedence, summaries, bridge routing and huddle overrides.
+- [x] Shared A–Z comparator, Fish tabs and pinned removed selections in Settings, assignment, profile and huddle pickers.
+- [x] Signed bridge library API, input validation, usage census and mutation invalidation.
+- [x] Settings Voice library card: curated lists, provider browse/search, add/remove confirmation, admin/read-only controls.
+- [x] Shared grammar vectors, behavior tests, exact baseline/final counts, mechanism mutation proof, typecheck, scoped Biome and build.

@@ -450,7 +450,7 @@ function deriveVoiceProfile(
  *  - `derived`: the derived local-synth draw. Reachable only when the
  *    bridge cannot execute — no AudioContext in this browser — where the
  *    hook corrects a `derived-bridge` route to this.
- *  - `pocket-bridge` / `chatterbox-bridge` / `eleven-bridge`: the agent's
+ *  - `pocket-bridge` / `chatterbox-bridge` / `eleven-bridge` / `fish-bridge`: the agent's
  *    effective selection names a
  *    server-side engine the tts bridge runs — `bridge` carries the
  *    request, the utterance synthesizes through `bridgeSpeech.ts`, NOT
@@ -474,6 +474,7 @@ export type SpeakDisposition =
   | "pocket-bridge"
   | "chatterbox-bridge"
   | "eleven-bridge"
+  | "fish-bridge"
   | "pocket-selected-pending-engine"
   | "bridge-error-fallback";
 
@@ -493,7 +494,7 @@ export interface SpeakRoute {
   /**
    * What the bridge says ACTUALLY served the last chunk — its
    * `x-tts-engine` header (`chatterbox` | `pocket` | `pocket-fallback` |
-   * `eleven`). Absent until a bridge response arrives. The request engine
+   * `eleven` | `fish`). Absent until a bridge response arrives. The request engine
    * alone cannot tell a Chatterbox utterance from a Pocket fallback, and a
    * wiring assertion needs to know which one spoke.
    */
@@ -568,6 +569,13 @@ export function speakRoute(
   if (selected.engine === "eleven") {
     return {
       disposition: "eleven-bridge",
+      profile: derived(),
+      bridge: selectionToBridgeRequest(selected),
+    };
+  }
+  if (selected.engine === "fish") {
+    return {
+      disposition: "fish-bridge",
       profile: derived(),
       bridge: selectionToBridgeRequest(selected),
     };

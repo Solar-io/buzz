@@ -79,8 +79,12 @@ export function summarizeAgentVoice(input: {
 export function previewRequestFor(
   agentPubkey: string,
   selection: AgentVoiceSelection | undefined,
-): { engine: "chatterbox" | "eleven"; key: string } {
-  if (selection?.engine === "chatterbox" || selection?.engine === "eleven") {
+): { engine: "chatterbox" | "eleven" | "fish"; key: string } {
+  if (
+    selection?.engine === "chatterbox" ||
+    selection?.engine === "eleven" ||
+    selection?.engine === "fish"
+  ) {
     return { engine: selection.engine, key: selection.key };
   }
   if (selection?.engine === "pocket") {
