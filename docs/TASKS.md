@@ -52,3 +52,4 @@ W1 channel settings:
 - [x] Nine named mutation failures with fixed test counts, restored source, strict Clippy and formatting.
 - [ ] Clean unfiltered relay + CLI gate: CLI 483 pass; relay lib 1047 pass / 2 fail / 64 ignored. Parent control reproduces mesh echo 504; telemetry callsite failure is intermittent. [Evidence](TEST_REPORTS/fish-relay-cli.md).
 - [ ] Execute the Fish E2E case against an isolated relay containing this patch.
+- [x] Live baseline QA: HTTP 200 Buzz page and 46-row ElevenLabs JSON; Agent Brave Settings/Voice/ElevenLabs/filter/Cancel flow, inspected screenshot and console/network receipts. Fish integration acceptance remains open.

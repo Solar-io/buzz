@@ -74,3 +74,22 @@ Relay mutation command: `cargo test -p buzz-relay --lib handlers::ingest::agent_
 - The required clean full-suite gate is unresolved. Reproduce/fix the mesh test environment or existing test and investigate the intermittent telemetry failure, then rerun the exact unfiltered two-crate command. Execute the Fish E2E case on an isolated updated relay afterwards.
 
 Shared vectors contain Fish 4 accept / 19 reject and ElevenLabs 4 accept / 18 reject cases: inclusive boundaries, wrong prefixes, empty/short/overlong IDs, punctuation, whitespace, controls and non-ASCII characters. The consumers pin those counts so an empty corpus cannot pass.
+
+## Live baseline QA — 2026-10-03 02:24–02:28 UTC
+
+HTTP application check:
+
+- `GET https://crichton.tailb3d4b8.ts.net:6351/repos/?qa=fish-p2-20261002`: HTTP 200, `content-type: text/html; charset=utf-8`, body is the Buzz document (`<title>Buzz</title>`, `<meta name="description" content="Buzz web client" />`, asset `/assets/index-DuGYm_0H.js`). The `/repos` form first returns 308 to `/repos/`.
+- `GET https://crichton.tailb3d4b8.ts.net:6366/voices/eleven`: HTTP 200; JSON body contains 46 voices. First row: `{"id":"CwhRBWXzGAHq8TQ4Fs17","label":"Roger - Laid-Back, Casual, Resonant (american)"}`.
+- Actual request/response logs: `logs/p2-live-http-trace.log` and `logs/p2-live-eleven-trace.log`; response headers/body are saved alongside them. These are client HTTP traces. A bounded `docker logs --since 10m --tail 3000 buzz-dev-relay-1` search found no matching request entry; there is no correlated server-log claim.
+
+Agent Brave check:
+
+- Claimed a new tab at the real `:6351/repos` app, which rendered its authenticated shell and live channel data.
+- Clicked Buzz menu → Settings → Voice & audio → Choose voice → ElevenLabs. Filtered by `Roger`; the Roger row with Preview/Select appeared. Clicked Cancel and verified zero dialogs and the voice-settings headings remained. No voice selection was confirmed.
+- Final page: `https://crichton.tailb3d4b8.ts.net:6351/repos/settings?group=voice`.
+- Browser network log records `/voices/chatterbox` and `/voices/eleven` HTTP 200. Screenshot `logs/p2-live-voice-picker.png` was visually inspected; snapshot: `logs/p2-live-voice-picker.md`; browser requests: `logs/p2-live-network.log`.
+- Console: recurring HTTP 401 from the separate `:6881/api/host-stats` endpoint, recorded in `logs/p2-live-console.log`. The checked picker rendered and filtered despite these errors.
+- The claimed tab was closed; other agents' tabs were left alone.
+
+This verifies the current served application's voice-browsing flow. It does not verify the Fish save/playback path from this patch. The served picker observed here has Chatterbox and ElevenLabs tabs; Fish integration acceptance still requires a suitable isolated relay/client containing the relevant phase changes. The two full-suite failures and both open handoff tasks remain unresolved.
