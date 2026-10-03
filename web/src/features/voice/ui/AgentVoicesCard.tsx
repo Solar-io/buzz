@@ -131,16 +131,16 @@ export function AgentVoicesCard() {
             isOutsideLibrary(summary.selection, library.voices);
           return (
             <li
-              className="flex items-center gap-2 rounded-md px-2 py-1 hover:bg-accent"
+              className="flex flex-wrap items-center gap-2 rounded-md px-2 py-1 hover:bg-accent"
               data-testid="agent-voices-row"
               key={agent.pubkey}
             >
-              <span className="min-w-0 flex-1">
+              <span className="min-w-0 flex-1 basis-full sm:basis-0">
                 <span className="block truncate text-sm font-medium">
                   {agent.name}
                 </span>
                 <span
-                  className="block truncate text-xs text-muted-foreground"
+                  className="block text-xs text-muted-foreground"
                   data-testid="agent-voices-value"
                 >
                   {summary.voice}

@@ -135,17 +135,17 @@ function isValidElevenKey(key: string): boolean {
   return /^eleven:[A-Za-z0-9]{10,36}$/.test(key);
 }
 
+/** Fish model grammar, mirrored by relay and Swift using the shared vectors. */
+export function isValidFishKey(key: string): boolean {
+  return /^fish:[A-Za-z0-9]{16,64}$/.test(key);
+}
+
 /**
  * Chatterbox key grammar: `chatterbox:<slug>`, slug `^[a-z0-9][a-z0-9_-]{0,47}$`
  * — byte-for-byte the relay's `valid_chatterbox_voice_key`
  * (crates/buzz-relay/src/handlers/ingest.rs). Grammar only: the roster lives
  * on the bridge and changes at runtime, so membership is not checked here.
  */
-/** Fish model grammar, mirrored by relay and Swift using the shared vectors. */
-export function isValidFishKey(key: string): boolean {
-  return /^fish:[A-Za-z0-9]{16,64}$/.test(key);
-}
-
 export function isValidChatterboxKey(key: string): boolean {
   return /^chatterbox:[a-z0-9][a-z0-9_-]{0,47}$/.test(key);
 }

@@ -60,8 +60,8 @@ export function AgentConfigSection({ pubkey }: { pubkey: string }) {
     loading,
     viewerIsOwner,
     agentName,
-    assignedVoice,
-    assignedVoiceLabel,
+    currentVoice,
+    currentVoiceLabel,
   } = useAgentConfigCard(pubkey);
   const [pickerOpen, setPickerOpen] = useState(false);
   return (
@@ -81,8 +81,8 @@ export function AgentConfigSection({ pubkey }: { pubkey: string }) {
             Change voice…
           </Button>
           <VoicePickerDialog
-            current={assignedVoice}
-            currentLabel={assignedVoiceLabel}
+            current={currentVoice}
+            currentLabel={currentVoiceLabel}
             mode="assign"
             onConfirm={(selection, label) =>
               publishAgentVoiceAssignment(session, pubkey, selection, label)

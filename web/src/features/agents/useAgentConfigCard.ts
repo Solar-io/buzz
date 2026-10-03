@@ -43,6 +43,9 @@ export interface AgentConfigCardState {
   assignedVoice: AgentVoiceSelection | undefined;
   /** Stored label for the pinned current row if it leaves the library. */
   assignedVoiceLabel?: string;
+  /** Effective stored choice for the picker, including an agent self-selection. */
+  currentVoice: AgentVoiceSelection | undefined;
+  currentVoiceLabel?: string;
 }
 
 /**
@@ -195,5 +198,7 @@ export function useAgentConfigCard(pubkey: string): AgentConfigCardState {
     agentName: entry?.name ?? null,
     assignedVoice: assigned?.selection,
     assignedVoiceLabel: assigned?.label,
+    currentVoice: assigned?.selection ?? selfVoice?.selection,
+    currentVoiceLabel: assigned?.label ?? selfVoice?.label,
   };
 }
