@@ -391,6 +391,19 @@ fn is_agent_text_model_id(id: &str) -> bool {
     lower.starts_with("gpt-") || lower.starts_with('o') || lower.starts_with("chatgpt-")
 }
 
+/// Sam (2026-10-03): the only OpenAI models offered are the GPT-6 generation
+/// (6.0 / 6.1). Any other OpenAI-family id (older gpt-/chatgpt-, o-series),
+/// including gateway-prefixed ones like `codex/gpt-5.5`, is hidden from the
+/// dropdown. Non-OpenAI ids pass through untouched.
+fn is_superseded_openai_model_id(id: &str) -> bool {
+    let lower = id.to_ascii_lowercase();
+    let bare = lower.rsplit('/').next().unwrap_or(&lower);
+    let openai_family = bare.starts_with("gpt-")
+        || bare.starts_with("chatgpt-")
+        || (bare.starts_with('o') && bare[1..].starts_with(|c: char| c.is_ascii_digit()));
+    openai_family && !bare.starts_with("gpt-6")
+}
+
 fn openai_dated_snapshot_alias(id: &str) -> Option<String> {
     let (base, date) = id.rsplit_once('-')?;
     if date.len() != 2 || !date.chars().all(|character| character.is_ascii_digit()) {
@@ -431,6 +444,15 @@ fn title_case_model_suffix(value: &str) -> String {
                 "mini".to_string()
             } else if part.eq_ignore_ascii_case("nano") {
                 "nano".to_string()
+            } else if ["sol", "luna", "astra", "terra"]
+                .iter()
+                .any(|tier| part.eq_ignore_ascii_case(tier))
+            {
+                let mut chars = part.chars();
+                chars
+                    .next()
+                    .map(|first| first.to_ascii_uppercase().to_string() + chars.as_str())
+                    .unwrap_or_default()
             } else {
                 part.to_string()
             };
@@ -471,6 +493,7 @@ fn normalize_openai_compatible_models(
     items
         .into_iter()
         .filter(|item| !filter_to_openai_text_models || is_agent_text_model_id(&item.id))
+        .filter(|item| !is_superseded_openai_model_id(&item.id))
         .filter(|item| match openai_dated_snapshot_alias(&item.id) {
             Some(alias) if filter_to_openai_text_models => !all_ids.contains(&alias),
             Some(_) | None => true,

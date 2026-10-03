@@ -405,6 +405,97 @@ final class NativeVoicePolicyTests: XCTestCase {
         XCTAssertNil(NativeVoicePolicy.voiceAssignment(content: #"{"engine":"chatterbox","key":"chatterbox:evie","label":"Evie","version":2}"#, tags: [["d", agent]]))
     }
 
+    func testFishVoiceGrammarAcceptsSharedVectors() throws {
+        try checkVoiceGrammar(engine: "fish", accepted: true, expectedCount: 4)
+    }
+
+    func testFishVoiceGrammarRejectsSharedVectors() throws {
+        try checkVoiceGrammar(engine: "fish", accepted: false, expectedCount: 19)
+    }
+
+    func testElevenVoiceGrammarAcceptsSharedVectors() throws {
+        try checkVoiceGrammar(engine: "eleven", accepted: true, expectedCount: 4)
+    }
+
+    func testElevenVoiceGrammarRejectsSharedVectors() throws {
+        try checkVoiceGrammar(engine: "eleven", accepted: false, expectedCount: 18)
+    }
+
+    private func checkVoiceGrammar(engine: String, accepted: Bool, expectedCount: Int) throws {
+        // Same raw keys as relay ingest_agent_voice_tests and web agentVoiceSelection tests.
+        let url = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+            .appendingPathComponent("../../../../test-fixtures/voice/voice-key-grammar.json").standardized
+        let fixture = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: [String: [String]]])
+        XCTAssertEqual(fixture.count, 2)
+        let keys = try XCTUnwrap(fixture[engine]?[accepted ? "accept" : "reject"])
+        XCTAssertEqual(keys.count, expectedCount)
+        let agent = String(repeating: "ab", count: 32)
+        for key in keys {
+            // Serialize raw keys so newline/Unicode reject vectors reach the real parser.
+            let data = try JSONSerialization.data(withJSONObject: ["version": 1, "label": "Voice", "engine": engine, "key": key])
+            let content = try XCTUnwrap(String(data: data, encoding: .utf8))
+            let selection = NativeVoicePolicy.voiceSelection(content: content, tags: [["d", "agent-voice"]])
+            let assignment = NativeVoicePolicy.voiceAssignment(content: content, tags: [["d", agent]])
+            if accepted {
+                let row = try XCTUnwrap(selection, key)
+                let ownerRow = try XCTUnwrap(assignment, key)
+                XCTAssertEqual(row.engine, engine, key)
+                XCTAssertEqual(row.key, key, key)
+                XCTAssertEqual(ownerRow.agent, agent, key)
+                XCTAssertEqual(ownerRow.engine, engine, key)
+                XCTAssertEqual(ownerRow.key, key, key)
+                let voice = NativeVoicePolicy.split(row)
+                for route in [
+                    NativeVoicePolicy.bridgeVoice(pubkey: agent, override: nil, assignment: nil, selection: voice),
+                    NativeVoicePolicy.bridgeVoice(pubkey: agent, override: nil, assignment: NativeVoicePolicy.split((ownerRow.engine, ownerRow.key)), selection: ("pocket", "anna"))
+                ] {
+                    XCTAssertEqual(route.engine, engine, key)
+                    XCTAssertEqual(route.voice, String(key.dropFirst(engine.count + 1)), key)
+                }
+            } else {
+                XCTAssertNil(selection, key)
+                XCTAssertNil(assignment, key)
+            }
+        }
+    }
+
+    func testFishChannelOverrideUsesNativeBridgeRouteAndClears() throws {
+        let agent = String(repeating: "ab", count: 32)
+        let voice = try NativeAgentVoice(relay: XCTUnwrap(URL(string: "wss://relay.invalid")), channel: "test",
+                                         stt: "wss://stt.invalid/stt", tts: "https://tts.invalid/tts",
+                                         onChange: {}, onSpeaking: { _ in }, audioPeers: { [] })
+        // Exercise the actual setter and the route playNext uses, without starting sockets/audio.
+        voice.setVoiceOverride(["engine": "fish", "key": "fish:0123456789abcdef0123456789abcdef"])
+        XCTAssertEqual(voice.bridgeVoice(for: agent).engine, "fish")
+        XCTAssertEqual(voice.bridgeVoice(for: agent).voice, "0123456789abcdef0123456789abcdef")
+        voice.setVoiceOverride(["engine": "fish", "key": "eleven:T720RsqorTx4ZZWohrNN"])
+        XCTAssertEqual(voice.bridgeVoice(for: agent).engine, "chatterbox")
+        voice.setVoiceOverride(["engine": "eleven", "key": "eleven:T720RsqorTx4ZZWohrNN"])
+        XCTAssertEqual(voice.bridgeVoice(for: agent).engine, "eleven")
+        XCTAssertEqual(voice.bridgeVoice(for: agent).voice, "T720RsqorTx4ZZWohrNN")
+        voice.setVoiceOverride([:])
+        XCTAssertEqual(voice.bridgeVoice(for: agent).engine, "chatterbox")
+        XCTAssertEqual(voice.bridgeVoice(for: agent).voice, NativeVoicePolicy.derivedVoice(agent).voice)
+    }
+
+    func testFishVoiceUsesTheExistingPrecedenceLayers() {
+        let agent = String(repeating: "ab", count: 32)
+        let fish = (engine: "fish", voice: "0123456789abcdef0123456789abcdef")
+        let eleven = (engine: "eleven", voice: "T720RsqorTx4ZZWohrNN")
+        let override = NativeVoicePolicy.bridgeVoice(pubkey: agent, override: fish, assignment: eleven, selection: eleven)
+        XCTAssertEqual(override.engine, "fish")
+        XCTAssertEqual(override.voice, "0123456789abcdef0123456789abcdef")
+        let assigned = NativeVoicePolicy.bridgeVoice(pubkey: agent, override: nil, assignment: fish, selection: eleven)
+        XCTAssertEqual(assigned.engine, "fish")
+        XCTAssertEqual(assigned.voice, "0123456789abcdef0123456789abcdef")
+        let selected = NativeVoicePolicy.bridgeVoice(pubkey: agent, override: nil, assignment: nil, selection: fish)
+        XCTAssertEqual(selected.engine, "fish")
+        XCTAssertEqual(selected.voice, "0123456789abcdef0123456789abcdef")
+        let higher = NativeVoicePolicy.bridgeVoice(pubkey: agent, override: eleven, assignment: fish, selection: fish)
+        XCTAssertEqual(higher.engine, "eleven")
+        XCTAssertEqual(higher.voice, "T720RsqorTx4ZZWohrNN")
+    }
+
     func testBridgeVoicePrecedenceOverrideOwnerAgentDerived() {
         let pk = String(repeating: "a", count: 64)
         let override = (engine: "eleven", voice: "T720RsqorTx4ZZWohrNN")

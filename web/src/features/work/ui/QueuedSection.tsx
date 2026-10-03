@@ -9,6 +9,7 @@ import { HexAvatar, StateHex } from "@/shared/ui/HexAvatar";
 import type { DoneRow, DoneState, QueuedRow } from "../lib/workTypes.ts";
 import { SectionHeader } from "./NeedsYouSection";
 import { channelLabel, clockLabel, metaLine, shortAge } from "./workLabels.ts";
+import { JobSuffix } from "./JobSuffix";
 import { whatLine } from "./whatLine.ts";
 
 /**
@@ -17,24 +18,57 @@ import { whatLine } from "./whatLine.ts";
  */
 function WhoWhat({
   name,
+  job,
   meta,
   what,
-  trailing = null,
+  outcome = null,
 }: {
   name: string;
+  job?: DoneRow["job"];
   meta: string;
   what: string | null;
-  trailing?: ReactNode;
+  outcome?: string | null;
 }) {
   const top = (
     <>
       <b className="font-semibold">{name}</b>
+      <JobSuffix job={job} />
       <span className="text-muted-foreground">
-        {meta ? ` ${meta}` : null}
-        {trailing}
+        {meta ? `${job ? " · " : " "}${meta}` : null}
       </span>
     </>
   );
+  if (outcome) {
+    // Outcomes earn their own space: a long seat/engine/channel headline
+    // must never hide a failure. Only the neighboring work title truncates.
+    return (
+      <span className="flex min-w-0 flex-1 flex-col">
+        <span className="truncate text-sidebar-meta">{top}</span>
+        <span className="flex min-w-0 items-baseline gap-1 text-xs">
+          <span
+            data-testid="done-row-outcome"
+            className="max-w-full shrink-0 break-words text-coral-ink"
+          >
+            {outcome}
+          </span>
+          {what && (
+            <>
+              <span aria-hidden className="text-ink-2">
+                ·
+              </span>
+              <span
+                data-testid="work-row-ask"
+                title={what}
+                className="min-w-0 truncate text-ink-2"
+              >
+                {what}
+              </span>
+            </>
+          )}
+        </span>
+      </span>
+    );
+  }
   if (!what) {
     return (
       <span className="min-w-0 flex-1 truncate text-sidebar-meta">{top}</span>
@@ -296,17 +330,23 @@ function DoneRows({
         const name = authorLabel(row.agentPubkey, profiles);
         const abnormal =
           row.stopReason !== null && row.stopReason !== "end_turn";
-        const what = whatLine(row.title, row.ask, profiles, row.latest);
+        const what = whatLine(
+          row.title,
+          row.ask,
+          profiles,
+          row.job ? null : row.latest,
+        );
         return (
           <button
             key={row.key}
             type="button"
             data-testid="done-row"
+            data-row-key={row.key}
             disabled={!row.channelId}
             onClick={() => row.channelId && onOpenChannel(row.channelId)}
             className={cn(
               "flex w-full items-center gap-2.25 border-b border-border px-3 text-left last:border-b-0 hover:bg-accent disabled:cursor-default",
-              what ? "min-h-11 py-1" : "h-8.5",
+              what || abnormal ? "min-h-11 py-1" : "h-8.5",
             )}
           >
             <HexAvatar
@@ -317,13 +357,10 @@ function DoneRows({
             />
             <WhoWhat
               name={name}
+              job={row.job}
               meta={channelLabel(row.channelId, channels) || "heartbeat"}
               what={what}
-              trailing={
-                abnormal ? (
-                  <span className="text-coral-ink"> · {row.stopReason}</span>
-                ) : null
-              }
+              outcome={abnormal ? row.stopReason : null}
             />
             <span
               className={cn(

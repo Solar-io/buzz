@@ -3,6 +3,9 @@ import { test } from "node:test";
 
 import {
   EMPTY_STATUS_STORE,
+  engineLabel,
+  jobsFinished,
+  jobsRunning,
   currentTurns,
   endedTurns,
   foldStatus,
@@ -12,6 +15,8 @@ import {
   pruneStatus,
   statusTriggers,
 } from "./taskStatus.ts";
+
+import { jobEvent } from "./jobFixture.mjs";
 
 const AGENT = "aa".repeat(32);
 const CH = "0f5c1e8a-2b3d-4c5e-8f60-718293a4b5c6";
@@ -293,4 +298,142 @@ test("past five steps the row writes 'n of m' instead", () => {
   assert.equal(progressText({ done: 4, total: 7 }), "4 of 7");
   assert.equal(progressText({ done: 2, total: 3 }), null, "segments show");
   assert.equal(progressText(null), null);
+});
+
+test("job parser accepts every field and optional launching turn", () => {
+  const event = jobEvent({
+    model: "gpt-6.1-sol",
+    title: "Fix it",
+    turn: "launch:1",
+    trigger: TRIGGER,
+  });
+  const head = parseTaskStatus(event);
+  assert.deepEqual(head, {
+    eventId: event.id,
+    author: AGENT,
+    createdAt: 1000,
+    channelId: CH,
+    ns: "job",
+    jobId: "j1",
+    role: "coder",
+    model: "gpt-6.1-sol",
+    title: "Fix it",
+    turnId: "launch:1",
+    state: "running",
+    started: 900,
+    ended: null,
+    trigger: TRIGGER,
+    reason: null,
+  });
+  assert.equal(parseTaskStatus(jobEvent()).turnId, null);
+  assert.equal(parseTaskStatus(jobEvent({ state: "done" })).ended, 1000);
+});
+
+test("job parser rejects invalid ids roles bindings and lifecycle fields", () => {
+  for (const overrides of [
+    { dChannel: CH_B },
+    { channel: `${CH}\n` },
+    { jobId: "a:b" },
+    { jobId: "x".repeat(65) },
+    { jobId: "" },
+    { jobId: "j1\n" },
+    { role: null },
+    { role: "Coder!" },
+    { role: "x".repeat(33) },
+    { role: "coder\n" },
+    { ended: 1000 },
+    { state: "done", ended: null },
+    { state: "done", ended: 899 },
+    { state: "done", reason: "timeout" },
+    { state: "paused", ended: 1000 },
+    { content: "note" },
+    { extra: [["progress", "1", "2"]] },
+    { extra: [["session", "0"]] },
+    { turn: "bad id" },
+    { turn: "t1", extra: [["turn", "t2"]] },
+    { model: "bad id" },
+    { model: "x".repeat(65) },
+    { model: "gpt\n" },
+    { title: "é".repeat(121) },
+    { trigger: "BAD" },
+    { reason: "é".repeat(33), state: "error" },
+    { extra: [["role", "tester"]] },
+    {
+      extra: [
+        ["model", "gpt"],
+        ["model", "glm"],
+      ],
+    },
+  ])
+    assert.equal(
+      parseTaskStatus(jobEvent(overrides)),
+      null,
+      JSON.stringify(overrides),
+    );
+  assert.ok(
+    parseTaskStatus(
+      jobEvent({
+        jobId: "x".repeat(64),
+        role: "x".repeat(32),
+        model: "x".repeat(64),
+        title: "é".repeat(120),
+      }),
+    ),
+  );
+});
+
+test("three jobs in one author channel stay independent of turn stores and replace by NIP order", () => {
+  const store = fold(
+    jobEvent({ jobId: "j1" }),
+    jobEvent({ jobId: "j2" }),
+    jobEvent({ jobId: "j3" }),
+  );
+  assert.equal(store.jobs.size, 3);
+  assert.equal(store.current.size, 0);
+  assert.equal(store.ended.size, 0);
+  assert.equal(store.details.size, 0);
+  const newer = foldStatus(store, [
+    parseTaskStatus(jobEvent({ jobId: "j1", state: "done", at: 1002 })),
+  ]);
+  const stale = foldStatus(newer, [
+    parseTaskStatus(jobEvent({ jobId: "j1", at: 1001 })),
+  ]);
+  assert.equal(stale, newer);
+  assert.equal(jobsRunning(stale, 1100).length, 2);
+  assert.equal(jobsFinished(stale, 0, 1100)[0].state, "done");
+  const tied = foldStatus(store, [
+    parseTaskStatus(
+      jobEvent({ jobId: "j1", id: "0", at: 1000, title: "lower wins" }),
+    ),
+  ]);
+  assert.equal(
+    [...tied.jobs.values()].find((h) => h.jobId === "j1").title,
+    "lower wins",
+  );
+});
+
+test("jobs prune below the day floor and retain triggers for queued suppression", () => {
+  const store = fold(jobEvent({ trigger: TRIGGER, at: 1000 }));
+  assert.ok(statusTriggers(store).get(AGENT).has(TRIGGER));
+  assert.equal(pruneStatus(store, 1000), store);
+  assert.equal(pruneStatus(store, 1001).jobs.size, 0);
+  assert.equal(jobsFinished(store, 1001, 2000).length, 0);
+});
+
+test("engine labels are deterministic by model prefix", () => {
+  for (const [model, label] of [
+    ["gpt-6.1-sol", "GPT"],
+    ["GPT-5", "GPT"],
+    ["o3", "GPT"],
+    ["claude-opus", "Claude"],
+    ["opus-5", "Claude"],
+    ["sonnet", "Claude"],
+    ["haiku", "Claude"],
+    ["fable", "Claude"],
+    ["glm-5.2", "GLM"],
+    [null, null],
+    ["other/model", "other/model"],
+  ]) {
+    assert.equal(engineLabel(model), label);
+  }
 });

@@ -7,6 +7,7 @@ import { cn } from "@/shared/lib/cn";
 import { HexAvatar, StateHex } from "@/shared/ui/HexAvatar";
 import { progressText } from "../lib/taskStatus.ts";
 import type { RunRow } from "../lib/workTypes.ts";
+import { JobSuffix } from "./JobSuffix";
 import { SectionHeader } from "./NeedsYouSection";
 import { ProgressSegments } from "./ProgressSegments";
 import {
@@ -116,13 +117,18 @@ export function RunningSection({
               const quiet = row.state === "stalled" || row.state === "lost";
               // `!= null`: a row built before Phase 8 has no such fields.
               const title = row.title != null ? row.title : null;
-              const what = whatLine(title, row.ask, profiles, row.latest);
+              const what = whatLine(
+                title,
+                row.ask,
+                profiles,
+                row.job ? null : row.latest,
+              );
               const steps = progressText(row.progress ?? null);
               const rest = metaLine(steps, where);
               return (
                 <div
                   key={row.key}
-                  data-testid={`run-row-${row.state}`}
+                  data-testid={row.job ? "run-row-job" : `run-row-${row.state}`}
                   data-row-key={row.key}
                   className={cn(
                     "flex items-center gap-2.25 border-b border-border px-3 last:border-b-0",
@@ -160,9 +166,10 @@ export function RunningSection({
                           )}
                         >
                           <b className="font-semibold">{name}</b>
+                          <JobSuffix job={row.job} />
                           {(page ? where : rest) ? (
                             <span className="text-muted-foreground">
-                              {" "}
+                              {row.job ? " · " : " "}
                               {page ? where : rest}
                             </span>
                           ) : null}
@@ -184,8 +191,12 @@ export function RunningSection({
                         )}
                       >
                         <b className="font-semibold">{name}</b>
+                        <JobSuffix job={row.job} />
                         {rest ? (
-                          <span className="text-muted-foreground"> {rest}</span>
+                          <span className="text-muted-foreground">
+                            {row.job ? " · " : " "}
+                            {rest}
+                          </span>
                         ) : null}
                       </span>
                     )}

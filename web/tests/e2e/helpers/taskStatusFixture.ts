@@ -76,6 +76,45 @@ export function lifecycleHead(
   });
 }
 
+/** Independent job replacement head, mirroring the SDK builder. */
+export function jobHead(
+  author: string,
+  channelId: string,
+  jobId: string,
+  state: "running" | "done" | "error" | "cancelled",
+  at: number,
+  started: number,
+  fields: {
+    role: string;
+    model?: string;
+    title?: string;
+    turn?: string;
+    trigger?: string;
+    reason?: string;
+  },
+): MockEvent {
+  return mockEvent({
+    id: id(),
+    kind: 30624,
+    pubkey: author,
+    created_at: at,
+    content: "",
+    tags: [
+      ["d", `job:${channelId}:${jobId}`],
+      ["h", channelId],
+      ["role", fields.role],
+      ["state", state],
+      ["started", String(started)],
+      ...(state === "running" ? [] : [["ended", String(at)]]),
+      ...(fields.model ? [["model", fields.model]] : []),
+      ...(fields.title ? [["title", fields.title]] : []),
+      ...(fields.turn ? [["turn", fields.turn]] : []),
+      ...(fields.trigger ? [["e", fields.trigger, "", "trigger"]] : []),
+      ...(fields.reason ? [["reason", fields.reason]] : []),
+    ],
+  });
+}
+
 export function detailHead(
   author: string,
   channelId: string,

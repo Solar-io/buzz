@@ -573,4 +573,28 @@ mod tests {
         let out = stale_running_sweep_events(&[stale], &keys, 2_000);
         assert_eq!(out[0].created_at.as_secs(), 5_001);
     }
+    #[test]
+    fn sweep_ignores_job_heads() {
+        use buzz_sdk::task_status::{build_task_job, TaskJob};
+        let keys = Keys::generate();
+        // Bind a turn so dropping the namespace guard really builds an error event.
+        let event = build_task_job(&TaskJob {
+            channel: Uuid::new_v4(),
+            job_id: "j1",
+            role: "coder",
+            state: TaskState::Running,
+            started: 1000,
+            ended: None,
+            model: None,
+            title: None,
+            turn_id: Some("launch-1"),
+            trigger: None,
+            reason: None,
+            created_at: 1000,
+        })
+        .unwrap()
+        .sign_with_keys(&keys)
+        .unwrap();
+        assert!(stale_running_sweep_events(&[event], &keys, 2000).is_empty());
+    }
 }

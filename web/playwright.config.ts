@@ -57,6 +57,8 @@ export default defineConfig({
         "**/shelf.spec.ts",
         "**/favorites-sync.spec.ts",
         "**/channel-sheet.spec.ts",
+        "**/canvas-edit.spec.ts",
+        "**/channel-members.spec.ts",
       ],
       use: {
         ...devices["Desktop Chrome"],

@@ -48,6 +48,7 @@ import { KeyboardShortcutsCard } from "@/features/settings/ui/KeyboardShortcutsC
 import { useFeatureEnabled } from "@/features/settings/useFeatureFlags";
 import { AgentVoicesCard } from "@/features/voice/ui/AgentVoicesCard.tsx";
 import { VoiceSettingsCard } from "@/features/voice/ui/VoiceSettingsCard.tsx";
+import { VoiceLibraryCard } from "@/features/voice/ui/VoiceLibraryCard.tsx";
 import { useOwnPubkey } from "@/shared/lib/useOwnPubkey";
 
 import { AppearanceSection } from "./AppearanceSection";
@@ -289,6 +290,7 @@ export function SettingsPage({ group, agent, tab }: SettingsPageProps) {
                 <div className="space-y-4">
                   <VoiceSettingsCard selfPubkey={self} />
                   <AgentVoicesCard />
+                  <VoiceLibraryCard />
                 </div>
               ) : null}
               {active === "notifications" ? (

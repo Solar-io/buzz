@@ -31,6 +31,7 @@ globalThis.__BUZZ_TEST_MODULE_STUBS__ = {
   "@/shared/layout/AppShell": `export function usePhoneLayout() { return false; } export function usePhoneBarSlot() { return null; }`,
   "../ChannelHeader": `export function ChannelHeader(props) { return globalThis.__BUZZ_TEST_REACT__.createElement('button', {onClick: () => props.onOpenSettings('about')}, 'Channel settings'); }`,
   "../ChannelMembersButton": `export function ChannelMembersButton() { return null; }`,
+  "./MembersTab": `export function MembersTab() { return null; }`,
   "../../hooks.ts": `export async function renameChannel(session, id, name) { return session.publish({kind:9002, tags:[['h',id],['name',name]]}); } export async function deleteChannel(session,id) { return session.publish({kind:9008,tags:[['h',id]]}); } export async function leaveChannel(session,id) { return session.publish({kind:9022,tags:[['h',id]]}); }`,
   "@/features/channel-templates/useChannelTemplates": `export function useChannelTemplates() { return { create: async (draft) => { globalThis.savedTemplate = draft; return null; } }; }`,
   "@/features/canvas/useChannelCanvas": `export function useChannelCanvas() { return {phase:'ready',doc:{content:'# Canvas'}}; }`,
