@@ -94,3 +94,11 @@ W5a canvas editing:
 - [x] Empty-canvas and phone reachability through About > Canvas; live echo and second-viewer rendering through mocked relay traffic.
 - [x] Behaviour tests, fail-first proof, required web checks, and 1440 / 390 screenshots. Evidence: [W5a report](TEST_REPORTS/parity-w5a.md).
 - [ ] W5a live acceptance: edit and clear a private test channel canvas with an enrolled throwaway identity; verify a second browser receives both updates. The worktree has no live test signing credentials.
+
+W2 people in channel Members (in progress):
+- [ ] Preserve roles from the live replacement roster; exact membership and community moderation tag builders.
+- [ ] Members/People rows, admin role changes and removal, last-owner guard, member search.
+- [ ] Add People with per-person roles and per-person relay refusals.
+- [ ] Community-only timeout/ban menus, reason entry, authority and archived-state guards.
+- [ ] Full web gates, named mechanism reversion proof, built-app checks and 1440/390/375 screenshots.
+- [ ] Private live-relay channel acceptance with a second authorized test identity.

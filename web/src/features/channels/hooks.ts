@@ -6,6 +6,7 @@ import { useRelaySession } from "@/shared/api/RelaySessionProvider";
 import { useRelaySelf } from "@/shared/lib/relaySelf";
 import { useStableSortedSet } from "@/shared/lib/useStableSortedSet";
 import { attributeCallLines, hasCallLines } from "./lib/callLines.ts";
+import { channelMemberRole } from "./lib/channelMemberAdmin.ts";
 import {
   SYSTEM_MESSAGE_KIND,
   systemEventFromContent,
@@ -326,7 +327,7 @@ export interface ChannelMember {
   name: string;
   /**
    * Role from the relay-signed 39002 (`owner`, `admin`, `member`, `bot`…),
-   * where the roster source carries it — the TTL-room snapshot does.
+   * read from the fourth slot of the roster's NIP-29 p tags.
    */
   role?: string;
 }
@@ -390,7 +391,12 @@ export function useChannelMembers(
             for (const tag of event.tags) {
               if (tag[0] === "p" && typeof tag[1] === "string") {
                 if (!next.has(tag[1])) {
-                  next.set(tag[1], { pubkey: tag[1], name: shortKey(tag[1]) });
+                  const role = channelMemberRole(tag);
+                  next.set(tag[1], {
+                    pubkey: tag[1],
+                    name: shortKey(tag[1]),
+                    ...(role ? { role } : {}),
+                  });
                 }
               }
             }

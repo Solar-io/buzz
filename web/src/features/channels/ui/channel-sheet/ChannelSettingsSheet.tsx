@@ -11,6 +11,7 @@ import { cn } from "@/shared/lib/cn";
 import type { ChannelSummary } from "../../useChannels";
 import type { ChannelMetadataPatch } from "../../lib/channelMetadataEdit.ts";
 import { AboutTab } from "./AboutTab";
+import { MembersTab } from "./MembersTab";
 
 export type ChannelSettingsTab = "about" | "members" | "workflows";
 export interface ChannelSettingsSheetProps {
@@ -28,6 +29,10 @@ export interface ChannelSettingsSheetProps {
   isMember: boolean;
   memberCount: number;
   agentCount: number;
+  memberContext?: {
+    selfPubkey: string | null;
+    agentPubkeys: ReadonlySet<string>;
+  };
 }
 
 /** A modal sheet over the conversation; it never occupies a right-pane tab. */
@@ -146,6 +151,12 @@ export function ChannelSettingsSheet(props: ChannelSettingsSheetProps) {
               busy={busy}
               run={run}
               onMembers={() => setTab("members")}
+            />
+          ) : tab === "members" && props.memberContext ? (
+            <MembersTab
+              channelId={props.channel.id}
+              archived={props.channel.archived}
+              {...props.memberContext}
             />
           ) : (
             <p className="py-8 text-sm text-muted-foreground">
