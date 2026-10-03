@@ -178,3 +178,13 @@ Identity/upload, linked Library entry, patch-only environment rows and confirmed
 2026-10-03 — W9b2 current-main composition
 
 Source `5e66e7718` composes W9b2 parent `14a53f7b1` with main parent `775f6db5f`. AgentManagementSection now uses W8a RosterTable with P0 presence controlLock; the duplicate AgentRosterList is removed and its shared working dot lives in AgentWorkingDot. All Library/create/footer/navigation/cards and both parents' Playwright registrations are preserved. 4,421 units and 50 requested browser cases pass, as do TypeScript, 39-file Biome and build. Withdrawing the composed lock fails the named row-disable case; exact restoration/rebuild passes. The first combined run had one pre-assertion navigation timeout; the unchanged named and full reruns pass. [Full receipt](TEST_REPORTS/parity-w9b2.md#w9b2-composition-with-current-main--2026-10-03).
+
+2026-10-03 — Huddle archive discovery
+
+Grace-fire archives now refresh kind:39000 and evict channel subscriptions, preserving the end outcome and normal-call silence. Startup reconciliation repairs archived, non-deleted channels using database-resolved community/host contexts, keyset pagination and 100-row batches; errors are logged and the worker never blocks startup. The fork manifest separates the upstreamable grace fix from the fork-local backfill.
+
+Library inventory: 1,115 before, 1,119 after (four added Postgres-gated tests, explicitly executed). Serial baseline and final both have 1,050 passes and the same mesh echo failure; ignored counts are 64 and 68. All 18 huddle tests and 13 binary tests pass after restoration. Removing the emit call and removing the selector archived-tag predicate each fail their named test with the full inventory unchanged at 1,119. Strict Clippy and formatting pass. Full-suite completion remains blocked by the unchanged mesh test; no gate waiver was approved. Scope excludes deployment, live-database access and canonical-checkout writes. [Commands and receipts](TEST_REPORTS/huddle-archive-discovery.md).
+
+2026-10-03 — Huddle archive runtime QA
+
+The rebuilt worktree relay returned readiness HTTP 200 with {"status":"ready"}; request-specific GET logs show status 200 and 11 ms. Agent Brave manual sign-in, private parent selection and message send rendered, and the persisted message was read back. A real audio join/disconnect triggered the 30 s grace and a valid archived=true kind:39000. The web transport room was already TTL-filtered, so live sidebar disappearance and desktop acceptance are not claimed. Optional host-stats CSP errors were observed; no page exceptions. Owned tab/process/container/database and generated key fixtures were cleaned up. [Runtime receipt](TEST_REPORTS/huddle-archive-discovery.md#isolated-runtime-qa).

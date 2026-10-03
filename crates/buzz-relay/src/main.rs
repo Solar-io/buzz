@@ -665,6 +665,17 @@ async fn main() -> anyhow::Result<()> {
         });
     }
 
+    // Fork-local one-shot repair for archives produced before the huddle
+    // grace path refreshed discovery. Background and fail-open: startup does
+    // not wait for the scan or depend on its success.
+    tokio::spawn({
+        let state = Arc::clone(&state);
+        async move {
+            buzz_relay::handlers::archived_discovery::reconcile_archived_channel_discovery(&state)
+                .await;
+        }
+    });
+
     // Ephemeral channel reaper — archives channels whose TTL deadline has passed.
     // Runs every 60s, matching the workflow cron loop pattern. The SQL UPDATE
     // uses `archived_at IS NULL` as a guard, so concurrent runs from multiple

@@ -2153,6 +2153,17 @@ impl Db {
         channel::reap_expired_ephemeral_channels(&self.pool).await
     }
 
+    /// Page through archived channels needing a relay-signed metadata refresh.
+    #[datastore_span(name = "archived_channels_missing_discovery", system = "postgresql")]
+    pub async fn archived_channels_missing_discovery(
+        &self,
+        relay_pubkey: &[u8],
+        after: Option<(Uuid, Uuid)>,
+        limit: i64,
+    ) -> Result<Vec<channel::ArchivedChannelDiscovery>> {
+        channel::archived_channels_missing_discovery(&self.pool, relay_pubkey, after, limit).await
+    }
+
     /// Delete retained agent observer frames older than `cutoff`.
     #[datastore_span(name = "prune_expired_observer_frames", system = "postgresql")]
     pub async fn prune_expired_observer_frames(
