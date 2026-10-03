@@ -1,4 +1,4 @@
-import { expect, type Page } from "@playwright/test";
+import { expect, type Locator, type Page } from "@playwright/test";
 import { mkdirSync } from "node:fs";
 import path from "node:path";
 import * as nip44 from "nostr-tools/nip44";
@@ -182,7 +182,7 @@ async function blank(page: Page) {
     .fill("Reply briefly.");
 }
 
-async function screenshot(page: Page, name: string) {
+async function screenshot(page: Page, name: string, subject?: Locator) {
   expect(
     await page.evaluate(
       () => document.documentElement.scrollWidth <= innerWidth,
@@ -201,6 +201,10 @@ async function screenshot(page: Page, name: string) {
   });
   const dir = path.resolve("../.scratch/w11a/screenshots");
   mkdirSync(dir, { recursive: true });
+  if (subject) {
+    await subject.screenshot({ path: path.join(dir, `${name}.png`) });
+    return;
+  }
   await page.screenshot({
     path: path.join(dir, `${name}.png`),
     fullPage: true,
@@ -226,7 +230,11 @@ for (const width of [1440, 390]) {
       .evaluate((heading) =>
         heading.parentElement?.scrollIntoView({ block: "start" }),
       );
-    await screenshot(page, `blank-runtime-${width}`);
+    await screenshot(
+      page,
+      `blank-runtime-${width}`,
+      page.getByRole("heading", { name: "Runtime", exact: true }).locator(".."),
+    );
     await page
       .getByRole("heading", { name: "Environment variables", exact: true })
       .evaluate((heading) =>
