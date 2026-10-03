@@ -146,3 +146,37 @@ test("mixed v4/v5 fleet preserves legacy controls while still checking v5 presen
     false,
   );
 });
+
+test("stale unregister checks desktop presence without a claiming machine", () => {
+  const stale = "dd".repeat(32);
+  const command = { action: "unregister", request: { pubkey: stale } };
+  assert.equal(
+    adminCommandLock(command, undefined, [catalog], presence).locked,
+    false,
+  );
+  const modern = { ...catalog, version: 5, caps: ["ping"] };
+  const states = new Map([
+    [catalog.machine, { status: "online", missed: 0, lastSeen: 1 }],
+  ]);
+  assert.equal(
+    adminCommandLock(command, undefined, [modern], states).locked,
+    false,
+  );
+  states.set(catalog.machine, { status: "offline", missed: 2, lastSeen: 1 });
+  assert.equal(
+    adminCommandLock(command, undefined, [modern], states).locked,
+    true,
+  );
+  assert.equal(adminCommandLock(command, undefined, [], states).locked, true);
+  for (const action of ["start", "stop", "restart", "update", "delete"])
+    assert.equal(
+      adminCommandLock(
+        { action, request: { pubkey: stale } },
+        undefined,
+        [catalog],
+        presence,
+      ).locked,
+      true,
+      action,
+    );
+});
