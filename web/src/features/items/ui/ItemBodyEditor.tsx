@@ -8,6 +8,7 @@ import { ITEM_BODY_MAX_BYTES } from "../lib/itemEvent.ts";
 import {
   insertItemAttachment,
   itemAttachmentMarkdown,
+  itemAttachmentUrl,
   itemBodyBytes,
 } from "../lib/itemAttachments.ts";
 
@@ -37,8 +38,8 @@ export function ItemBodyEditor({
       const input = textarea.current;
       const inserted = insertItemAttachment(
         latestBody.current,
-        input?.selectionStart ?? latestBody.current.length,
-        input?.selectionEnd ?? latestBody.current.length,
+        caret.current ?? input?.selectionStart ?? latestBody.current.length,
+        caret.current ?? input?.selectionEnd ?? latestBody.current.length,
         itemAttachmentMarkdown(descriptor, row.name),
       );
       latestBody.current = inserted.body;
@@ -116,9 +117,7 @@ export function ItemBodyEditor({
         onRemove={(id) => {
           const row = uploads.attachments.find((entry) => entry.id === id);
           if (row?.descriptor) {
-            const url = row.descriptor.url.replace(/[()<>\\\s]/g, (character) =>
-              encodeURIComponent(character),
-            );
+            const url = itemAttachmentUrl(row.descriptor.url);
             const next = removeAttachmentMarkdown(latestBody.current, url);
             latestBody.current = next;
             onChange(next);

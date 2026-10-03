@@ -7,15 +7,27 @@ export function itemAttachmentMarkdown(
   descriptor: BlobDescriptor,
   name: string,
 ): string {
-  const url = descriptor.url.replace(/[()<>\\\s]/g, (character) =>
-    encodeURIComponent(character),
-  );
-  const label = name.replace(/[\\!*_`<>]/g, "\\$&");
+  const url = itemAttachmentUrl(descriptor.url);
   const link = attachmentMarkdown(
     { ...descriptor, url, mime_type: "application/octet-stream" },
-    label,
-  ).slice(1);
+    name,
+  )
+    .slice(1)
+    .replace(
+      /^\[([^\]]*)\]/,
+      (_, label: string) => `[${label.replace(/[\\!*_`<>]/g, "\\$&")}]`,
+    );
   return `${descriptor.mime_type.startsWith("image/") ? "!" : ""}${link}`;
+}
+
+/** Keep a relay URL inside a markdown destination, including unusual filenames. */
+export function itemAttachmentUrl(url: string): string {
+  return url.replace(/[()<>\\\s]/g, (character) =>
+    encodeURIComponent(character).replace(
+      /[()]/g,
+      (paren) => `%${paren.charCodeAt(0).toString(16).toUpperCase()}`,
+    ),
+  );
 }
 
 /** The relay bounds the body by UTF-8 bytes, not JavaScript string length. */
