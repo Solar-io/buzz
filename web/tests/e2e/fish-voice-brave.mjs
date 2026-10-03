@@ -156,7 +156,7 @@ export default async (page, fixture) => {
         body: Buffer.alloc(4800),
       });
     }
-    if (url.hostname === "fish-web-test.invalid") {
+    if (url.hostname === new URL(fixture.origin).hostname) {
       const path = url.pathname.startsWith("/assets/")
         ? url.pathname
         : "/index.html";
@@ -166,8 +166,12 @@ export default async (page, fixture) => {
     }
     return json({ voices: [], status: "ok" });
   });
+  // Synthetic hosts have no worker-network origin; PWA registration is outside this voice workflow.
+  await page.addInitScript(() => {
+    delete Object.getPrototypeOf(navigator).serviceWorker;
+  });
   await page.setViewportSize({ width: 1440, height: 1000 });
-  await page.goto("https://fish-web-test.invalid/repos");
+  await page.goto(`${fixture.origin}/repos`);
   await page.getByRole("button", { name: "Enter key manually" }).click();
   await page.getByPlaceholder("nsec1…").fill(fixture.nsec);
   await page.getByRole("button", { name: "Continue", exact: true }).click();
@@ -177,7 +181,7 @@ export default async (page, fixture) => {
     .fill("disposable-fish-test");
   await page.getByRole("button", { name: "Finish", exact: true }).click();
   await page.getByTestId("channel-sidebar").waitFor();
-  await page.goto("https://fish-web-test.invalid/repos/settings?group=voice");
+  await page.goto(`${fixture.origin}/repos/settings?group=voice`);
   const card = page.getByTestId("settings-voice-library");
   await card.waitFor();
   assert.deepEqual(
@@ -248,12 +252,21 @@ export default async (page, fixture) => {
     /Jame.*not in library/,
   );
   await picker.getByRole("button", { name: "Cancel", exact: true }).click();
+  await page.evaluate(() =>
+    Promise.all(
+      document
+        .getAnimations()
+        .filter((a) => a.effect?.getComputedTiming().iterations !== Infinity)
+        .map((a) => a.finished.catch(() => {})),
+    ),
+  );
+  await page.screenshot({ path: `${root}/logs/fish-web-desktop.png` });
   await page.setViewportSize({ width: 390, height: 844 });
   await card.scrollIntoViewIfNeeded();
   assert.ok(await card.isVisible());
   await page.screenshot({ path: `${root}/logs/fish-web-phone.png` });
   isAdmin = false;
-  await page.goto("https://fish-web-test.invalid/repos/settings?group=voice");
+  await page.goto(`${fixture.origin}/repos/settings?group=voice`);
   await page.getByTestId("voice-library-readonly").waitFor();
   assert.equal(
     await card.getByRole("button", { name: "Add voice", exact: true }).count(),
@@ -287,6 +300,11 @@ export default async (page, fixture) => {
     consoleErrors,
   };
   receipt.signed = signed;
+  await page.evaluate(async () => {
+    localStorage.clear();
+    for (const database of await indexedDB.databases())
+      if (database.name) indexedDB.deleteDatabase(database.name);
+  });
   await page.unrouteAll({ behavior: "wait" });
   return receipt;
 };
