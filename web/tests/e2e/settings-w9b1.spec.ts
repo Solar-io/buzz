@@ -178,11 +178,18 @@ async function screenshot(page: Page, name: string) {
   ).toBe(true);
   const controls = await page
     .getByTestId("agent-settings-cards")
-    .locator("select:visible, input:visible")
+    .locator(
+      "select:visible, input:visible:not([type=checkbox]):not([type=radio])",
+    )
     .evaluateAll((elements) =>
       elements.map((el) => {
         const r = el.getBoundingClientRect();
-        return { left: r.left, right: r.right, width: r.width };
+        return {
+          left: r.left,
+          right: r.right,
+          width: r.width,
+          height: r.height,
+        };
       }),
     );
   expect(controls.length).toBeGreaterThan(0);
@@ -191,6 +198,8 @@ async function screenshot(page: Page, name: string) {
     expect(control.right).toBeLessThanOrEqual(
       page.viewportSize()?.width ?? 1440,
     );
+    if ((page.viewportSize()?.width ?? 1440) < 768)
+      expect(control.height).toBeGreaterThanOrEqual(44);
   }
 }
 
@@ -272,6 +281,12 @@ test("W9b1 390 and 375 phone sub-pages retain draft and save bar above tabs", as
     .getByText("Sam", { exact: true })
     .click();
   await page.setViewportSize({ width: 375, height: 1000 });
+  await expect(
+    page.getByRole("region", { name: "Settings changes" }),
+  ).toContainText("Sam");
+  await expect(
+    page.getByRole("region", { name: "Settings changes" }),
+  ).not.toContainText("allowlist");
   await screenshot(page, "phone-access-375");
   await page
     .getByRole("region", { name: "Settings changes" })
