@@ -156,6 +156,7 @@ export function ChannelSettingsSheet(props: ChannelSettingsSheetProps) {
             <MembersTab
               channelId={props.channel.id}
               archived={props.channel.archived}
+              onNavigate={props.onClose}
               {...props.memberContext}
             />
           ) : (

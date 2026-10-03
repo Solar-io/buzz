@@ -46,6 +46,7 @@ export function AgentMembersSection({
   pickerOpen,
   onPickerClose,
   peopleSection,
+  onNavigate,
 }: {
   channelId: string;
   members: ChannelMember[];
@@ -59,6 +60,7 @@ export function AgentMembersSection({
   pickerOpen: boolean;
   onPickerClose: () => void;
   peopleSection?: ReactNode;
+  onNavigate?: () => void;
 }) {
   const { session, status } = useRelaySession();
   const catalogs = useDesktopCatalogs();
@@ -296,12 +298,13 @@ export function AgentMembersSection({
                     {agent && (
                       <DropdownMenuItem
                         className="min-h-11"
-                        onSelect={() =>
+                        onSelect={() => {
+                          onNavigate?.();
                           void navigate({
                             to: "/repos/settings",
                             search: { group: "agents", agent: member.pubkey },
-                          })
-                        }
+                          });
+                        }}
                       >
                         Agent settings
                       </DropdownMenuItem>
@@ -317,6 +320,7 @@ export function AgentMembersSection({
                               result.message ||
                                 "Could not open the conversation.",
                             );
+                          onNavigate?.();
                           await navigate({
                             to: "/repos",
                             search: { c: result.channelId },

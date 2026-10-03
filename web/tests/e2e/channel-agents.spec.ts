@@ -1,7 +1,12 @@
 import { expect } from "@playwright/test";
 import * as nip44 from "nostr-tools/nip44";
 import { test } from "./helpers/agentBraveTest";
-import { openShell, channelPath, shot } from "./helpers/shellPage";
+import {
+  openShell,
+  channelPath,
+  shot,
+  mainComposer,
+} from "./helpers/shellPage";
 import {
   hexId,
   mockEvent,
@@ -100,6 +105,17 @@ for (const theme of [
           ];
           return [
             snapshot(),
+            mockEvent({
+              id: hexId(++clock),
+              kind: 39002,
+              created_at: clock,
+              tags: [
+                ["d", current.channels["dm-gilfoyle"]],
+                ["h", current.channels["dm-gilfoyle"]],
+                ["p", current.viewer, "", "member"],
+                ["p", current.agents.gilfoyle.pubkey, "", "bot"],
+              ],
+            }),
             ...Object.values(current.agents).map((agent) =>
               mockEvent({
                 id: hexId(++clock),
@@ -319,9 +335,11 @@ for (const theme of [
         .getByRole("menuitem", { name: "Message Gilfoyle", exact: true })
         .click();
       await expect(page).toHaveURL(new RegExp(fixture.channels["dm-gilfoyle"]));
-      await expect(
-        page.getByText("Gilfoyle will be notified", { exact: true }),
-      ).toBeVisible();
+      await expect(sheet).toHaveCount(0);
+      await expect(mainComposer(page)).toHaveAttribute(
+        "aria-description",
+        "Gilfoyle will be notified",
+      );
     });
   }
 }

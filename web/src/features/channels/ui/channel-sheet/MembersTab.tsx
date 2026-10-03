@@ -36,11 +36,13 @@ export function MembersTab({
   selfPubkey,
   agentPubkeys,
   archived,
+  onNavigate,
 }: {
   channelId: string;
   selfPubkey: string | null;
   agentPubkeys: ReadonlySet<string>;
   archived: boolean;
+  onNavigate?: () => void;
 }) {
   const { session } = useRelaySession();
   const members = useChannelMembers(channelId);
@@ -215,6 +217,7 @@ export function MembersTab({
         query={needle}
         pickerOpen={agentOpen}
         onPickerClose={() => setAgentOpen(false)}
+        onNavigate={onNavigate}
       />
       {addOpen && (
         <AddPeoplePicker
