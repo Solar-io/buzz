@@ -521,7 +521,7 @@ function ActionsRow({
           <Button
             size="sm"
             variant="ghost"
-            className="text-red-400 hover:text-red-300"
+            className="text-coral-ink hover:text-coral-ink"
             onClick={() => setConfirmingDelete(true)}
           >
             Delete
