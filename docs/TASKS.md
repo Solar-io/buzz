@@ -102,3 +102,7 @@ W2 people in channel Members (in progress):
 - [ ] Community-only timeout/ban menus, reason entry, authority and archived-state guards.
 - [ ] Full web gates, named mechanism reversion proof, built-app checks and 1440/390/375 screenshots.
 - [ ] Private live-relay channel acceptance with a second authorized test identity.
+- [ ] W3: agent/people partition, safe unregistered detection and existing-agent picker.
+- [ ] W3: accepted membership then acknowledged start; bounded bulk start/stop and confirmed cleanup.
+- [ ] W3: observer status, model/effort, row settings/message/instruction/stop/remove entry points.
+- [ ] W3: behavioral and fail-first tests, web gates, built-app 1440/390 screenshots and handoff.
