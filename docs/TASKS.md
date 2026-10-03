@@ -56,7 +56,7 @@ W1 channel settings:
 
 ## Fish audio P4 native iOS
 
-- [ ] In progress: accept Fish selection/assignment keys on the shared grammar and retain existing voice precedence.
-- [ ] Admit Fish channel overrides through NativeAgentVoice's existing bridge route.
-- [ ] Cover Fish and ElevenLabs shared grammar vectors with fixed case counts, plus Fish routing and override behavior.
-- [ ] Run the native simulator suite before/after, demonstrate named mutation failures, and record the handoff. Physical builds/installs, deployment and push are outside this phase.
+- [x] Accept Fish selection/assignment keys on the shared grammar and retain existing voice precedence.
+- [x] Admit Fish channel overrides through NativeAgentVoice's existing bridge route.
+- [x] Cover Fish and ElevenLabs shared grammar vectors with fixed case counts, plus Fish routing and override behavior; strict end anchors reject trailing LF/U+0085 on both engines.
+- [x] Native simulator suite: 40 → 46 discovered, 31 → 37 passing, nine unchanged skips; four named mutation failures with unchanged counts, restored suite green. [P4 evidence](TEST_REPORTS/fish-ios-native.md). Physical builds/installs, deployment and push are outside this phase.

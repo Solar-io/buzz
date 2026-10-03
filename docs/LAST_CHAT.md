@@ -75,3 +75,9 @@ Implemented `fish:[A-Za-z0-9]{16,64}` in the shared 30182/30183 payload validato
 2026-10-03 — P2 live baseline QA supplement
 
 The real Buzz page at :6351/repos/ and :6366/voices/eleven return HTTP 200 (Buzz HTML and 46 voice rows). Agent Brave clicked Settings → Voice & audio → Choose voice → ElevenLabs, filtered Roger and cancelled; screenshot inspected and tab closed. Browser requests show both voice lists at 200; recurring :6881/api/host-stats 401s remain visible. HTTP client traces, snapshot, screenshot and console/network logs are in logs/p2-live-*. These checks cover the served baseline; Fish save/playback remains unverified, and the two full-suite failures remain open. [QA supplement](TEST_REPORTS/fish-relay-cli.md).
+
+2026-10-02 — Fish audio P4 native iOS
+
+Native selections and owner assignments accept `fish:[A-Za-z0-9]{16,64}`. Channel overrides admit Fish and strip its prefix for the existing TTS bridge, preserving override > owner > agent > derived precedence. `NativeAgentVoice.bridgeVoice(for:)` extracts the existing playback route so the real override setter is exercised by tests. Raw Fish/ElevenLabs vectors cover both event parsers and routing with fixed 4/19 and 4/18 case counts. The simulator revealed that `$` accepted trailing LF/U+0085, so both cloud-key patterns use a strict `\z` end anchor.
+
+Standalone native suite: 40 → 46 discovered, 31 → 37 passed, nine unchanged app-host/device skips. Voice-policy suite: 11 → 17, all pass. Removing Fish parser admission, loosening its grammar, removing override admission and reverting both strict end anchors each fail named tests with 46 tests still discovered. Restored sources pass the full suite. Source commit: `70461e54c`. [Report, files, runner and mutation receipts](TEST_REPORTS/fish-ios-native.md). This P4 coding handoff covers simulator-native behavior; physical Fish playback is the plan's later acceptance step.
