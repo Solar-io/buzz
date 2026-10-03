@@ -93,6 +93,28 @@ After the relay accepts and commits a DM command that changes a viewer's hide st
 1. On `kind:41012` (hide): the viewer's `hidden_at` for the target channel is set.
 2. On `kind:41010` (open/re-open) that clears an existing `hidden_at`: the viewer's hide state for the target channel is cleared.
 
+### Fork extension: resurface on a new chat message
+
+In this fork, hiding a DM lasts until another participant posts a new chat
+message. After accepting a newly stored `kind:9` or `kind:40002` in a DM,
+relays SHOULD clear `hidden_at` for every other active, hidden member and
+republish each changed viewer's complete `kind:30622` snapshot. The sender's
+own hide stays unchanged. Duplicate submissions, reactions, edits, deletions,
+read receipts, typing, scheduled/diff messages, membership and system-event
+kinds do not trigger resurfacing; non-DM channels are unaffected.
+
+Resurfacing and snapshot publication run in the background after message
+storage and fan-out. Errors are logged and MUST NOT reject or delay message
+acceptance. A hide made after acceptance is preserved even if the background
+update was queued. If no hidden recipient changes, no snapshot is published.
+
+A fork-local startup reconciliation repairs older sticky hides when another
+participant's non-deleted chat message has `created_at > hidden_at`, then
+publishes the viewer's snapshot. It excludes removed memberships and deleted
+channels, preserves the sender-only case, and is safe to run on every boot.
+It also retries snapshots still listing a DM whose hide was already cleared,
+so a publication failure remains repairable on the next boot.
+
 In both cases the relay recomputes the viewer's full hidden-DM set from its authoritative state (active, non-removed DM memberships with `hidden_at IS NOT NULL`) and publishes a fresh `kind:30622` snapshot signed by the relay identity, with `d` = the viewer's pubkey and one `h` tag per hidden DM.
 
 The recompute-and-replace shape means the latest snapshot is always the complete, authoritative hidden set. There is no delta event to merge and no ordering hazard between hide and unhide: a stale snapshot is simply superseded by the newer one under NIP-01 parameterized-replaceable semantics.
