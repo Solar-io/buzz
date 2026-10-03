@@ -199,3 +199,87 @@ both measure 32px. `brave-geometry.json` and visually inspected
 `toolbar-1054.png` retain that evidence. Its owned tab and temporary preview
 server were closed. UI fixtures simulate relay traffic; these checks do not
 claim live relay authorization or persistence. Existing build warnings remain.
+
+## Work dock minimum follow-up — 2026-10-03
+
+Baseline: `bd758eebe`; source: `5efb88b7f`. Worktree:
+`/Users/sgallant/software_development/.evie-worktrees/buzz-codex-20261003-140351`.
+
+Sam's deployed `index-DyAuqtK1.js` left Work only 142px at 1054×900 with a
+480px sidebar. The local baseline builds the same bundle and reproduces a
+158px Work dock in the fixed-palette fixture. Both Work regressions fail the
+hardcoded 320px width assertion; both Canvas regressions fail on the missing
+Back to chat control (`baseline-e2e.log`, four discovered/failing).
+
+The existing `WORK_WIDTH_MIN = 320` is the usable content minimum for Work's
+rows, scope controls and top-level tabs. Open Work and Canvas now share one
+dock class in `RightPaneHost.tsx` and the existing **723px** shell-row query in
+`redesign.css`; no second threshold or JavaScript width observer was added.
+Both retain the 400px chat reservation and shared preferred width when they
+fit beside chat. Folded Work remains a 48px strip rather than an overlay.
+
+The overlay's visible **Back to chat** button closes Canvas, selects Work and
+folds the rail. Tab switching keeps Work and Canvas readable. The document
+selection and 540px stored width survive folding, reopening and widening.
+Below-lg sheets and explicit Canvas expansion retain their existing paths.
+
+Twelve painted cases replace the two earlier Canvas-only overlay cases
+(ten net additions). Both asserted palettes exercise each tab with sidebar
+480 at 1054 and sidebar 260 at 1054/1280. They check actual sidebar width,
+320px dock/400px chat bounds, populated Needs-you rows, fully uncut tabs whose
+centres receive pointer input, overlay/handle/Back visibility, real Back and
+composer clicks, folded-rail reopening, no page overflow, and restoration of
+the 540px preferred width at 1440. The selection retains toolbar/input/reaction
+coverage and six Canvas editing/file-preview workflows.
+
+Hermit was activated for all checks. Raw output is in `.scratch/work-dock/`;
+collected output is appended to `logs/verification.log`.
+
+| Check | Result | Receipt |
+|---|---|---|
+| `pnpm test` | 4,421 discovered/pass; zero fail/skip | `unit.log` |
+| `pnpm typecheck` | exit 0 | `typecheck.log` |
+| `pnpm build` through the E2E script | exit 0 for fixed and all mutant bundles | E2E logs |
+| Three-file Biome check | exit 0 | `biome.log` |
+| File-size check against `bd758eebe` | exit 0 | `file-sizes.log` |
+| Fixed E2E selection | 38/38 pass, zero skips | `fixed-e2e.log` |
+| Restored E2E selection and final build | 38/38 pass, zero skips; build exit 0 | `restored-e2e.log` |
+| Final narrow cases before mutations | 4/4 pass | `pre-mutation-e2e.log` |
+| Preview HTTP request | HTTP/1.1 200 OK | `preview-http.log` |
+
+Source was committed before mutation. Each mutant built successfully and ran
+the same named tests that passed before withdrawal. Restore uses the source
+commit; Git confirms all three source/test files match it.
+
+| Withdrawn mechanism | Named failing cases (both palettes) | Failure | Receipt |
+|---|---|---|---|
+| Remove Work from shared dock-class wiring | `work dock stays usable with sidebar 480 at 1054` (2/2) | expected width ≥320px; received 158px | `mutation-work-overlay.log` |
+| Remove Back's rail-collapse call | `canvas dock stays usable with sidebar 480 at 1054` (2/2) | after Back, expected sticky/folded; received absolute | `mutation-back-to-chat.log` |
+| Lower the shared threshold to 500px | Work and Canvas `dock stays usable with sidebar 480 at 1054` (4/4) | expected absolute; received sticky | `mutation-shared-threshold.log` |
+
+Agent Brave's attached WebSocket interception canary returned `timeout`; its
+owned tab was closed. Painted tests therefore use the documented isolated
+**headed** fallback with synthetic relay events and an ephemeral identity.
+A dynamically allocated, unoccupied loopback preview port avoids another
+worktree's server. This proves fixture-client geometry and interaction;
+live-relay persistence is outside these checks.
+
+`shots/dock-{work,canvas}-{480-1054,260-1054,260-1280}-{buzz,buzz-dark}.png`
+contains twelve captures. Representative narrow Work/Canvas and wider Work
+captures were visually inspected. Build output retains the existing mixed
+static/dynamic-import and chunk-size warnings. Fleet focus-status publication
+was unavailable because this coding shell lacks Buzz signing credentials.
+
+Final restored command (from the worktree root; preview-port contains the
+dynamically allocated test port):
+
+```sh
+PLAYWRIGHT_PORT="$(cat .scratch/work-dock/preview-port)" \
+  SHOTS_DIR="$PWD/.scratch/work-dock/shots" env -u BUZZ_E2E_CDP \
+  pnpm --dir web test:e2e:smoke conversation-layout canvas-edit shelf --headed \
+  --grep 'conversation width|Neighbour toolbar|dock stays usable|Canvas:|canvas edit'
+```
+
+All twelve dock captures have distinct SHA-256 hashes (`shot-hashes.json`).
+The runner's preview processes and the owned browser tab were cleaned up.
+The coding and local-verification scope is complete.

@@ -118,10 +118,14 @@
 /* Measure the space after the resizable sidebar, rather than the viewport.
    Each dock leaves 400px for conversation and 3px for its handle, including
    Work when the viewer switches back from Canvas (they share a stored width).
-   Below 400 + 320 + 3px the existing pane overlays the row; its Work tab
-   returns to chat. Below lg, the existing document sheets still take over. */
+   Work and Canvas share the 320px minimum in workPrefs.ts (WORK_WIDTH_MIN).
+   Below 400 + 320 + 3px either pane overlays the row; Back to chat folds it.
+   Below lg, the existing document sheets still take over. */
 .buzz-content-scrollbar {
   container: shell-row / inline-size;
+}
+.buzz-overlay-back {
+  display: none;
 }
 
 /* A wide viewport can still have narrow messages beside Canvas or inside an
@@ -172,8 +176,11 @@
   .buzz-right-dock:not([data-expanded]) {
     max-width: calc(100% - 403px);
   }
+  .buzz-work-canvas-dock {
+    min-width: min(100%, 320px);
+  }
   @container shell-row (width < 723px) {
-    .buzz-canvas-dock:not([data-expanded]) {
+    .buzz-work-canvas-dock:not([data-expanded]) {
       position: absolute;
       inset: 0;
       z-index: 40;
@@ -181,8 +188,11 @@
       max-width: none;
       background: var(--color-background);
     }
-    .buzz-side-panel-resize-handle:has(+ .buzz-canvas-dock) {
+    .buzz-side-panel-resize-handle:has(+ .buzz-work-canvas-dock) {
       display: none;
+    }
+    .buzz-work-canvas-dock:not([data-expanded]) .buzz-overlay-back {
+      display: flex;
     }
   }
 }
