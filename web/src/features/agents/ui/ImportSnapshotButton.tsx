@@ -10,22 +10,13 @@ import { useSnapshotFileImport } from "./SnapshotPreviewProvider";
  * magic checks (readSnapshotFile) and the confirm path stays the existing
  * admin `create` (buildSnapshotCreate). Absent outside the provider.
  */
-export function ImportSnapshotButton() {
+export function useSnapshotFilePicker() {
   const openFile = useSnapshotFileImport();
   const input = useRef<HTMLInputElement>(null);
-  if (!openFile) {
-    return null;
-  }
-  return (
-    <>
-      <Button
-        size="sm"
-        variant="outline"
-        onClick={() => input.current?.click()}
-      >
-        <Upload aria-hidden className="mr-1 h-4 w-4" />
-        Import snapshot…
-      </Button>
+  return {
+    available: Boolean(openFile),
+    choose: () => input.current?.click(),
+    input: (
       <input
         ref={input}
         type="file"
@@ -36,7 +27,7 @@ export function ImportSnapshotButton() {
         onChange={(event) => {
           const file = event.target.files?.[0];
           event.target.value = "";
-          if (!file) {
+          if (!file || !openFile) {
             return;
           }
           // Never buffer an absurd file just to refuse it: the largest cap
@@ -53,6 +44,20 @@ export function ImportSnapshotButton() {
             .catch(() => toast.error("Could not read that file."));
         }}
       />
+    ),
+  };
+}
+
+export function ImportSnapshotButton() {
+  const picker = useSnapshotFilePicker();
+  if (!picker.available) return null;
+  return (
+    <>
+      <Button size="sm" variant="outline" onClick={picker.choose}>
+        <Upload aria-hidden className="mr-1 h-4 w-4" />
+        Import snapshot…
+      </Button>
+      {picker.input}
     </>
   );
 }

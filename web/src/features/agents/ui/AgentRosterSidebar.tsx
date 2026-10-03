@@ -1,6 +1,5 @@
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
-import { Plus } from "lucide-react";
 import { Button } from "@/shared/ui/button";
 import type { RelaySession } from "@/shared/api/relay-session";
 import { truncatePubkey } from "@/shared/lib/pubkey";
@@ -64,7 +63,6 @@ export function AgentRosterSidebar({
   teamNamesByPersona,
   selectedPubkey,
   onSelect,
-  onNewAgent,
   registry,
   catalogs,
   admin,
@@ -77,7 +75,6 @@ export function AgentRosterSidebar({
   teamNamesByPersona: ReadonlyMap<string, string[]>;
   selectedPubkey: string | null;
   onSelect: (pubkey: string) => void;
-  onNewAgent: () => void;
   registry: RosterRow["entry"][];
   catalogs: Parameters<typeof findStaleAgents>[1];
   admin: Admin;
@@ -94,10 +91,6 @@ export function AgentRosterSidebar({
       <section className="space-y-2 rounded-lg border border-border bg-card p-3">
         <div className="flex items-center justify-between">
           <h2 className="font-medium">Your agents</h2>
-          <Button size="sm" variant="outline" onClick={onNewAgent}>
-            <Plus aria-hidden className="mr-1 h-4 w-4" />
-            New agent
-          </Button>
         </div>
         {roster.length === 0 ? (
           <p className="text-sm text-muted-foreground">

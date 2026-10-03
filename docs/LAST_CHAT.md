@@ -54,6 +54,16 @@ Built SettingSelect, ModelSelect, DurationSelect and SaveBar, plus per-agent dra
 
 Validation: 4,092 web tests before and 4,116 after (24 new); typecheck/build/scoped Biome and token checks succeeded. Nine built mutations each ran 24 tests and produced the named failures; restored 24/24 and build succeeded. Agent Brave exercised the actual compiled components with simulated acknowledgements, model reset/Undo, refusal/retry and navigation prompts at 1440 and 390; screenshots/logs are local to the worktree. Size and global px-text failures are byte-identical to the W7 baseline. [Detailed report and file/commit inventory](TEST_REPORTS/parity-w7.md).
 
+2026-10-03 — W11a resume: Library and Blank agent creation
+
+Preserved source `b8aecddb3` and the interrupted tests/checklist. AgentsAdminPage keeps the W9a Settings routes alongside local create-draft protection. Blank creation uses Card wrappers, existing identity/access/env sections and W7 native model/runtime/duration pickers; W9b's later cards were absent from the updated parent. Definition/team entries stay locked for P2. Snapshot import uses the existing preview and a file input outside the dropdown's lifetime.
+
+Creation waits for a desktop acknowledgement with an agent key before opening its Settings route, preserves drafts on refusal, handles 30-second uncertainty and late acknowledgements, and blocks unsaved navigation. The sidebar test stub now supplies the router blocker export reached through these imports. The community catalog browser fixture is signed so its real verifier remains exercised.
+
+Evidence: 4,252 baseline unit tests and 4,268 restored tests, all passing. Sixteen new unit regressions fail in their bodies with the same 4,268 count under mechanism withdrawal. Rebuilt timeout/tab/navigation mutations fail all five W11a browser cases; restoration passes those plus seven W6 regressions (12/12) in Agent Brave. Typecheck, build and all 18 changed-file Biome checks pass. Global lint has 28 errors outside those files; px-text/default size checks flag unchanged parent files, while CHECK_FILE_SIZES_BASE=main succeeds. Eight distinct screenshots at 1440/390 were inspected for overlap/overflow. Raw outputs: logs/verification.log and .scratch/w11a/. [W11a handoff](TEST_REPORTS/parity-w11a.md).
+
+Real-desktop creation/start remains open: the coding CLI lacks BUZZ_PRIVATE_KEY, and the read-only live browser visit reports no desktop/registrations for its identity. An authorized tester needs the owner's reporting desktop and a throwaway agent. Mock acknowledgements prove the client/wire flow, not process startup.
+
 2026-10-02 — Codex usage in web Vitals
 
 Added the /v1/codex contract parser and a shared simple GET poll. Codex has its own weekly bar below Claude and above crichton, a compact phone reading in Claude's column, and pop-out plan/windows/credits plus Today/Last 7 days direct/routed calls, compact tokens and list costs. Unknown readings remain null; 0% stays visible; stale readings are marked. The enlarged pop-out scrolls within the viewport.

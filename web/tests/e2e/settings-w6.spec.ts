@@ -152,7 +152,7 @@ test("W6 Library and moved sections remain reachable in Settings", async ({
   await expect(page.getByTestId("settings-pane-library")).toContainText(
     "Agent definitions",
   );
-  await page.getByRole("button", { name: "Teams", exact: true }).click();
+  await page.getByRole("tab", { name: "Teams", exact: true }).click();
   await expect(page.getByTestId("settings-pane-library")).toContainText(
     "Agent teams",
   );

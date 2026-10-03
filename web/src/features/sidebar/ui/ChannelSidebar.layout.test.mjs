@@ -125,6 +125,7 @@ globalThis.__BUZZ_TEST_MODULE_STUBS__ = {
     export function useNavigate() { return () => Promise.resolve(); }
     export function useSearch() { return undefined; }
     export function useRouter() { return { navigate() {} }; }
+    export function useBlocker() { return { status: "idle" }; }
   `,
   // The app's route tree: reached through the shell modules the rail
   // imports (AppShell, huddle chrome), never navigated by these cases.
