@@ -65,8 +65,8 @@ const RICHARD = { pubkey: "f".repeat(64), name: "Richard Hendricks" };
 
 // ── Engines ────────────────────────────────────────────────────────────────
 
-test("Chatterbox replaces Pocket: exactly Chatterbox then ElevenLabs", () => {
-  assert.deepEqual([...VOICE_ENGINES], ["chatterbox", "eleven"]);
+test("Chatterbox replaces Pocket: exactly Chatterbox, ElevenLabs and Fish Audio", () => {
+  assert.deepEqual([...VOICE_ENGINES], ["chatterbox", "eleven", "fish"]);
   assert.equal(engineLabel("chatterbox"), "Chatterbox");
   assert.equal(engineLabel("eleven"), "ElevenLabs");
 });
