@@ -112,3 +112,11 @@ P0 — owner-admin protocol foundation:
 - [x] Shared fixture corpus, fail-first regressions, static/build checks, responsive browser evidence.
 
 P0 evidence: `docs/TEST_REPORTS/parity-p0.md`.
+
+P0 verifier follow-up:
+- [x] Preserve enablement and sending for all eight v4 admin commands; keep named v5 requirements locked.
+- [x] Persist replay receipts before save; verify restart, >500 requests, concurrent delivery and failure boundaries.
+- [x] Compose presence checks into the W6/W9a Settings routes after the main merge.
+- [x] Run required web/desktop checks and named fail-then-pass mutations; commit evidence.
+
+Evidence: [P0 verifier fixes](TEST_REPORTS/parity-p0-verifier-fixes.md).

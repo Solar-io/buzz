@@ -1,5 +1,9 @@
 # P0 — owner-admin protocol foundation
 
+The [verifier follow-up](parity-p0-verifier-fixes.md) supersedes the legacy-control
+compatibility and replay behavior below and records the checks after composition
+with W6/W9a.
+
 Worktree: `/Users/sgallant/software_development/.evie-worktrees/buzz-codex-20261002-161202`  
 Branch: `codex/buzz-codex-20261002-161202`  
 Base: `301cc5348242ce92b0046d5ec7cc4ebd0249ae0c`
