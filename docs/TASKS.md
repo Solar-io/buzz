@@ -43,8 +43,10 @@ W1 channel settings:
 - [ ] W9a live acceptance: read-only Acid Burn comparison, then test-channel add/remove and cancellation on a throwaway agent. Needs an approved owner signing environment; this coder shell has no BUZZ_PRIVATE_KEY. Local mock journeys cover the client wiring.
 ## P3 Fish Audio web and voice library
 
-- [ ] Fish selection grammar, precedence, summaries, bridge routing and huddle overrides.
-- [ ] Shared A–Z comparator, Fish tabs and pinned removed selections in Settings, assignment, profile and huddle pickers.
-- [ ] Signed bridge library API, input validation, usage census and mutation invalidation.
-- [ ] Settings Voice library card: curated lists, provider browse/search, add/remove confirmation, admin/read-only controls.
-- [ ] Shared grammar vectors, behavior tests, exact baseline/final counts, mechanism mutation proof, typecheck, scoped Biome and build.
+Evidence: [P3 report](TEST_REPORTS/fish-web.md): 4,175 baseline / 4,212 final tests, 34 mutation kills, scoped static/build checks and built Settings Agent Brave workflow.
+
+- [x] Fish selection grammar, precedence, summaries, bridge routing and huddle overrides.
+- [x] Shared A–Z comparator, Fish tabs and pinned removed selections in Settings, assignment, profile and huddle pickers.
+- [x] Signed bridge library API, input validation, usage census and mutation invalidation.
+- [x] Settings Voice library card: curated lists, provider browse/search, add/remove confirmation, admin/read-only controls.
+- [x] Shared grammar vectors, behavior tests, exact baseline/final counts, mechanism mutation proof, typecheck, scoped Biome and build.
