@@ -81,6 +81,10 @@ async function definition(
 }
 
 async function screenshot(page: Page, name: string) {
+  await page.mouse.move(0, 0);
+  await expect(page.locator("[data-sonner-toast]")).toHaveCount(0, {
+    timeout: 15000,
+  });
   expect(
     await page.evaluate(
       () => document.documentElement.scrollWidth <= innerWidth,
@@ -99,17 +103,12 @@ async function screenshot(page: Page, name: string) {
   });
   const dir = path.resolve("../.scratch/w11b/screenshots");
   mkdirSync(dir, { recursive: true });
-  await page.screenshot({
-    path: path.join(dir, `${name}.png`),
-    fullPage: true,
-  });
-  // The editor lives in its own scroll panel; photograph the controls too.
+  // The editor lives in its own scroll panel; center the new controls.
   await page.getByLabel("Name pool", { exact: true }).scrollIntoViewIfNeeded();
-  await page.screenshot({ path: path.join(dir, `${name}-pool.png`) });
-  await page
-    .getByRole("button", { name: "Duplicate", exact: true })
-    .scrollIntoViewIfNeeded();
-  await page.screenshot({ path: path.join(dir, `${name}-actions.png`) });
+  await expect(
+    page.getByRole("button", { name: "Duplicate", exact: true }),
+  ).toBeInViewport();
+  await page.screenshot({ path: path.join(dir, `${name}.png`) });
 }
 
 for (const width of [1440, 390]) {
