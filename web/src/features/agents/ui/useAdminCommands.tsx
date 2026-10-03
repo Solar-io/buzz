@@ -12,11 +12,6 @@ import type { AdminSendOptions } from "../lib/admin/protocolV5";
  * seals and sends, the owner's Buzz Desktop applies through its own save
  * paths, acks flow back.
  *
- * Phase 1 shrank this module to the two pieces every surface shares: the
- * `useAdminCommands` send/ack hook and `PendingCommandsStrip` (the pending +
- * ack + timeout feedback, page-level so an ack is visible from both panes).
- * The forms moved to AgentCreateForm.tsx / AgentConfigPanel.tsx and the
- * harness dropdown to HarnessSelect.tsx.
  */
 
 interface PendingCommand {

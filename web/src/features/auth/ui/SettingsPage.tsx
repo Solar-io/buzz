@@ -66,7 +66,7 @@ import { useDesktopCatalogs } from "@/features/agents/useDesktopCatalogs";
 import { useDesktopPresence } from "@/features/agents/useDesktopPresence";
 import { ownsSettingsAgents } from "@/features/agents/lib/desktopConnection";
 import { DesktopConnectionFooter } from "@/features/agents/settings/DesktopConnectionFooter";
-import { AgentsAdminPage } from "@/features/agents/ui/AgentsAdminPage";
+import { AgentManagementSection } from "@/features/agents/settings/AgentManagementSection";
 import { AgentScreen } from "@/features/agents/settings/agent-screen/AgentScreen";
 import { ClaudePoolsSection } from "./settings/ClaudePoolsSection";
 import { FilesSitesSection } from "@/features/webPanels/ui/FilesSitesSection";
@@ -114,9 +114,15 @@ export interface SettingsPageProps {
   group?: string;
   agent?: string;
   tab?: string;
+  definition?: string;
 }
 
-export function SettingsPage({ group, agent, tab }: SettingsPageProps) {
+export function SettingsPage({
+  group,
+  agent,
+  tab,
+  definition,
+}: SettingsPageProps) {
   const self = useOwnPubkey();
   const [profileOpen, setProfileOpen] = useState(false);
   const navigate = useNavigate({ from: "/repos/settings" });
@@ -374,16 +380,17 @@ export function SettingsPage({ group, agent, tab }: SettingsPageProps) {
                     </p>
                   )
                 ) : (
-                  <AgentsAdminPage embedded />
+                  <AgentManagementSection embedded />
                 )
               ) : null}
               {active === "accounts" ? <ClaudePoolsSection /> : null}
               {active === "library" ? (
-                <AgentsAdminPage
+                <AgentManagementSection
                   key={tab ?? "definitions"}
                   embedded
                   section="library"
                   tab={tab}
+                  definition={definition}
                 />
               ) : null}
 

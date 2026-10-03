@@ -9,7 +9,7 @@ import {
 import { useRelaySession } from "@/shared/api/RelaySessionProvider";
 import { useDesktopCatalogs } from "@/features/agents/useDesktopCatalogs";
 import type { ResolvedSnapshotCard } from "@/features/channels/lib/snapshotCard.ts";
-import { useAdminCommands } from "./AgentAdminPanel.tsx";
+import { useAdminCommands } from "./useAdminCommands.tsx";
 import {
   SnapshotPreviewDialog,
   type SnapshotSource,

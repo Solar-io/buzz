@@ -4,7 +4,7 @@ import {
   buildCreateCommand,
   type CreateAgentFormValue,
 } from "../lib/createAgentRequest";
-import type { useAdminCommands } from "../ui/AgentAdminPanel";
+import type { useAdminCommands } from "../ui/useAdminCommands";
 
 /** Await the desktop verdict; a relay OK alone never completes creation. */
 export function useBlankAgentCreate({

@@ -26,8 +26,7 @@ import { buildRoster, targetForAgent } from "../../lib/roster";
 import { teamNamesByPersonaId } from "../../lib/rosterGroups";
 import { observedModels } from "../../lib/modelSuggestions";
 import { controlsEnabled } from "../../lib/adminCommandCapabilities";
-import { useAdminCommands } from "../../ui/AgentAdminPanel";
-import { AgentConfigPanel } from "../../ui/AgentConfigPanel";
+import { useAdminCommands } from "../../ui/useAdminCommands";
 import { AgentActivityPanel } from "../../ui/AgentActivityPanel";
 import { SnapshotExportDialog } from "../../ui/SnapshotExportDialog";
 import { formatElapsed, useTick } from "../../ui/WorkingBadge";
@@ -96,7 +95,9 @@ export function AgentScreen({
     [personas, teams],
   );
   const [exporting, setExporting] = useState(false);
-  const [confirmUnregister, setConfirmUnregister] = useState(false);
+  const [requestedRemove, setRequestedRemove] = useState<
+    "delete" | "unregister" | null
+  >(null);
   const [sending, setSending] = useState(false);
   const tab: AgentTab = ["channels", "logs", "memory", "activity"].includes(
     requestedTab ?? "",
@@ -169,20 +170,6 @@ export function AgentScreen({
           ? error.message
           : "Could not open the conversation.",
       );
-    } finally {
-      setSending(false);
-    }
-  };
-  const unregister = async () => {
-    if (!enabled || busy) return;
-    setSending(true);
-    try {
-      await admin.send(
-        { action: "unregister", request: { pubkey: row.pubkey } },
-        `Unregister ${row.name}`,
-        targetForAgent(row.machines),
-      );
-      setConfirmUnregister(false);
     } finally {
       setSending(false);
     }
@@ -267,7 +254,14 @@ export function AgentScreen({
         onMessage={() => void message()}
         onLifecycle={(action) => void lifecycle(action)}
         onExport={() => setExporting(true)}
-        onUnregister={() => setConfirmUnregister(true)}
+        onUnregister={() => {
+          onTab("settings");
+          setRequestedRemove("unregister");
+        }}
+        onDelete={() => {
+          onTab("settings");
+          setRequestedRemove("delete");
+        }}
       />
       {!enabled ? (
         <p className="rounded-lg border border-border bg-muted p-3 text-sm text-muted-foreground">
@@ -298,34 +292,6 @@ export function AgentScreen({
             );
           })}
         </ul>
-      ) : null}
-      {confirmUnregister ? (
-        <section
-          role="alertdialog"
-          aria-label={`Unregister ${row.name}`}
-          className="space-y-3 rounded-xl border border-coral-line bg-card p-4"
-        >
-          <p className="text-sm">
-            Unregister {row.name}? Keeps the key and removes the registration.
-            This does not stop a running process.
-          </p>
-          <div className="flex gap-2">
-            <Button
-              variant="outline"
-              className="min-h-11"
-              onClick={() => setConfirmUnregister(false)}
-            >
-              Keep agent
-            </Button>
-            <Button
-              className="min-h-11"
-              disabled={busy || !enabled}
-              onClick={() => void unregister()}
-            >
-              Unregister
-            </Button>
-          </div>
-        </section>
       ) : null}
       <AgentTabs
         tab={tab}
@@ -366,6 +332,11 @@ export function AgentScreen({
               models={models}
               roster={roster}
               phone={phone}
+              avatarUrl={profiles.get(row.pubkey)?.avatar}
+              channelCount={channels.member.length}
+              onRemoved={onBack}
+              requestedRemove={requestedRemove}
+              onRemoveHandled={() => setRequestedRemove(null)}
             >
               {phone ? (
                 <AgentChannelsCard
@@ -373,28 +344,6 @@ export function AgentScreen({
                   onSeeAll={() => onTab("channels")}
                 />
               ) : null}
-              <details className="rounded-xl border border-border bg-card p-4">
-                <summary className="min-h-11 cursor-pointer text-sm font-semibold md:min-h-8">
-                  Identity, environment and other settings
-                </summary>
-                <div className="pt-4">
-                  <fieldset disabled={!enabled}>
-                    <AgentConfigPanel
-                      settingsOnly
-                      remainingOnly
-                      row={row}
-                      profile={profiles.get(row.pubkey)}
-                      admin={admin}
-                      session={session}
-                      catalogs={catalogs}
-                      registryModels={models}
-                      roster={roster}
-                      viewerIsOwner
-                      onDeleted={onBack}
-                    />
-                  </fieldset>
-                </div>
-              </details>
               {phone ? (
                 <details className="rounded-xl border border-border bg-card p-4">
                   <summary className="min-h-11 cursor-pointer text-sm font-semibold">

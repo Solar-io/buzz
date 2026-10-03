@@ -22,8 +22,8 @@ import { useAgentFrames } from "../ObserverProvider";
 /**
  * The left pane of the two-pane agents screen: the roster list, stale-
  * registration cleanup, and the owner's kind-0 profile editor (the latter
- * two MOVED from the old single-column AgentsAdminPage — Phase 1 file map
- * #14). AgentsAdminPage re-exports AgentWorkingDot for its existing
+ * two MOVED from the old single-column AgentManagementSection — Phase 1 file map
+ * #14). AgentManagementSection re-exports AgentWorkingDot for its existing
  * importers.
  */
 
@@ -43,7 +43,7 @@ export function AgentWorkingDot({ pubkey }: { pubkey: string }) {
       title={active ? "Working" : "Idle"}
       className={
         active
-          ? "inline-block h-2 w-2 rounded-full bg-emerald-500"
+          ? "inline-block h-2 w-2 rounded-full bg-leaf"
           : "inline-block h-2 w-2 rounded-full bg-muted-foreground/40"
       }
     />
@@ -57,7 +57,7 @@ function accessLabel(respondTo: string): string {
   );
 }
 
-export function AgentRosterSidebar({
+export function AgentRosterList({
   roster,
   sections,
   teamNamesByPersona,

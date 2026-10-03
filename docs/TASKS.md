@@ -141,3 +141,11 @@ P0 verifier follow-up:
 - [x] Run required web/desktop checks and named fail-then-pass mutations; commit evidence.
 
 Evidence: [P0 verifier fixes](TEST_REPORTS/parity-p0-verifier-fixes.md).
+
+## Parity W9b2 (in progress)
+
+- [ ] Identity: avatar upload, name, standalone instructions, linked Library definition entry.
+- [ ] Environment: collapsed patch-only set/remove rows, reserved-key validation, transient secrets.
+- [ ] Remove: key-preserving unregister and channel-count delete confirmation, desktop ack.
+- [ ] Retire the four legacy modules and preserve Library, create, roster and working-dot consumers.
+- [ ] Behavioral regressions, mechanism reversion proof, full web gates and built-app 1440/390 screenshots.

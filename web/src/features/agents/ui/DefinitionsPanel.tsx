@@ -9,7 +9,7 @@ import { agentsSharingDefinition } from "../lib/personaEdit";
 import type { PersonaDefinition } from "../lib/personas";
 import type { RosterRow } from "../lib/roster";
 import type { TeamView } from "../lib/teamEvents";
-import type { useAdminCommands } from "./AgentAdminPanel";
+import type { useAdminCommands } from "./useAdminCommands";
 import { DefinitionActions } from "./DefinitionActions";
 import { DefinitionCreateForm } from "./DefinitionCreateForm";
 import { DefinitionEditor, definitionBase } from "./DefinitionEditorSection";
@@ -31,6 +31,7 @@ export function DefinitionsPanel({
   catalogs,
   admin,
   registryModels,
+  definition,
 }: {
   personas: ReadonlyMap<string, PersonaDefinition>;
   forget: (id: string, tombstoneCreatedAt: number) => void;
@@ -40,10 +41,11 @@ export function DefinitionsPanel({
   catalogs: DesktopCatalog[];
   admin: ReturnType<typeof useAdminCommands>;
   registryModels: string[];
+  definition?: string;
 }) {
   const [view, setView] = useState<
     { kind: "list" } | { kind: "create" } | { kind: "detail"; id: string }
-  >({ kind: "list" });
+  >(definition ? { kind: "detail", id: definition } : { kind: "list" });
 
   if (view.kind === "create") {
     return (

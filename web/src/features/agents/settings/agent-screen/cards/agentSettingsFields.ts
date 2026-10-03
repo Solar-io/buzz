@@ -1,9 +1,14 @@
 import type { RosterRow } from "../../../lib/roster";
+import type {
+  AdminCommand,
+  UpdateAgentRequest,
+} from "../../../lib/adminCommands";
 import {
   buildUpdateCommand,
   prefillEditForm,
 } from "../../../lib/editAgentRequest";
 import type { ApiKeySelection } from "../../../lib/providerApiKey";
+import { buildEnvPatch, type EnvPatchRow } from "./envPatch";
 import type {
   SettingsCommandPlan,
   SettingValue,
@@ -21,6 +26,10 @@ export const SETTINGS_FIELDS = {
   respondTo: ["Who can instruct", null],
   respondToAllowlist: ["Specific people", null],
   apiKey: ["API key", null],
+  name: ["Name", null],
+  systemPrompt: ["Instructions", null],
+  avatarUrl: ["Avatar", ""],
+  envChanges: ["Environment variables", null],
 } as const;
 export type AgentSettingField = keyof typeof SETTINGS_FIELDS;
 export type SettingsEcho = Partial<Record<AgentSettingField, SettingValue>>;
@@ -33,9 +42,16 @@ export function settingBaseline(
   row: RosterRow,
   echo: SettingsEcho,
   field: AgentSettingField,
+  avatarUrl = "",
 ): SettingValue {
   if (Object.keys(echo).includes(field)) return echo[field] ?? null;
   switch (field) {
+    case "name":
+      return row.name;
+    case "systemPrompt":
+      return row.systemPrompt ?? row.entry.systemPrompt;
+    case "avatarUrl":
+      return avatarUrl;
     case "model":
       return row.model || UNREPORTED;
     case "provider":
@@ -61,7 +77,8 @@ export function buildCardUpdate(
   row: RosterRow,
   apiKey: ApiKeySelection,
   apiKeyEnvVar: string | null,
-) {
+  envRows: readonly EnvPatchRow[] = [],
+): { command: AdminCommand } | { error: string } {
   if (plan.request.pubkey !== row.pubkey)
     return { error: "The selected agent changed." };
   const prefill = prefillEditForm(row.entry, row.persona);
@@ -72,6 +89,24 @@ export function buildCardUpdate(
       return { error: "Unsupported setting." };
     const next = plan.request[field];
     switch (field) {
+      case "name":
+      case "systemPrompt":
+        if (typeof next !== "string" || !next.trim())
+          return {
+            error:
+              field === "name"
+                ? "Enter an agent name."
+                : "Update Buzz Desktop to clear instructions.",
+          };
+        prefill[field] = String(entry.original.value ?? "");
+        value[field] = next;
+        break;
+      case "avatarUrl":
+        prefill.avatarUrl = String(entry.original.value ?? "");
+        value.avatarUrl = String(next ?? "");
+        break;
+      case "envChanges":
+        break;
       case "model":
       case "provider":
         if (typeof next !== "string" || !next.trim())
@@ -161,7 +196,29 @@ export function buildCardUpdate(
   }
   if (value.respondTo === "allowlist" && value.respondToAllowlist.length === 0)
     return { error: "Choose at least one person." };
-  return buildUpdateCommand(row.entry, prefill, value);
+  const built = buildUpdateCommand(row.entry, prefill, value);
+  const hasEnv = plan.entries.some((entry) => entry.field === "envChanges");
+  if (!hasEnv) return built;
+  const patch = buildEnvPatch(envRows);
+  if ("error" in patch) return patch;
+  if (!envRows.length) return { error: "Add a named variable change." };
+  // The existing builder's full-replace branch remains unused by these cards.
+  if ("error" in built && built.error !== "Nothing changed.") return built;
+  const request = (
+    "command" in built ? built.command.request : { pubkey: row.pubkey }
+  ) as UpdateAgentRequest;
+  const existing = request.envVarsPatch;
+  for (const [key, val] of Object.entries(existing ?? {}))
+    if (Object.keys(patch.patch).includes(key) && patch.patch[key] !== val)
+      return {
+        error: `The API-key control and environment row both change ${key}. Choose one.`,
+      };
+  return {
+    command: {
+      action: "update" as const,
+      request: { ...request, envVarsPatch: { ...patch.patch, ...existing } },
+    },
+  };
 }
 
 /** Reload echoes only timeout edits, never secrets, commands, or decrypted state. */

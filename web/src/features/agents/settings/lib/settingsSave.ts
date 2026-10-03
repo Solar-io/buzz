@@ -2,6 +2,7 @@ import type { SettingsCommandPlan } from "./settingsDraft";
 
 /** Final desktop apply verdict, including verbatim refusal text. */
 export interface SettingsAck {
+  timedOut?: boolean;
   ok: boolean;
   error?: string;
   message?: string;

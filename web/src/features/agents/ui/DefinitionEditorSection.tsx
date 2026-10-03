@@ -17,7 +17,7 @@ import {
 import { targetForAgent, type RosterRow } from "../lib/roster";
 import { controlsEnabled } from "../lib/adminCommandCapabilities";
 import type { DesktopCatalog } from "../lib/desktopCatalog";
-import type { useAdminCommands } from "./AgentAdminPanel";
+import type { useAdminCommands } from "./useAdminCommands";
 import { ModelProviderFields, SectionHeading } from "./AgentFormSections";
 
 /**

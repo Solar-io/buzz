@@ -156,6 +156,7 @@ export function parseSettingsSearch(search: Record<string, unknown>): {
   group?: SettingsGroupId;
   agent?: string;
   tab?: string;
+  definition?: string;
 } {
   const group = parseSettingsGroup(search.group);
   const agent =
@@ -181,5 +182,8 @@ export function parseSettingsSearch(search: Record<string, unknown>): {
     ...(group ? { group } : {}),
     ...(agent ? { agent } : {}),
     ...(tab ? { tab } : {}),
+    ...(typeof search.definition === "string" && search.definition.length > 0
+      ? { definition: search.definition }
+      : {}),
   };
 }

@@ -29,7 +29,7 @@ globalThis.__BUZZ_TEST_MODULE_STUBS__ = {
     "export function useDesktopCatalogs() { return globalThis.__POOLS_TEST_CATALOGS__; }",
   "@/shared/api/RelaySessionProvider":
     "export function useRelaySession() { return { session: null, status: 'idle' }; }",
-  "@/features/agents/ui/AgentAdminPanel":
+  "@/features/agents/ui/useAdminCommands":
     "export function useAdminCommands() { return { send: async () => {}, pending: [] }; }",
   "@/shared/lib/nostr-signer":
     "export async function ownPubkey() { return null; }\n" +

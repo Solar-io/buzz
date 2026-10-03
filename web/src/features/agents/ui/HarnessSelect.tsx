@@ -1,7 +1,7 @@
 import type { DesktopCatalog } from "../lib/desktopCatalog";
 
 /**
- * Harness dropdown — MOVED verbatim from AgentAdminPanel.tsx (Phase 1 file
+ * Harness dropdown — MOVED verbatim from useAdminCommands.tsx (Phase 1 file
  * map #12). Live catalog when at least one desktop published a kind-30180;
  * static preset mirror otherwise, with a hint about the live list.
  */

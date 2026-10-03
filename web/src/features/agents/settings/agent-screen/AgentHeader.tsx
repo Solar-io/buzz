@@ -34,6 +34,7 @@ export function AgentHeader({
   onLifecycle,
   onExport,
   onUnregister,
+  onDelete,
 }: {
   row: RosterRow;
   profile?: Profile;
@@ -50,6 +51,7 @@ export function AgentHeader({
   onLifecycle: (action: "start" | "stop" | "restart") => void;
   onExport: () => void;
   onUnregister: () => void;
+  onDelete?: () => void;
 }) {
   const position = rosterPosition(roster, row.pubkey);
   return (
@@ -186,6 +188,9 @@ export function AgentHeader({
                 onSelect={onUnregister}
               >
                 Unregister…
+              </DropdownMenuItem>
+              <DropdownMenuItem disabled={!enabled || busy} onSelect={onDelete}>
+                Delete…
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>

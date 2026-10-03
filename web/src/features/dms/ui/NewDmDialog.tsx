@@ -13,7 +13,7 @@ import {
 } from "../lib/dmPicker.ts";
 import { openDm } from "../hooks";
 import { useAvailableAgents } from "@/features/agents/useAvailableAgents";
-import { AgentWorkingDot } from "@/features/agents/ui/AgentsAdminPage";
+import { AgentWorkingDot } from "@/features/agents/ui/AgentRosterList";
 import { useProfiles } from "@/features/channels/hooks";
 
 /**
