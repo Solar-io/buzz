@@ -34,7 +34,7 @@ export function settingBaseline(
   echo: SettingsEcho,
   field: AgentSettingField,
 ): SettingValue {
-  if (Object.prototype.hasOwnProperty.call(echo, field)) return echo[field] ?? null;
+  if (Object.hasOwn(echo, field)) return echo[field] ?? null;
   switch (field) {
     case "model":
       return row.model || UNREPORTED;
@@ -68,7 +68,7 @@ export function buildCardUpdate(
   const value = { ...prefill };
   for (const entry of plan.entries) {
     const field = entry.field as AgentSettingField;
-    if (!Object.prototype.hasOwnProperty.call(SETTINGS_FIELDS, field))
+    if (!Object.hasOwn(SETTINGS_FIELDS, field))
       return { error: "Unsupported setting." };
     const next = plan.request[field];
     switch (field) {
