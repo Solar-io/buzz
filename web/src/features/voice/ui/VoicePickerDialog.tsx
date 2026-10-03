@@ -38,6 +38,7 @@ export function VoicePickerList({
   busy,
   ready,
   engine,
+  query,
 }: {
   options: VoicePickerOption[];
   current: AgentVoiceSelection | undefined;
@@ -47,13 +48,17 @@ export function VoicePickerList({
   /** Has the source for this engine finished loading? */
   ready: boolean;
   engine: VoiceEngine;
+  /** The filter box text; a miss on it is "no match", not an empty bridge. */
+  query?: string;
 }) {
   if (options.length === 0) {
     return (
       <p className="py-4 text-center text-sm text-muted-foreground">
-        {ready
-          ? `No ${engineLabel(engine)} voices are available from the bridge.`
-          : "Loading voices…"}
+        {!ready
+          ? "Loading voices…"
+          : query?.trim()
+            ? "No voices match your search."
+            : `No ${engineLabel(engine)} voices are available from the bridge.`}
       </p>
     );
   }
@@ -272,6 +277,7 @@ export function VoicePickerDialog({
           current={current}
           engine={engine}
           options={options}
+          query={query}
           ready={
             engine === "chatterbox"
               ? chatterboxReady

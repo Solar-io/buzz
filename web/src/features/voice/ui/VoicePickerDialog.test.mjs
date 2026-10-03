@@ -234,3 +234,15 @@ after(() => {
     Object.defineProperty(globalThis, "navigator", originals.navigator);
   }
 });
+
+test("an empty filter result says no match, not that the bridge has no voices", async () => {
+  const missed = await mount(list({ options: [], query: "zzzz" }));
+  assert.equal(missed.container.textContent, "No voices match your search.");
+  await missed.unmount();
+  const empty = await mount(list({ options: [], query: "  " }));
+  assert.equal(
+    empty.container.textContent,
+    "No Chatterbox voices are available from the bridge.",
+  );
+  await empty.unmount();
+});
