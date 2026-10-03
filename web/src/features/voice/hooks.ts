@@ -147,6 +147,7 @@ export function useBridgeVoices(engine: LibraryEngine): {
     ready: boolean;
     error: string | null;
   }>({ voices: [], ready: false, error: null });
+  // biome-ignore lint/correctness/useExhaustiveDependencies: version is the explicit cross-picker mutation invalidation signal
   useEffect(() => {
     const controller = new AbortController();
     setState({ voices: [], ready: false, error: null });

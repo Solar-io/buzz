@@ -56,6 +56,8 @@ export type HuddleVoiceEngine = "pocket" | "chatterbox" | "eleven" | "fish";
 export interface HuddleVoiceOverride {
   engine: HuddleVoiceEngine;
   key: string;
+  /** Captured display name survives soft removal from the bridge library. */
+  label?: string;
 }
 
 export interface HuddlePrefs {
@@ -87,7 +89,7 @@ function parseVoice(raw: unknown): HuddleVoiceOverride | null {
   if (raw === null || typeof raw !== "object") {
     return null;
   }
-  const candidate = raw as { engine?: unknown; key?: unknown };
+  const candidate = raw as { engine?: unknown; key?: unknown; label?: unknown };
   if (
     candidate.engine !== "pocket" &&
     candidate.engine !== "chatterbox" &&
@@ -99,7 +101,11 @@ function parseVoice(raw: unknown): HuddleVoiceOverride | null {
   if (typeof candidate.key !== "string" || candidate.key === "") {
     return null;
   }
-  return { engine: candidate.engine, key: candidate.key };
+  return {
+    engine: candidate.engine,
+    key: candidate.key,
+    ...(typeof candidate.label === "string" ? { label: candidate.label } : {}),
+  };
 }
 
 function parseDuplex(raw: unknown): HuddleDuplexMode {
