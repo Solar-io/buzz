@@ -139,6 +139,7 @@ export function useItemActions() {
       type: ItemType;
       title: string;
       summary: string | null;
+      body: string;
       channelId: string | null;
       projectName: string | null;
     }): Promise<Published> => {
@@ -155,7 +156,7 @@ export function useItemActions() {
           status: "open",
           title: input.title,
           summary: input.summary,
-          body: "",
+          body: input.body,
           created: now,
           reporter: self,
           owner: null,

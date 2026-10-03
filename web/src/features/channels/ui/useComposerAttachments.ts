@@ -1,6 +1,12 @@
-import { useRef, useState, type ClipboardEvent, type DragEvent } from "react";
+import {
+  useEffect,
+  useRef,
+  useState,
+  type ClipboardEvent,
+  type DragEvent,
+} from "react";
 import { toast } from "@/shared/ui/notify";
-import { uploadBlob } from "@/shared/api/blossom";
+import { uploadBlob, type BlobDescriptor } from "@/shared/api/blossom";
 import { attachmentRejectionReason } from "../lib/attachmentAccept.ts";
 import { dragCarriesFiles, partitionDropFiles } from "../lib/attachmentDrop.ts";
 import {
@@ -13,7 +19,10 @@ import {
   withProgress,
   type QueuedAttachment,
 } from "../lib/attachmentQueue.ts";
-import { imageFilesFromClipboard } from "../lib/composerPaste.ts";
+import {
+  filesFromClipboard,
+  imageFilesFromClipboard,
+} from "../lib/composerPaste.ts";
 
 /**
  * The composer's attachment queue and its three entry points — the picker,
@@ -30,12 +39,29 @@ export function useComposerAttachments(options: {
   editingActive: boolean;
   /** …and no drop mid-send. */
   busy: boolean;
+  /** Markdown editors consume the descriptor on completion, before marking done. */
+  onUploaded?: (descriptor: BlobDescriptor, row: QueuedAttachment) => void;
+  /** The channel composer retains image-only paste; item bodies accept files too. */
+  pasteFiles?: boolean;
 }) {
   const { editingActive, busy } = options;
   const [attachments, setAttachments] = useState<QueuedAttachment[]>(
     options.initial,
   );
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const latest = useRef(options);
+  latest.current = options;
+  const active = useRef(new Set<string>());
+  const previews = useRef(new Map<string, string>());
+  const uploadTail = useRef(Promise.resolve());
+  useEffect(
+    () => () => {
+      active.current.clear();
+      for (const url of previews.current.values()) URL.revokeObjectURL(url);
+      previews.current.clear();
+    },
+    [],
+  );
 
   /**
    * Queue and upload files one at a time, each with its own row in the tray.
@@ -45,6 +71,7 @@ export function useComposerAttachments(options: {
    * progress bars mean what they appear to mean.
    */
   const attachFiles = async (files: File[]) => {
+    if (latest.current.busy || latest.current.editingActive) return;
     const accepted: { file: File; row: QueuedAttachment }[] = [];
     for (const file of files) {
       const reason = attachmentRejectionReason(file);
@@ -55,7 +82,10 @@ export function useComposerAttachments(options: {
       const previewUrl = file.type.startsWith("image/")
         ? URL.createObjectURL(file)
         : undefined;
-      accepted.push({ file, row: queuedFrom(file, previewUrl) });
+      const row = queuedFrom(file, previewUrl);
+      active.current.add(row.id);
+      if (previewUrl) previews.current.set(row.id, previewUrl);
+      accepted.push({ file, row });
     }
     if (fileInputRef.current) {
       fileInputRef.current.value = "";
@@ -67,28 +97,37 @@ export function useComposerAttachments(options: {
       ...previous,
       ...accepted.map((entry) => entry.row),
     ]);
-    for (const { file, row } of accepted) {
-      setAttachments((previous) => markUploading(previous, row.id));
-      try {
-        const descriptor = await uploadBlob(file, {
-          onProgress: (fraction) =>
-            setAttachments((previous) =>
-              withProgress(previous, row.id, fraction),
-            ),
-        });
-        setAttachments((previous) =>
-          markUploaded(previous, row.id, descriptor),
-        );
-        // No text mutation: the markdown is composed at send time
-        // (`composeSendContent` in submit) — the box shows only what the
-        // author typed (Sam, 2026-09-17: hide attachment URLs in the box).
-      } catch (error) {
-        const message =
-          error instanceof Error ? error.message : "Upload failed.";
-        setAttachments((previous) => markFailed(previous, row.id, message));
-        toast.error(`${file.name}: ${message}`);
+    // One serial queue across picker/paste/drop batches, not just within each batch.
+    const uploadBatch = async () => {
+      for (const { file, row } of accepted) {
+        if (!active.current.has(row.id)) continue;
+        setAttachments((previous) => markUploading(previous, row.id));
+        try {
+          const descriptor = await uploadBlob(file, {
+            onProgress: (fraction) =>
+              setAttachments((previous) =>
+                withProgress(previous, row.id, fraction),
+              ),
+          });
+          if (!active.current.has(row.id)) continue;
+          latest.current.onUploaded?.(descriptor, row);
+          setAttachments((previous) =>
+            markUploaded(previous, row.id, descriptor),
+          );
+          // No text mutation: the markdown is composed at send time
+          // (`composeSendContent` in submit) — the box shows only what the
+          // author typed (Sam, 2026-09-17: hide attachment URLs in the box).
+        } catch (error) {
+          if (!active.current.has(row.id)) continue;
+          const message =
+            error instanceof Error ? error.message : "Upload failed.";
+          setAttachments((previous) => markFailed(previous, row.id, message));
+          toast.error(`${file.name}: ${message}`);
+        }
       }
-    }
+    };
+    uploadTail.current = uploadTail.current.then(uploadBatch);
+    await uploadTail.current;
   };
 
   const attach = async (files: FileList | null) => {
@@ -101,6 +140,8 @@ export function useComposerAttachments(options: {
   /** Drop one attachment and its preview. No text to unwind — the box never
    *  carried the attachment's markdown; dropping the chip drops the wire. */
   const removeQueued = (id: string) => {
+    active.current.delete(id);
+    previews.current.delete(id);
     const item = attachments.find((entry) => entry.id === id);
     setAttachments((previous) => removeAttachment(previous, id));
     if (item?.previewUrl) {
@@ -110,22 +151,26 @@ export function useComposerAttachments(options: {
 
   /** A sent message consumed the queue: release previews, empty the tray. */
   const clear = () => {
+    active.current.clear();
     for (const item of attachments) {
       if (item.previewUrl) {
         URL.revokeObjectURL(item.previewUrl);
       }
     }
     setAttachments([]);
+    previews.current.clear();
   };
 
   // Screenshot paste (Sam 2026-09-02): a clipboard image uploads and lands
   // as an attachment exactly like the paperclip. Text pastes fall through
   // to the browser default.
   const onPaste = (event: ClipboardEvent<HTMLTextAreaElement>) => {
-    if (editingActive) {
+    if (editingActive || busy) {
       return;
     }
-    const images = imageFilesFromClipboard(event.clipboardData);
+    const images = options.pasteFiles
+      ? filesFromClipboard(event.clipboardData)
+      : imageFilesFromClipboard(event.clipboardData);
     if (images.length === 0) {
       return;
     }
