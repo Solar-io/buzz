@@ -45,6 +45,7 @@ test("shared owner-admin corpus pins desktop envelope parsing and application", 
         return null;
       },
       "crichton.local",
+      { claim: () => true },
       Date.parse(limits.now),
     );
     assert.equal(ack.code ?? null, item.code, item.name);

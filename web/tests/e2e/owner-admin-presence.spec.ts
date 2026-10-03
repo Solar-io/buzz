@@ -1,4 +1,5 @@
-import { expect, test } from "@playwright/test";
+import { expect } from "@playwright/test";
+import { test } from "./helpers/agentBraveTest";
 import { getPublicKey } from "nostr-tools/pure";
 import * as nip44 from "nostr-tools/nip44";
 import { mkdirSync } from "node:fs";
@@ -152,7 +153,11 @@ test("P0 presence locks offline controls, recovers, and handles old catalogs at 
   await expect(start).toBeEnabled();
   relay.push(catalog(4, now + 1));
   await expect(footer).toContainText("status unknown — update Buzz Desktop");
-  await expect(start).toBeDisabled();
+  await expect(start).toBeEnabled();
+  await start.click();
+  await expect
+    .poll(() => commands.filter((command) => command.action === "start").length)
+    .toBe(1);
   relay.push(catalog(5, now + 2));
   await expect(footer).toContainText("online");
 

@@ -228,10 +228,12 @@ export function AgentsAdminPage({
             admin={admin}
             session={session}
           />
-          <DesktopConnectionFooter
-            catalogs={catalogs}
-            presence={presence.byMachine}
-          />
+          {!embedded ? (
+            <DesktopConnectionFooter
+              catalogs={catalogs}
+              presence={presence.byMachine}
+            />
+          ) : null}
         </div>
         <div
           className={

@@ -99,11 +99,18 @@ export function desktopControlLock(
   if (machines.length === 0)
     return { locked: true, offline: false, reason: "Needs the desktop" };
   const offline = machines.some(
-    (machine) => presence.get(machine)?.status === "offline",
+    (machine) =>
+      catalogs.some(
+        (catalog) => catalog.machine === machine && catalog.version >= 5,
+      ) && presence.get(machine)?.status === "offline",
   );
   for (const machine of machines) {
     const catalog = catalogs.find((entry) => entry.machine === machine);
     const host = machine.replace(/\.local$/, "");
+    // v2-v4 cannot ping. Preserve the shipped legacy controls; only named
+    // v5 requirements lock them. A historical report never implies online.
+    if (!cap && catalog && catalog.version >= 2 && catalog.version < 5)
+      continue;
     if (!hasCap(catalog, cap ?? "ping"))
       return {
         locked: true,
@@ -111,7 +118,14 @@ export function desktopControlLock(
         reason: `Update Buzz Desktop on ${host} to change this`,
       };
   }
-  if (machines.some((machine) => presence.get(machine)?.status !== "online"))
+  if (
+    machines.some(
+      (machine) =>
+        catalogs.some(
+          (catalog) => catalog.machine === machine && catalog.version >= 5,
+        ) && presence.get(machine)?.status !== "online",
+    )
+  )
     return {
       locked: true,
       offline,

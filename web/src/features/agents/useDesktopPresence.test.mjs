@@ -80,8 +80,12 @@ test("v4 presence is unknown and never sends a ping", () => {
   assert.equal(calls, 0);
   assert.equal(state.get(catalog.machine).status, "unknown");
   assert.match(
-    desktopControlLock([{ ...catalog, version: 4 }], state, [catalog.machine])
-      .reason,
+    desktopControlLock(
+      [{ ...catalog, version: 4 }],
+      state,
+      [catalog.machine],
+      "ping",
+    ).reason,
     /Update Buzz Desktop/,
   );
 });

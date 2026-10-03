@@ -12,6 +12,8 @@ import { useWorkContext } from "@/features/work/workContext";
 import { reactionWork } from "@/features/work/lib/queuedReactions";
 import { useAgentRegistry } from "../../useAgentRegistry";
 import { useDesktopCatalogs } from "../../useDesktopCatalogs";
+import { useDesktopPresence } from "../../useDesktopPresence";
+import { adminCommandLock } from "../../lib/adminCommandLock";
 import { usePersonas } from "../../usePersonas";
 import { useTeams } from "../../useTeams";
 import { useAgentChannels } from "../../useAgentChannels";
@@ -60,7 +62,13 @@ export function AgentScreen({
   const { map: personas } = usePersonas();
   const { map: teams } = useTeams();
   const { session, status } = useRelaySession();
-  const admin = useAdminCommands(session, status);
+  const presence = useDesktopPresence(catalogs);
+  const admin = useAdminCommands(
+    session,
+    status,
+    (command, options) =>
+      adminCommandLock(command, options, catalogs, presence.byMachine).reason,
+  );
   const navigate = useNavigate();
   const phone = usePhoneLayout();
   const roster = useMemo(
@@ -112,7 +120,9 @@ export function AgentScreen({
     );
 
   const enabled =
-    status === "open" && agentDesktopReady(catalogs, row.machines, nowS);
+    status === "open" &&
+    agentDesktopReady(catalogs, row.machines, nowS) &&
+    !presence.lock(row.machines).locked;
   const pending = admin.pending.filter((entry) =>
     entry.summary.endsWith(row.name),
   );

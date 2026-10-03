@@ -1114,12 +1114,16 @@ Three sub-traps from the same hour:
 
 ## Owner-admin v5 foundation (earned on parity P0, 2026-10-02)
 
-- Catalog publication is not proof of desktop liveness. Only a fresh,
-  request-matched owner-sealed ping ack unlocks the web controls.
+- Catalog publication is not proof of desktop liveness. On v5 desktops,
+  a fresh request-matched owner-sealed ping ack unlocks the web controls.
+  Legacy v2-v4 admin controls keep their version gates and work without ping;
+  only named v5 capabilities lock an older desktop.
 - A named capability requires v5 and support on every claiming machine;
   older catalogs still parse but grant no named capabilities.
 - Check capability requirements and timestamp freshness before any desktop
   save path. Never log the payload. Keep response budgets in UTF-8 bytes.
+- Persist owner/machine-scoped replay receipts before applying. Never evict a
+  receipt while its mutating command remains fresh; storage failures refuse saves.
 - The shared owner-admin corpus pins both parsers. Browser tests must
   advance the mocked relay auth grace before expecting subscriptions.
 - Run synthetic Agent Brave tests with fake clocks in an isolated browser

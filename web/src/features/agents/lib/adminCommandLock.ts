@@ -20,5 +20,10 @@ export function adminCommandLock(
     const lock = desktopControlLock(catalogs, presence, machines, cap);
     if (lock.locked) return lock;
   }
-  return desktopControlLock(catalogs, presence, machines);
+  return desktopControlLock(
+    catalogs,
+    presence,
+    machines,
+    command.action === "ping" ? "ping" : undefined,
+  );
 }

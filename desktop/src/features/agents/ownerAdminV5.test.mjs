@@ -22,6 +22,7 @@ test("requires an unknown cap → ack unsupported and createManagedAgent not cal
     { ...create, requires: ["update.effort"] },
     createManagedAgent,
     "crichton.local",
+    { claim: () => true },
     NOW,
   );
   assert.equal(ack.code, "unsupported");
@@ -44,6 +45,7 @@ test("stale issuedAt → stale, applier not called", async () => {
         return null;
       },
       "crichton.local",
+      { claim: () => true },
       NOW,
     );
     assert.equal(ack.code, "stale", String(issuedAt));
@@ -61,6 +63,7 @@ test("fresh boundaries apply through the existing save path", async () => {
         return "aa".repeat(32);
       },
       "crichton.local",
+      { claim: () => true },
       NOW,
     );
     assert.equal(ack.ok, true);
@@ -77,6 +80,7 @@ test("ping acks caps", async () => {
       return null;
     },
     "crichton.local",
+    { claim: () => true },
     NOW,
   );
   assert.deepEqual(ack.result, {
@@ -95,6 +99,7 @@ test("applier errors produce a failed ack with the original error", async () => 
       throw new Error("save refused");
     },
     "crichton.local",
+    { claim: () => true },
     NOW,
   );
   assert.equal(ack.code, "failed");
