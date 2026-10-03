@@ -5,7 +5,7 @@ import { ModelSelect } from "@/shared/ui/settings/ModelSelect";
 import { SettingSelect } from "@/shared/ui/settings/SettingSelect";
 import { createControlsEnabled } from "../lib/adminCommandCapabilities";
 import type { DesktopCatalog } from "../lib/desktopCatalog";
-import type { useAdminCommands } from "../ui/AgentAdminPanel";
+import type { useAdminCommands } from "../ui/useAdminCommands";
 import {
   AccessFields,
   EnvFields,

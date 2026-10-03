@@ -20,7 +20,7 @@ globalThis.document = dom.window.document;
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 const { createElement: h, act } = await import("react");
 const { createRoot } = await import("react-dom/client");
-const { useAdminCommands } = await import("../ui/AgentAdminPanel.tsx");
+const { useAdminCommands } = await import("../ui/useAdminCommands.tsx");
 const { DesktopControlBoundary } = await import(
   "../ui/DesktopControlBoundary.tsx"
 );

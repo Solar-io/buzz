@@ -16,7 +16,7 @@ import { findCleanupCandidates } from "../../lib/availableAgents";
 import { controlsEnabled } from "../../lib/adminCommandCapabilities";
 import type { DesktopCatalog } from "../../lib/desktopCatalog";
 import type { RosterRow as AgentRow } from "../../lib/roster";
-import type { useAdminCommands } from "../../ui/AgentAdminPanel";
+import type { useAdminCommands } from "../../ui/useAdminCommands";
 import { SnapshotExportDialog } from "../../ui/SnapshotExportDialog";
 import { useTick } from "../../ui/WorkingBadge";
 import { agentDesktopReady } from "../agent-screen/agentScreenModel";

@@ -6,11 +6,14 @@ import { cardChangeText } from "./cardChangeText";
 import type { RosterRow } from "../../../lib/roster";
 import type { DesktopCatalog } from "../../../lib/desktopCatalog";
 import { controlsEnabled } from "../../../lib/adminCommandCapabilities";
-import type { useAdminCommands } from "../../../ui/AgentAdminPanel";
+import type { useAdminCommands } from "../../../ui/useAdminCommands";
 import { SettingsNavGuard } from "../../ui/SettingsNavGuard";
 import { ModelThinkingCard } from "./ModelThinkingCard";
 import { RuntimeCard } from "./RuntimeCard";
 import { WhoCanInstructCard } from "./WhoCanInstructCard";
+import { IdentityCard } from "./IdentityCard";
+import { EnvVarsCard } from "./EnvVarsCard";
+import { RemoveCard } from "./RemoveCard";
 import { useAgentCardDraft } from "./useAgentCardDraft";
 import { useInstructionPeople } from "./useInstructionPeople";
 import type { CardFields } from "./cardTypes";
@@ -25,6 +28,11 @@ export function AgentSettingsCards({
   roster,
   phone,
   children,
+  avatarUrl,
+  channelCount,
+  onRemoved,
+  requestedRemove,
+  onRemoveHandled,
 }: {
   row: RosterRow;
   catalogs: DesktopCatalog[];
@@ -34,10 +42,23 @@ export function AgentSettingsCards({
   roster: RosterRow[];
   phone: boolean;
   children?: ReactNode;
+  avatarUrl?: string;
+  channelCount: number;
+  onRemoved: () => void;
+  requestedRemove?: "delete" | "unregister" | null;
+  onRemoveHandled?: () => void;
 }) {
-  const [page, setPage] = useState<"runtime" | "access" | null>(null);
+  const [page, setPage] = useState<
+    "runtime" | "access" | "identity" | "environment" | "remove" | null
+  >(null);
   const extendedEnabled = controlsEnabled(catalogs, row.machines);
-  const form = useAgentCardDraft(row, admin, enabled, extendedEnabled);
+  const form = useAgentCardDraft(
+    row,
+    admin,
+    enabled,
+    extendedEnabled,
+    avatarUrl,
+  );
   const selected: string[] = JSON.parse(
     String(form.value("respondToAllowlist")),
   );
@@ -82,6 +103,26 @@ export function AgentSettingsCards({
       {(!phone || page === "access") && (
         <WhoCanInstructCard fields={fields} people={people} />
       )}
+      {(!phone || page === "identity") && (
+        <IdentityCard row={row} fields={fields} />
+      )}
+      {(!phone || page === "environment") && (
+        <EnvVarsCard
+          rows={form.envRows}
+          onChange={form.onEnvRows}
+          disabled={fields.disabled || fields.controlsLocked}
+        />
+      )}
+      <RemoveCard
+        row={row}
+        admin={admin}
+        channelCount={channelCount}
+        disabled={fields.disabled || draft.draft.size > 0}
+        onRemoved={onRemoved}
+        hidden={phone && page !== "remove"}
+        requestedAction={requestedRemove}
+        onRequestHandled={onRemoveHandled}
+      />
       {phone && !page && (
         <section className="rounded-xl border border-border bg-card p-4">
           <h2 className="mb-2 text-xs font-semibold text-muted-foreground">
@@ -91,6 +132,9 @@ export function AgentSettingsCards({
             [
               ["runtime", "Runtime"],
               ["access", "Who can instruct"],
+              ["identity", "Identity"],
+              ["environment", "Environment variables"],
+              ["remove", "Remove agent"],
             ] as const
           ).map(([id, label]) => (
             <button

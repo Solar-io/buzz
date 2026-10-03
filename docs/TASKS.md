@@ -178,3 +178,22 @@ W8a integration evidence: [current-main composition](TEST_REPORTS/parity-w8a.md#
 - [x] Live-number and low-burn regressions, named simulation-withdrawal mutation proof, full web counts/static/build checks.
 - [x] Render the fixture at 1440 and 390 widths and capture screenshots; commit with the required trailers.
 - [ ] Resolve the contradictory A-time criterion: the unchanged allocator gives 18:56:55Z, while the requested 19:13Z uses A's solo rate. No approval to change allocation or waive that criterion was received. [Receipt](TEST_REPORTS/vitals-account-runway.md).
+
+## Parity W9b2
+
+- [x] Identity: avatar upload, name, standalone instructions, linked Library definition entry.
+- [x] Environment: collapsed patch-only set/remove rows, reserved-key validation, transient secrets.
+- [x] Remove: key-preserving unregister and channel-count delete confirmation, desktop ack.
+- [x] Retire the four legacy modules and preserve Library, create, roster and working-dot consumers.
+- [x] Behavioral regressions, mechanism reversion proof, full web gates and built-app 1440/390 screenshots.
+
+- [ ] Live W9b2 acceptance: FOO set/remove on a throwaway agent using an authorized owner signer and reporting desktop. [Coding receipt](TEST_REPORTS/parity-w9b2.md).
+
+## W9b2 current-main composition
+
+- [x] Compose the retired page into AgentManagementSection using W8a RosterTable, filters, bulk/row actions and P0 presence locks.
+- [x] Preserve Identity/Environment/Remove, Library W11a/W11b, guarded creation, footer, embedded navigation and W9b1.
+- [x] Retain every Playwright spec; run full web units with count, typecheck, changed-file Biome, build and all eight requested E2E groups.
+- [x] Record evidence and commit the integration in the provisioned branch.
+
+Evidence: [W9b2 current-main composition](TEST_REPORTS/parity-w9b2.md#w9b2-composition-with-current-main--2026-10-03).

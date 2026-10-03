@@ -45,6 +45,7 @@ export default defineConfig({
         "**/settings-w11a.spec.ts",
         "**/settings-w11b.spec.ts",
         "**/settings-w9b1.spec.ts",
+        "**/settings-w9b2.spec.ts",
         "**/parity-surfaces.spec.ts",
         "**/forum.spec.ts",
         "**/new-channel.spec.ts",

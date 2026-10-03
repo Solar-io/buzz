@@ -15,6 +15,7 @@ export async function awaitSettingsAck(
   // W7's 30 s race already marked the edit uncertain; stop polling afterwards.
   return {
     ok: false,
+    timedOut: true,
     error:
       "No answer from Buzz Desktop — it may still apply. Check status after reload.",
   };

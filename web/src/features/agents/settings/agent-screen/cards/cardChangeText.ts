@@ -7,6 +7,10 @@ export function cardChangeText(
   entry: SettingDraftEntry,
   people: readonly { pubkey: string; name: string }[],
 ): string {
+  if (entry.field === "envChanges")
+    return `${entry.agentName} Environment variables changed`;
+  if (entry.field === "systemPrompt")
+    return `${entry.agentName} Instructions changed`;
   const readable = (value: SettingValue): string => {
     if (value === UNREPORTED) return "Not reported";
     if (value === null) return entry.defaultLabel;

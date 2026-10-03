@@ -6,7 +6,7 @@ import type { RelaySession } from "@/shared/api/relay-session";
 import { signNostrEvent } from "@/shared/lib/nostr-signer";
 import { Button } from "@/shared/ui/button";
 import type { useAgentChannels } from "../../useAgentChannels";
-import type { useAdminCommands } from "../../ui/AgentAdminPanel";
+import type { useAdminCommands } from "../../ui/useAdminCommands";
 import type { RosterRow } from "../../lib/roster";
 import { targetForAgent } from "../../lib/roster";
 import { addAgentChannel, removeAgentChannel } from "./agentChannelActions";

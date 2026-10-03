@@ -20,7 +20,7 @@ import {
 } from "@/features/dms/lib/dmPicker.ts";
 import { useAgentRegistry } from "@/features/agents/useAgentRegistry";
 import { useAvailableAgents } from "@/features/agents/useAvailableAgents";
-import { AgentWorkingDot } from "@/features/agents/ui/AgentsAdminPage";
+import { AgentWorkingDot } from "@/features/agents/ui/AgentWorkingDot";
 import { useProfiles } from "../hooks.ts";
 import {
   excludeCurrentMembers,

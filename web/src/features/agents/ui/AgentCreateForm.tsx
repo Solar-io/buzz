@@ -7,7 +7,7 @@ import {
 } from "../lib/createAgentRequest";
 import { createControlsEnabled } from "../lib/adminCommandCapabilities";
 import type { DesktopCatalog } from "../lib/desktopCatalog";
-import type { useAdminCommands } from "./AgentAdminPanel";
+import type { useAdminCommands } from "./useAdminCommands";
 import { mergedCatalogHarnesses } from "./HarnessSelect";
 import {
   AccessFields,

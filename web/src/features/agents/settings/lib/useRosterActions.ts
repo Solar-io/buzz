@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import type { useAdminCommands } from "../../ui/AgentAdminPanel";
+import type { useAdminCommands } from "../../ui/useAdminCommands";
 import type { RosterRow } from "../../lib/roster";
 import {
   runRosterActions,

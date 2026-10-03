@@ -10,16 +10,14 @@ import { useDesktopCatalogs } from "@/features/agents/useDesktopCatalogs";
 import { usePersonas } from "@/features/agents/usePersonas";
 import { useTeams } from "@/features/agents/useTeams";
 import { useProfiles } from "@/features/channels/hooks";
-import { buildRoster, type RosterRow } from "../lib/roster";
+import { buildRoster } from "../lib/roster";
 import { teamNamesByPersonaId } from "../lib/rosterGroups";
 import { observedModels } from "../lib/modelSuggestions";
-import { useAdminCommands, PendingCommandsStrip } from "./AgentAdminPanel";
-import { AgentWorkingDot } from "./AgentRosterSidebar";
-import { RosterTable } from "../settings/roster/RosterTable";
-import { AgentConfigPanel } from "./AgentConfigPanel";
-import { CreateAgentScreen } from "../settings/CreateAgentScreen";
-import { NewAgentMenu } from "../settings/NewAgentMenu";
-import { LibraryTabs, type LibraryTab } from "../settings/LibraryTabs";
+import { useAdminCommands, PendingCommandsStrip } from "../ui/useAdminCommands";
+import { RosterTable } from "./roster/RosterTable";
+import { CreateAgentScreen } from "./CreateAgentScreen";
+import { NewAgentMenu } from "./NewAgentMenu";
+import { LibraryTabs, type LibraryTab } from "./LibraryTabs";
 import {
   Dialog,
   DialogContent,
@@ -27,36 +25,35 @@ import {
   DialogDescription,
   DialogFooter,
 } from "@/shared/ui/dialog";
-import { DefinitionsPanel } from "./DefinitionsPanel";
-import { ImportSnapshotButton } from "./ImportSnapshotButton";
-import { PersonaCatalogPanel } from "./PersonaCatalogPanel";
-import { TeamsPanel } from "./TeamsPanel";
+import { DefinitionsPanel } from "../ui/DefinitionsPanel";
+import { ImportSnapshotButton } from "../ui/ImportSnapshotButton";
+import { PersonaCatalogPanel } from "../ui/PersonaCatalogPanel";
+import { TeamsPanel } from "../ui/TeamsPanel";
 import { useDesktopPresence } from "../useDesktopPresence";
 import { adminCommandLock } from "../lib/adminCommandLock";
-import { DesktopConnectionFooter } from "./DesktopConnectionFooter";
-import { DesktopControlBoundary } from "./DesktopControlBoundary";
+import { DesktopConnectionFooter } from "../ui/DesktopConnectionFooter";
+import { DesktopControlBoundary } from "../ui/DesktopControlBoundary";
 
-/** Responsive agent roster and owner-controlled create/config/library panels.
- * Mutations use the existing desktop command channel and presence locks.
- */
+/** Settings entry points for the existing roster, create flow and Library. */
 
 type Mode =
   | { kind: "roster" }
   | { kind: "create" }
-  | { kind: "agent"; pubkey: string }
   | { kind: "catalog" }
   | { kind: "definitions" }
   | { kind: "teams" }
   | { kind: "snapshots" };
 
-export function AgentsAdminPage({
+export function AgentManagementSection({
   embedded = false,
   section = "agents",
   tab,
+  definition,
 }: {
   embedded?: boolean;
   section?: "agents" | "library";
   tab?: string;
+  definition?: string;
 }) {
   const { canSign } = useAuth();
   const navigate = useNavigate();
@@ -115,32 +112,11 @@ export function AgentsAdminPage({
     () => roster.map((row) => row.pubkey),
     [roster],
   );
-  /**
-   * Agents the viewer owns. `useAgentRegistry` subscribes with
-   * `authors: [ownPubkey]`, so every kind-30177 in `registry` was signed by
-   * the viewer — membership here means "the viewer published this agent's
-   * managed-agent record", the web's counterpart to the desktop's local
-   * `managed_agents` store.
-   *
-   * Used only to decide whether to render the read-only memory section. It is
-   * a UX gate, not a security boundary: engrams are NIP-44 encrypted to the
-   * owner and the relay refuses an engram REQ whose `#p` is not the
-   * authenticated reader, so a non-owner learns nothing by defeating it.
-   */
-  const ownedAgentPubkeys = useMemo(
-    () => new Set(registry.map((entry) => entry.pubkey)),
-    [registry],
-  );
   const profiles = useProfiles(rosterPubkeys);
   const registryModels = useMemo(
     () => observedModels(registry, personas),
     [registry, personas],
   );
-
-  const selected: RosterRow | null =
-    mode.kind === "agent"
-      ? (roster.find((row) => row.pubkey === mode.pubkey) ?? null)
-      : null;
 
   if (!canSign) {
     return <LoginPage />;
@@ -177,13 +153,46 @@ export function AgentsAdminPage({
         </div>
       </div>
       <PendingCommandsStrip pending={admin.pending} acks={admin.acks} />
-      <div className="space-y-4">
+      <div className={section === "library" ? "space-y-4" : "space-y-4"}>
+        <div
+          className={
+            section === "library"
+              ? "hidden"
+              : mode.kind === "roster"
+                ? ""
+                : "hidden"
+          }
+        >
+          <RosterTable
+            controlLock={presence.lock(
+              catalogs.map((catalog) => catalog.machine),
+            )}
+            roster={roster}
+            teamNames={teamBadges}
+            profiles={profiles}
+            onOpen={(pubkey) => {
+              void navigate({
+                to: "/repos/settings",
+                search: { group: "agents", agent: pubkey },
+              });
+            }}
+            catalogs={catalogs}
+            admin={admin}
+            session={session}
+          />
+          {!embedded ? (
+            <DesktopConnectionFooter
+              catalogs={catalogs}
+              presence={presence.byMachine}
+            />
+          ) : null}
+        </div>
         <DetailPane
           library={section === "library"}
           tab={mode.kind}
           className={
             mode.kind === "roster"
-              ? ""
+              ? "hidden"
               : "space-y-4 rounded-lg border border-border bg-card p-4"
           }
         >
@@ -202,65 +211,16 @@ export function AgentsAdminPage({
                   onCreated={(pubkey) => {
                     setCreateDraft(false);
                     setCreateBusy(false);
-                    if (embedded)
-                      void navigate({
-                        to: "/repos/settings",
-                        search: { group: "agents", agent: pubkey },
-                      });
-                    else setMode({ kind: "agent", pubkey });
+                    void navigate({
+                      to: "/repos/settings",
+                      search: { group: "agents", agent: pubkey },
+                    });
                   }}
                   onCancel={() => selectMode({ kind: "roster" })}
                   onDraftChange={onCreateDraft}
                 />
               </DesktopControlBoundary>
             </PaneShell>
-          )}
-          {mode.kind === "agent" &&
-            (selected ? (
-              <PaneShell
-                title={selected.name}
-                onBack={() => setMode({ kind: "roster" })}
-              >
-                <DesktopControlBoundary {...presence.lock(selected.machines)}>
-                  <AgentConfigPanel
-                    key={selected.pubkey}
-                    row={selected}
-                    profile={profiles.get(selected.pubkey)}
-                    admin={admin}
-                    session={session}
-                    catalogs={catalogs}
-                    registryModels={registryModels}
-                    roster={roster}
-                    viewerIsOwner={ownedAgentPubkeys.has(selected.pubkey)}
-                    onDeleted={() => setMode({ kind: "roster" })}
-                  />
-                </DesktopControlBoundary>
-              </PaneShell>
-            ) : (
-              <p className="text-sm text-muted-foreground">
-                This agent is no longer in the registry.
-              </p>
-            ))}
-          {mode.kind === "roster" && (
-            <RosterTable
-              controlLock={presence.lock(
-                catalogs.map((catalog) => catalog.machine),
-              )}
-              roster={roster}
-              catalogs={catalogs}
-              teamNames={teamBadges}
-              profiles={profiles}
-              admin={admin}
-              session={session}
-              onOpen={(pubkey) => {
-                if (embedded)
-                  void navigate({
-                    to: "/repos/settings",
-                    search: { group: "agents", agent: pubkey },
-                  });
-                else selectMode({ kind: "agent", pubkey });
-              }}
-            />
           )}
           {mode.kind === "catalog" && (
             <PaneShell
@@ -282,6 +242,7 @@ export function AgentsAdminPage({
               onBack={() => setMode({ kind: "roster" })}
             >
               <DefinitionsPanel
+                definition={definition}
                 personas={personas}
                 forget={personasState.forget}
                 teams={teams}
@@ -324,12 +285,6 @@ export function AgentsAdminPage({
           )}
         </DetailPane>
       </div>
-      {!embedded ? (
-        <DesktopConnectionFooter
-          catalogs={catalogs}
-          presence={presence.byMachine}
-        />
-      ) : null}
       <Dialog
         open={leaving !== null}
         onOpenChange={(open) => {
@@ -412,7 +367,7 @@ function PaneShell({
           <Button
             size="sm"
             variant="ghost"
-            className="h-11"
+            className="lg:hidden"
             onClick={onBack}
             aria-label="Back to all agents"
           >
@@ -426,5 +381,3 @@ function PaneShell({
     </div>
   );
 }
-
-export { AgentWorkingDot };

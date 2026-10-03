@@ -21,7 +21,7 @@ import { useDesktopCatalogs } from "@/features/agents/useDesktopCatalogs";
 import { useDesktopPresence } from "@/features/agents/useDesktopPresence";
 import { adminCommandLock } from "@/features/agents/lib/adminCommandLock";
 import { DesktopControlBoundary } from "@/features/agents/ui/DesktopControlBoundary";
-import { useAdminCommands } from "@/features/agents/ui/AgentAdminPanel";
+import { useAdminCommands } from "@/features/agents/ui/useAdminCommands";
 import type { DesktopCatalog } from "@/features/agents/lib/desktopCatalog";
 import type { ClaudePoolsConfig } from "@/features/agents/lib/adminCommands";
 import type { AdminCommand } from "@/features/agents/lib/adminCommands";

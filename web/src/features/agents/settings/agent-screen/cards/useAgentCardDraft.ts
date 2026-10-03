@@ -2,11 +2,12 @@ import { useEffect, useRef, useState } from "react";
 import { ownPubkey } from "@/shared/lib/nostr-signer";
 import { relayWsUrl } from "@/shared/lib/relay-url";
 import type { RosterRow } from "../../../lib/roster";
-import type { useAdminCommands } from "../../../ui/AgentAdminPanel";
+import type { useAdminCommands } from "../../../ui/useAdminCommands";
 import type { ApiKeySelection } from "../../../lib/providerApiKey";
 import { providerSecretEnvVar } from "../../../lib/providerApiKey";
 import { useSettingsDraft } from "../../lib/useSettingsDraft";
 import { awaitSettingsAck } from "./awaitSettingsAck";
+import type { EnvPatchRow } from "./envPatch";
 import {
   buildCardUpdate,
   settingBaseline,
@@ -24,10 +25,13 @@ export function useAgentCardDraft(
   admin: ReturnType<typeof useAdminCommands>,
   enabled: boolean,
   extendedEnabled: boolean,
+  avatarUrl = "",
 ) {
   const [echo, setEcho] = useState<SettingsEcho>({});
   const [echoKey, setEchoKey] = useState<string | null>(null);
   const [apiKey, setApiKey] = useState<ApiKeySelection>({ kind: "keep" });
+  const [envRows, setEnvRows] = useState<EnvPatchRow[]>([]);
+  const envRevision = useRef(0);
   const ackRef = useRef(admin.acks);
   ackRef.current = admin.acks;
   const machine = row.machines[0] ?? "Buzz Desktop";
@@ -70,6 +74,8 @@ export function useAgentCardDraft(
           "maxTurnDurationSeconds",
           "startOnAppLaunch",
           "apiKey",
+          "avatarUrl",
+          "envChanges",
         ].includes(entry.field),
       )
     )
@@ -87,12 +93,14 @@ export function useAgentCardDraft(
         error: "Needs a current report from one Buzz Desktop.",
       };
     const provider =
-      plan.request.provider ?? settingBaseline(row, echo, "provider");
+      plan.request.provider ??
+      settingBaseline(row, echo, "provider", avatarUrl);
     const built = buildCardUpdate(
       plan,
       row,
       apiKey,
       providerSecretEnvVar(String(provider))?.envVar ?? null,
+      envRows,
     );
     if ("error" in built) return { ok: false, error: built.error };
     const requestId = await admin.send(built.command, `Update ${row.name}`, {
@@ -104,7 +112,7 @@ export function useAgentCardDraft(
     if (ack.ok) {
       const next = { ...echo };
       for (const entry of plan.entries)
-        if (entry.field !== "apiKey")
+        if (entry.field !== "apiKey" && entry.field !== "envChanges")
           next[entry.field as AgentSettingField] =
             entry.change.kind === "clear" ? null : entry.change.value;
       setEcho(next);
@@ -114,6 +122,7 @@ export function useAgentCardDraft(
         /* The acknowledged result remains valid without storage. */
       }
       setApiKey({ kind: "keep" });
+      setEnvRows([]);
     }
     return ack;
   });
@@ -123,14 +132,14 @@ export function useAgentCardDraft(
       ? edit.change.kind === "clear"
         ? null
         : edit.change.value
-      : settingBaseline(row, echo, field);
+      : settingBaseline(row, echo, field, avatarUrl);
   };
   const edit = (
     field: AgentSettingField,
     next: string | number | boolean | null,
   ) => {
     if (!enabled) return;
-    const baseline = settingBaseline(row, echo, field);
+    const baseline = settingBaseline(row, echo, field, avatarUrl);
     draft.edit({
       agentPubkey: row.pubkey,
       agentName: row.name,
@@ -171,7 +180,9 @@ export function useAgentCardDraft(
     draft.receipts.every((receipt) =>
       receipt.plan.entries.every(
         (entry) =>
-          entry.field !== "apiKey" && entry.original.value !== UNREPORTED,
+          entry.field !== "apiKey" &&
+          entry.field !== "envChanges" &&
+          entry.original.value !== UNREPORTED,
       ),
     );
   return {
@@ -180,10 +191,21 @@ export function useAgentCardDraft(
     edit,
     apiKey,
     onApiKey,
+    envRows,
+    onEnvRows: (next: EnvPatchRow[]) => {
+      if (!enabled || draft.busy || draft.uncertain) return;
+      setEnvRows(next);
+      // A revision pins each edit while leaving all values out of W7 receipts.
+      edit(
+        "envChanges",
+        next.length ? `Edit variables (${++envRevision.current})` : UNREPORTED,
+      );
+    },
     canUndo,
     discard: () => {
       draft.discard();
       setApiKey({ kind: "keep" });
+      setEnvRows([]);
     },
   };
 }

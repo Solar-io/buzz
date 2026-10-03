@@ -264,7 +264,7 @@ export function ChannelSidebar({
   };
 
   // ONE bulk kind-30315 REQ for every DM partner — the same roster pattern
-  // (AgentRosterSidebar), never one subscription per row. The hook dedupes
+  // (RosterTable), never one subscription per row. The hook dedupes
   // and set-keys the REQ itself, so the memo is for cleanliness; group DMs
   // subscribe all partners, rows read only their avatar partner's status.
   const dmPartnerPubkeys = useMemo(() => {
