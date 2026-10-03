@@ -161,7 +161,7 @@ test("Save signs and publishes a new scoped workflow, then accepts its live echo
     assert.equal(event.kind, 30620);
     assert.deepEqual(event.tags[1], ["h", "here"]);
     assert.match(event.content, /name: Created/);
-    assert.equal(view.node.querySelector("textarea"), null);
+    assert.equal(view.node.querySelector("textarea") === null, true);
     globalThis.workflows.push(workflowFromEvent({ ...event, created_at: 2 }));
     await view.render();
     assert.match(view.node.textContent, /Created/);
@@ -217,7 +217,7 @@ test("read-only and offline states prevent create and edit", async () => {
     assert.equal(button(view.node, "New workflow").disabled, true);
     assert.equal(button(view.node, "Edit").disabled, true);
     view.node.querySelector("button").click();
-    assert.equal(view.node.querySelector("textarea"), null);
+    assert.equal(view.node.querySelector("textarea") === null, true);
     globalThis.connected = false;
     await view.render();
     assert.deepEqual(globalThis.runIds, []);
@@ -230,7 +230,7 @@ test("Cancel returns to the list without publishing", async () => {
   try {
     await act(async () => button(view.node, "New workflow").click());
     await act(async () => button(view.node, "Cancel").click());
-    assert.equal(view.node.querySelector("textarea"), null);
+    assert.equal(view.node.querySelector("textarea") === null, true);
     assert.equal(view.published.length, 0);
   } finally {
     await view.close();
