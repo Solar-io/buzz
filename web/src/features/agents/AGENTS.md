@@ -21,3 +21,10 @@ them in receipts, drafts, storage or logs. The browser's reload echo whitelists
 only its own acknowledged idle/longest-duration edits, scoped by owner, relay,
 agent and machine; it is not reported/decrypted desktop state. Undo is offered
 only when the original value and its write path are known.
+
+W11b definitions edit the relay's ordered `name_pool` list and duplicate saved
+content into a fresh, private UUID coordinate. Validate reviewed instructions
+before normalization and preserve prompt bytes, including layout whitespace.
+Name pool entries reject invisible formatting before trimming. Targeted sharing
+uses the desktop's native snapshot encoder and is assigned to L3 (plan Q5);
+never invent recipient tags on definition events.

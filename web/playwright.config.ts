@@ -43,6 +43,7 @@ export default defineConfig({
         "**/settings-w9a.spec.ts",
         "**/settings-w8a.spec.ts",
         "**/settings-w11a.spec.ts",
+        "**/settings-w11b.spec.ts",
         "**/settings-w9b1.spec.ts",
         "**/parity-surfaces.spec.ts",
         "**/forum.spec.ts",

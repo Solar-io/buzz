@@ -155,6 +155,13 @@ P0 verifier follow-up:
 
 Evidence: [P0 verifier fixes](TEST_REPORTS/parity-p0-verifier-fixes.md).
 
+W11b definition extras:
+- [x] Name pool list, relay round-trip and explicit Unicode rejection.
+- [x] Private duplicate with fresh coordinate, copy name and preserved prompt bytes.
+- [x] Resolve Q5 from desktop sharing; document native-state dependency in L3.
+- [x] Required web checks, named mechanism withdrawal and 1440/390 built-app screenshots.
+- [ ] Live duplicate/name-pool reconciliation with an authorized throwaway owner identity and reporting desktop. This shell has no signing credentials. Evidence: [W11b report](TEST_REPORTS/parity-w11b.md).
+
 W8a integration with current main:
 - [x] Compose roster with Library, New agent creation, DetailPane, W9b1 and connection footer; retain every Playwright spec.
 - [x] Carry P0 desktop presence lock through row mutations and bulk lifecycle/confirmation controls.
