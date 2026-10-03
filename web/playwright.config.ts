@@ -59,6 +59,7 @@ export default defineConfig({
         "**/items.spec.ts",
         "**/shelf.spec.ts",
         "**/favorites-sync.spec.ts",
+        "**/owner-admin-presence.spec.ts",
         "**/channel-sheet.spec.ts",
         "**/canvas-edit.spec.ts",
         "**/channel-members.spec.ts",

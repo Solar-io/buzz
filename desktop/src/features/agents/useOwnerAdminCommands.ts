@@ -26,6 +26,8 @@ import {
 import { useIdentityQuery } from "@/shared/api/hooks";
 import { normalizePubkey } from "@/shared/lib/pubkey";
 import { getMachineHostname } from "@/shared/api/machineIdentity";
+import { executeOwnerAdminCommand } from "./ownerAdminProtocolV5";
+import { ownerAdminReplayStore } from "./ownerAdminReplay";
 
 /**
  * Owner admin-command ingestion (kind 24201): applies web-issued agent
@@ -35,7 +37,8 @@ import { getMachineHostname } from "@/shared/api/machineIdentity";
  * Trust: the payload is NIP-44 sealed to the owner's own key and the signer
  * must equal our pubkey — the owner key is the admin credential, same trust
  * domain as every other owner-signed write. Commands are deduped by
- * requestId (ephemeral redelivery can replay).
+ * requestId in persistent owner/machine receipts (ephemeral redelivery can
+ * replay after a restart). Receipts expire only after command freshness does.
  *
  * Machine targeting: when the envelope carries `target` (a hostname, from
  * the web's kind-30180 catalog), only the desktop whose hostname matches
@@ -49,7 +52,6 @@ import { getMachineHostname } from "@/shared/api/machineIdentity";
 export function useOwnerAdminCommands() {
   const identityQuery = useIdentityQuery();
   const ownerPubkey = identityQuery.data?.pubkey;
-  const seenRequestIds = React.useRef(new Set<string>());
 
   const handleOwnerAdminEvent = React.useCallback(
     async (event: { content: string }) => {
@@ -64,40 +66,37 @@ export function useOwnerAdminCommands() {
       if (!command) {
         return;
       }
-      if (command.target) {
-        const hostname = await getMachineHostname();
-        if (!commandTargetsThisMachine(command, hostname)) {
-          return;
-        }
-      }
-      if (seenRequestIds.current.has(command.requestId)) {
+      const hostname = await getMachineHostname();
+      if (!commandTargetsThisMachine(command, hostname)) {
         return;
       }
-      seenRequestIds.current.add(command.requestId);
-      // Bounded dedupe memory: a command older than the session is gone
-      // anyway (ephemeral), so cap the set.
-      if (seenRequestIds.current.size > 500) {
-        seenRequestIds.current.clear();
-      }
-
-      try {
-        const agentPubkey = await applyOwnerAdminCommand(command);
-        await publishOwnerAdminAck({
-          requestId: command.requestId,
-          ok: true,
-          ...(agentPubkey ? { agentPubkey } : {}),
-        });
-      } catch (error) {
-        await publishOwnerAdminAck({
-          requestId: command.requestId,
-          ok: false,
-          error: error instanceof Error ? error.message : String(error),
-        }).catch(() => {
-          // Ack failure must not crash ingestion; the web side times out.
-        });
-      }
+      if (!ownerPubkey) return;
+      const ack = await executeOwnerAdminCommand(
+        command,
+        applyOwnerAdminCommand,
+        hostname,
+        // Lazily access storage inside claim: denied/unavailable storage
+        // follows the same fail-closed ack path as a quota or corrupt receipt.
+        ownerAdminReplayStore(
+          {
+            getItem: (key) => window.localStorage.getItem(key),
+            setItem: (key, value) => window.localStorage.setItem(key, value),
+          },
+          normalizePubkey(ownerPubkey),
+          hostname,
+        ),
+      );
+      console.debug("Owner admin", {
+        action: command.action,
+        requestId: command.requestId,
+        ok: ack.ok,
+        code: ack.code,
+      });
+      await publishOwnerAdminAck(ack).catch(() => {
+        // Ack failure must not crash ingestion; the web side times out.
+      });
     },
-    [],
+    [ownerPubkey],
   );
 
   React.useEffect(() => {
@@ -135,6 +134,8 @@ async function applyOwnerAdminCommand(
   command: OwnerAdminCommand,
 ): Promise<string | null> {
   switch (command.action) {
+    case "ping":
+      return null; // executeOwnerAdminCommand handles ping before the applier.
     case "create": {
       const { agent } = await createManagedAgent(
         createInputFromCommand(command),

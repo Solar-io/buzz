@@ -33,7 +33,7 @@ export interface DesktopCatalog {
    * never blank an older web's catalog the way a `!== 1` gate would.
    */
   version: number;
-  /** Named, additive v5 capabilities; older catalogs do not advertise them. */
+  /** v5 named capabilities; absent/malformed lists grant no capabilities. */
   caps?: string[];
   harnesses: DesktopCatalogHarness[];
   /** 64-hex pubkeys of agents runnable on that machine. */
@@ -142,9 +142,12 @@ export function desktopCatalogFromEvent(
   return {
     machine,
     version,
-    caps: Array.isArray(parsed.caps)
-      ? parsed.caps.filter((cap): cap is string => typeof cap === "string")
-      : [],
+    caps:
+      version >= 5 &&
+      Array.isArray(parsed.caps) &&
+      parsed.caps.every((cap) => typeof cap === "string" && cap.length > 0)
+        ? Array.from(new Set(parsed.caps))
+        : [],
     harnesses,
     agents: Array.from(new Set(agents)),
     updatedAt: parsed.updated_at,

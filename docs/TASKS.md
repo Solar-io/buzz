@@ -123,3 +123,21 @@ W9b1 agent settings cards:
 - [x] Safe markdown details: recognise blank/nonblank body boundaries, own-line summaries, open, missing close, nested blocks, literal code, formatted labels and unrelated HTML in both clients.
 - [x] Safe markdown details: wire desktop chat and web chat/Pulse, preserve downstream markdown features and inherited styling.
 - [x] Safe markdown details: record both baseline/final test counts, typechecks, palette/text checks, DOM/browser acceptance and named mutation failures. Evidence: [details renderer report](TEST_REPORTS/markdown-details.md).
+
+P0 — owner-admin protocol foundation:
+- [x] Advertise catalog v5 capabilities; preserve older catalog readers.
+- [x] Parse requirements and timestamps; refuse unsupported or stale writes before applying.
+- [x] Ping response and structured, byte-budgeted acknowledgements.
+- [x] Web capability intersection and sealed command/ack transport.
+- [x] Mounted/focus desktop presence, offline locks, and connection footer.
+- [x] Shared fixture corpus, fail-first regressions, static/build checks, responsive browser evidence.
+
+P0 evidence: `docs/TEST_REPORTS/parity-p0.md`.
+
+P0 verifier follow-up:
+- [x] Preserve enablement and sending for all eight v4 admin commands; keep named v5 requirements locked.
+- [x] Persist replay receipts before save; verify restart, >500 requests, concurrent delivery and failure boundaries.
+- [x] Compose presence checks into the W6/W9a Settings routes after the main merge.
+- [x] Run required web/desktop checks and named fail-then-pass mutations; commit evidence.
+
+Evidence: [P0 verifier fixes](TEST_REPORTS/parity-p0-verifier-fixes.md).

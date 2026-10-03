@@ -67,6 +67,7 @@ export function AgentRosterSidebar({
   catalogs,
   admin,
   session,
+  controlLock,
 }: {
   roster: RosterRow[];
   /** Persona-grouped sections (lib/rosterGroups) — a view over `roster`. */
@@ -79,6 +80,7 @@ export function AgentRosterSidebar({
   catalogs: Parameters<typeof findStaleAgents>[1];
   admin: Admin;
   session: RelaySession;
+  controlLock?: { locked: boolean; reason: string | null };
 }) {
   const pubkeys = useMemo(() => roster.map((row) => row.pubkey), [roster]);
   const profiles = useProfiles(pubkeys);
@@ -138,7 +140,17 @@ export function AgentRosterSidebar({
           Your agents. Changes are sent securely to Buzz Desktop.
         </p>
       </section>
-      <StaleCleanupCard registry={registry} catalogs={catalogs} admin={admin} />
+      <fieldset
+        disabled={controlLock?.locked}
+        title={controlLock?.reason ?? undefined}
+        className="min-w-0"
+      >
+        <StaleCleanupCard
+          registry={registry}
+          catalogs={catalogs}
+          admin={admin}
+        />
+      </fieldset>
       <OwnerProfileCard session={session} />
     </div>
   );

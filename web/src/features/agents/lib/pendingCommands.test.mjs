@@ -20,12 +20,12 @@ test("an ok ack is applied; an error ack is error — never timed out", () => {
 test("no ack before the threshold stays sent; past it flips to unknown", () => {
   const sentAt = 100_000;
   // One tick BEFORE the threshold.
-  assert.deepEqual(pendingRowState(sentAt, undefined, sentAt + 20_000), {
+  assert.deepEqual(pendingRowState(sentAt, undefined, sentAt + 30_000), {
     status: "sent",
     timedOut: false,
   });
   // One tick AFTER the threshold — the "?" state the user must actually see.
-  assert.deepEqual(pendingRowState(sentAt, undefined, sentAt + 20_001), {
+  assert.deepEqual(pendingRowState(sentAt, undefined, sentAt + 30_001), {
     status: "unknown",
     timedOut: true,
   });
@@ -36,9 +36,9 @@ test("no ack before the threshold stays sent; past it flips to unknown", () => {
   });
 });
 
-test("the threshold is pinned at 20 seconds", () => {
+test("the threshold is pinned at 30 seconds", () => {
   // A raised/lowered constant must be a deliberate act that fails this.
-  assert.equal(ACK_TIMEOUT_MS, 20_000);
+  assert.equal(ACK_TIMEOUT_MS, 30_000);
 });
 
 test("a late ack wins over an elapsed timeout", () => {
@@ -58,11 +58,11 @@ test("snapshotAddFeedback: idle when nothing was sent", () => {
 test("snapshotAddFeedback: sending inside the window, no-response after it", () => {
   const sentAt = 100_000;
   // 1ms before the threshold: still "Sending…", button disabled.
-  assert.deepEqual(snapshotAddFeedback(sentAt, undefined, sentAt + 20_000), {
+  assert.deepEqual(snapshotAddFeedback(sentAt, undefined, sentAt + 30_000), {
     phase: "sending",
   });
   // 1ms past it: "?" — the button-reenabling state the dialog must surface.
-  assert.deepEqual(snapshotAddFeedback(sentAt, undefined, sentAt + 20_001), {
+  assert.deepEqual(snapshotAddFeedback(sentAt, undefined, sentAt + 30_001), {
     phase: "no-response",
   });
   assert.deepEqual(snapshotAddFeedback(sentAt, undefined, sentAt + 61_000), {

@@ -17,7 +17,11 @@ export type OwnerAdminCommand = {
    * silently (no ack; the targeted machine acks). Absent = legacy broadcast.
    */
   target?: string;
+  /** Optional for legacy parsing; mutating commands require a fresh timestamp. */
+  issuedAt?: string;
+  requires?: string[];
 } & (
+  | { action: "ping"; requestId: string }
   | {
       action: "create";
       requestId: string;
@@ -290,15 +294,30 @@ export function parseOwnerAdminCommand(
   if (!isText(envelope.action) || !isText(envelope.requestId)) {
     return null;
   }
+  // Never turn malformed requirements into an unguarded legacy command.
+  if (
+    (envelope.requires !== undefined &&
+      (!Array.isArray(envelope.requires) ||
+        !envelope.requires.every((cap) => isText(cap) && cap.length > 0))) ||
+    (envelope.issuedAt !== undefined && !isText(envelope.issuedAt))
+  ) {
+    return null;
+  }
   const request =
     typeof envelope.request === "object" && envelope.request !== null
       ? (envelope.request as Record<string, unknown>)
       : null;
-  if (!request) {
+  if (!request || Array.isArray(envelope.request)) {
     return null;
   }
   const base = {
     requestId: envelope.requestId,
+    ...(envelope.issuedAt !== undefined
+      ? { issuedAt: envelope.issuedAt as string }
+      : {}),
+    ...(envelope.requires !== undefined
+      ? { requires: [...(envelope.requires as string[])] }
+      : {}),
     // Optional machine targeting; a non-string target is dropped and the
     // command still parses (legacy senders never set it).
     ...(optionalString(envelope.target)
@@ -307,6 +326,8 @@ export function parseOwnerAdminCommand(
   };
 
   switch (envelope.action) {
+    case "ping":
+      return { ...base, action: "ping" };
     case "create":
       if (!isText(request.name) || !isText(request.systemPrompt)) {
         return null;

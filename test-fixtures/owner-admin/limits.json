@@ -1,0 +1,7 @@
+{
+  "caseCount": 15,
+  "now": "2026-10-02T21:00:00.000Z",
+  "mutationAgeSeconds": 300,
+  "futureSeconds": 60,
+  "ackBytes": 60000
+}
