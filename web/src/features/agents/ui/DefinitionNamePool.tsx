@@ -1,3 +1,5 @@
+import { useId } from "react";
+
 /** Ordered names for new agents made from this definition. */
 export function DefinitionNamePool({
   value,
@@ -27,4 +29,3 @@ export function DefinitionNamePool({
     </label>
   );
 }
-import { useId } from "react";

@@ -18,3 +18,35 @@
  - **Q6 (P0):** Sam approves the three-release cadence and the relaunch windows.
  
  ## 11. Architecture verdict
+--- PLAN.md
++++ PLAN.md
+@@ -97,7 +97,7 @@
+ | 13 | W9b2 | Agent Settings cards: Identity, Env (blind group), Remove; retire old page | W | M | W9b1 | — |
+ | 14 | W10 | Voice → agent screen; You › Voice & audio; Claude accounts page + per-agent account | W | M | W9a, W8b | — |
+ | 15 | W11a | Library section + New agent ▾ + rebuilt Blank create | W | M | W6, W7 | — |
+-| 16 | W11b | Definition extras: name pool, duplicate, share with specific people | W | M | W11a | — |
++| 16 | W11b | Definition extras: name pool, duplicate | W | M | W11a | — |
+ | 17 | P0 | Protocol foundation: catalog v5 `caps`, `requires`, freshness, ack `code/result`, ping/presence, lock states, shared fixture corpus | D+W | M | — | R1 |
+ | 18 | P1a | Canonical Effort, field clears, "Nobody (paused)", stale-edit guard | D+W | M | P0, W9b1 | R1 |
+ | 19 | P1b | Runtime: inherit, ACP/MCP command + args, auto-restart | D+W | M | P0, W9b1 | R1 |
+@@ -975,8 +975,9 @@
+ 
+ #### L3 Portrait mint + definition private fields (M)
+ 
+-**Builds:** #39, the P half of #32.
+-
++**Builds:** #39, the P half of #32, #33 (moved from W11b after Q5 resolution).
++
++- **Share with specific people…:** reuse/forward the desktop-local `encode_agent_snapshot_for_send` snapshot path and existing DM attachment send. This is the W11b Q5 reassignment; no recipient tags are added to 30175.
+ - `mint_agent_card` (ack `started`; the new avatar arrives in 30177): Identity › avatar › Change › Generate portrait.
+ - `update_persona_private {personaId, envPatch, isActive, configMode}`: Library › Definition › Environment (masked, patch-only), Active toggle, AI-config mode. **"AI-config mode" must be identified in the desktop persona editor first (Q4); if it is not a persisted field, it is dropped from this phase with Sam's approval.**
+ 
+@@ -1181,7 +1182,7 @@
+ | 8 live switch | W9a | | 30 Claude pools | W10 |
+ | 9 cancel | W9a | | 31 drafts | DR1a, DR1b |
+ | 10 provider + key | W9b1 | | 32 personas extras | W11b (R), L3 (P) |
+-| 11 effort | P1a | | 33 share to people | W11b (Q5) |
++| 11 effort | P1a | | 33 share to people | L3 (Q5 resolved) |
+ | 12 harness policy | E2a, E2b | | 34 catalog install | W11a, P2 (linked) |
+ | 13 global defaults | E1a, E1b | | 35 teams CRUD | W11a |
+ | 14 env read + edit | W9b2, S1b2 | | 36 team share / snapshot | L2b |
