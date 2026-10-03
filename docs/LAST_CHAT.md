@@ -103,3 +103,11 @@ Temporary private databases, fresh keys, relay process and .env are removed on e
 2026-10-03 — QA-JOB-001 Done outcome clipping
 
 Shared Done rows put abnormal outcomes at the start of their second line and preserve successful rows. Untitled failures gain a second line. Commit `8e42370` includes the UI and six browser geometry cases using realistic long names; the helper checks label/text rectangles against every clipping ancestor without horizontally scrolling the label. All six fail on the original layout and pass with the fix; full Work-status 13/13, web units 4,225/4,225 and build pass. Rail/full/phone screenshots in both themes are under logs/qa-job-001-fix. Agent Brave WebSocket canaries timed out; supported headed Playwright supplied browser acceptance. See TEST_REPORTS/qa-job-001.md for commands, fail-first evidence and unchanged file-size findings.
+
+2026-10-03 — Parity W5b channel workflows
+
+Built the sheet Workflows tab, channel-scoped rows/latest run badges, and YAML create/owner edit. Edits preserve workflow identity and expected revision; draft retries retain their UUID. Live syntax/shape errors lock Save, relay refusals stay verbatim and text-only, and membership/archive/offline state locks writes. The existing YAML reader now reports source lines and rejects duplicate keys/documents while treating prototype keys as data.
+
+Web units: 4,225 before and 4,243 after; 18 new tests. Fifteen compiling unit mutations kill all 18 added tests by name with 45 tests selected. A built sheet-branch mutation kills all four browser journeys. Required TypeScript, scoped Biome, build and local-main file-size checks pass; default size/px checks flag unchanged baseline files. Agent Brave exercises signed create/edit/live echo, run status and refusals in both themes; twelve inspected artboards cover 1440/390 with 375 geometry assertions. See TEST_REPORTS/parity-w5b.md and logs/verification.log.
+
+Live private-channel acceptance still requires an enrolled signer: this coding shell returns BUZZ_PRIVATE_KEY required. Starting base is 8b73b15b526cafc88dcb34ba279b26348ef6ed83; local main gained W2/W5a during the run. Compose the sheet Workflows and Members branches from their parents during integration.

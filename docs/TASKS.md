@@ -90,6 +90,6 @@ Scope excludes fleet scripts/plugin, live relay/DB, installation, deployment and
 Background-job evidence: [work-rail-jobs report](TEST_REPORTS/work-rail-jobs.md). Added job checks pass with named mutation failures; full just test passes on repeat. The existing relay mesh echo 504 and CLI all-target test-loop lint remain separate open repository gates.
 # Parity W5b
 
-- [ ] Channel Workflows tab: scoped rows/run status and create/edit YAML; preserve identity and revision.
-- [ ] W5b behavioural tests, mutations, required web checks and built-app responsive acceptance.
+- [x] Channel Workflows tab: scoped rows/run status and create/edit YAML; preserve identity and revision.
+- [x] W5b behavioural tests, mutations, required web checks and built-app responsive acceptance. [Evidence](TEST_REPORTS/parity-w5b.md).
 - [ ] W5b live private-channel create/edit with an enrolled signer.
