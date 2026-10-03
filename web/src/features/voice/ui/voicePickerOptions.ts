@@ -22,14 +22,22 @@ import {
 } from "../lib/chatterboxRoster.ts";
 
 /** The engines a picker OFFERS: Chatterbox first and default, then ElevenLabs. */
-export type VoiceEngine = "chatterbox" | "eleven";
+export type VoiceEngine = "chatterbox" | "eleven" | "fish";
 
 /** Segmented-control order, left to right. */
-export const VOICE_ENGINES: readonly VoiceEngine[] = ["chatterbox", "eleven"];
+export const VOICE_ENGINES: readonly VoiceEngine[] = [
+  "chatterbox",
+  "eleven",
+  "fish",
+];
 
 /** Display name for an engine — one spelling, used by every surface. */
 export function engineLabel(engine: VoiceEngine): string {
-  return engine === "chatterbox" ? "Chatterbox" : "ElevenLabs";
+  return engine === "chatterbox"
+    ? "Chatterbox"
+    : engine === "fish"
+      ? "Fish Audio"
+      : "ElevenLabs";
 }
 
 /**
@@ -40,7 +48,9 @@ export function engineLabel(engine: VoiceEngine): string {
 export function initialEngine(
   current: { engine: string } | null | undefined,
 ): VoiceEngine {
-  return current?.engine === "eleven" ? "eleven" : "chatterbox";
+  return current?.engine === "eleven" || current?.engine === "fish"
+    ? current.engine
+    : "chatterbox";
 }
 
 /** One selectable row in a picker, engine-tagged like the selection store. */
@@ -51,6 +61,7 @@ export interface VoicePickerOption {
   label: string;
   /** Secondary text (gender · style) — Chatterbox rows only. */
   detail?: string;
+  notInLibrary?: boolean;
 }
 
 /**
@@ -79,19 +90,73 @@ export function chatterboxVoiceOptions(
  * the selection store expects (`eleven:<voice id>`).
  */
 export function elevenVoiceOptions(
-  voices: readonly { id: string; label: string }[],
+  voices: readonly { id: string; label: string; detail?: string }[],
 ): VoicePickerOption[] {
   return voices.map((voice) => ({
     engine: "eleven" as const,
     key: `eleven:${voice.id}`,
     label: voice.label,
+    ...(voice.detail ? { detail: voice.detail } : {}),
   }));
+}
+
+/** Fish rows use the model id, preserving the public model's author detail. */
+export function fishVoiceOptions(
+  voices: readonly { id: string; label: string; detail?: string }[],
+): VoicePickerOption[] {
+  return voices.map((voice) => ({
+    engine: "fish",
+    key: `fish:${voice.id}`,
+    label: voice.label,
+    ...(voice.detail ? { detail: voice.detail } : {}),
+  }));
+}
+
+const collator = new Intl.Collator("en", {
+  sensitivity: "base",
+  numeric: true,
+});
+/** One ordering contract for every picker, curated list and provider browse list. */
+export function sortVoiceOptions<T extends { label: string; key: string }>(
+  rows: readonly T[],
+): T[] {
+  return [...rows].sort(
+    (a, b) =>
+      collator.compare(a.label, b.label) ||
+      (a.key < b.key ? -1 : a.key > b.key ? 1 : 0),
+  );
+}
+
+/** Pin a soft-removed current cloud voice after sorting, without changing its label. */
+export function withCurrentPinned(
+  options: readonly VoicePickerOption[],
+  current: { engine: string; key?: string } | null | undefined,
+  label?: string,
+): VoicePickerOption[] {
+  if (
+    !current ||
+    (current.engine !== "fish" && current.engine !== "eleven") ||
+    !current.key ||
+    options.some((option) => sameOption(option, current))
+  )
+    return [...options];
+  return [
+    {
+      engine: current.engine,
+      key: current.key,
+      label: label ?? current.key,
+      detail: "not in library",
+      notInLibrary: true,
+    },
+    ...options,
+  ];
 }
 
 /** Both engines' source rows, as the pickers hold them. */
 export interface VoiceOptionSources {
   chatterboxVoices: readonly ChatterboxVoice[];
-  elevenVoices: readonly { id: string; label: string }[];
+  elevenVoices: readonly { id: string; label: string; detail?: string }[];
+  fishVoices?: readonly { id: string; label: string; detail?: string }[];
   /** Whose voice is being chosen; null/absent = the signed-in identity. */
   target?: VoicePickerTarget | null;
 }
@@ -105,9 +170,13 @@ export function engineVoiceOptions(
   engine: VoiceEngine,
   sources: VoiceOptionSources,
 ): VoicePickerOption[] {
-  return engine === "chatterbox"
-    ? chatterboxVoiceOptions(sources.chatterboxVoices, sources.target ?? null)
-    : elevenVoiceOptions(sources.elevenVoices);
+  const rows =
+    engine === "chatterbox"
+      ? chatterboxVoiceOptions(sources.chatterboxVoices, sources.target ?? null)
+      : engine === "fish"
+        ? fishVoiceOptions(sources.fishVoices ?? [])
+        : elevenVoiceOptions(sources.elevenVoices);
+  return sortVoiceOptions(rows);
 }
 
 /** Rows beyond which the list grows a filter box. */
@@ -142,7 +211,8 @@ export function sameOption(
   if (
     a.engine !== "pocket" &&
     a.engine !== "chatterbox" &&
-    a.engine !== "eleven"
+    a.engine !== "eleven" &&
+    a.engine !== "fish"
   ) {
     return false;
   }
