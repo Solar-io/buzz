@@ -179,11 +179,12 @@ export async function setup(
   }
   // Manual entry intentionally locks on reload. Remember this disposable key
   // through the actual setting before exercising deep links and reloads.
-  await page.getByTestId("settings-nav-item-security").click();
+  await page.getByTestId("settings-nav-item-security").filter({visible:true}).click();
   const staySignedIn = page
     .getByText("Stay signed in", { exact: true })
     .locator("..");
-  await staySignedIn.getByRole("button").click();
+  if ((await staySignedIn.getByRole("button").textContent()) === "Off")
+    await staySignedIn.getByRole("button").click();
   await expect(staySignedIn.getByRole("button")).toHaveText("On");
   await page.goto(`/repos/settings?group=agents&agent=${agent.pubkey}`);
   await expect(page.getByTestId("model-thinking-card")).toBeVisible();

@@ -220,7 +220,7 @@ function AgentRosterRow({
               <span
                 key={teamName}
                 title={`Member of the team "${teamName}"`}
-                className="ml-1.5 rounded bg-sky-500/15 px-1.5 py-0.5 text-badge font-normal text-sky-600 dark:text-sky-400"
+                className="ml-1.5 rounded bg-info-soft px-1.5 py-0.5 text-badge font-normal text-info-ink"
               >
                 {teamName}
               </span>

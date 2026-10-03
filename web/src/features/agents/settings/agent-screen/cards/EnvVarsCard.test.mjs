@@ -191,7 +191,7 @@ test("linked identity opens the exact Library definition and hides standalone pr
     IdentityCard,
     { row: linked, fields: fields({ name: row.name, avatarUrl: "" }) },
     (container) => {
-      assert.equal(container.querySelector("textarea"), null);
+      assert.equal(container.querySelector("textarea") === null, true);
       assert.match(
         container.querySelector("a").href,
         /group=library&tab=definitions&definition=definition-123/,
