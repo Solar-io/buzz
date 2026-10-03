@@ -6,6 +6,7 @@ import {
   triggerDescription,
   triggerLabel,
   workflowFromEvent,
+  workflowRequests,
 } from "./workflowDefinition.ts";
 
 const WORKFLOW_ID = "4f1c8b6a-2d31-4a55-9c0e-7b8d5e2f1a90";
@@ -225,4 +226,22 @@ test("describes a schedule trigger by its cron, and a filter by its expression",
     }),
     "Webhook",
   );
+});
+
+test("workflowRequests keeps every REQ within the relay's 10-filter cap", () => {
+  const ids = Array.from({ length: 38 }, (_, i) => `channel-${i}`);
+  const requests = workflowRequests(ids);
+  assert.deepEqual(
+    requests.map((filters) => filters.length),
+    [10, 10, 10, 8],
+  );
+  assert.deepEqual(
+    requests.flat().map((filter) => filter["#h"][0]),
+    ids,
+  );
+  assert.deepEqual(requests[0][0], {
+    kinds: [30620],
+    "#h": ["channel-0"],
+    limit: 200,
+  });
 });
