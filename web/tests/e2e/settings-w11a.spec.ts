@@ -222,6 +222,18 @@ for (const width of [1440, 390]) {
       .selectOption("value:1800");
     await screenshot(page, `blank-${width}`);
     await page
+      .getByRole("heading", { name: "Runtime", exact: true })
+      .evaluate((heading) =>
+        heading.parentElement?.scrollIntoView({ block: "start" }),
+      );
+    await screenshot(page, `blank-runtime-${width}`);
+    await page
+      .getByRole("heading", { name: "Environment variables", exact: true })
+      .evaluate((heading) =>
+        heading.parentElement?.scrollIntoView({ block: "start" }),
+      );
+    await screenshot(page, `blank-access-${width}`);
+    await page
       .getByRole("button", { name: "Create agent", exact: true })
       .click();
     await expect.poll(() => state.commands.length).toBe(1);
