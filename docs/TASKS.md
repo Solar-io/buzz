@@ -53,3 +53,10 @@ W1 channel settings:
 - [ ] Clean unfiltered relay + CLI gate: CLI 483 pass; relay lib 1047 pass / 2 fail / 64 ignored. Parent control reproduces mesh echo 504; telemetry callsite failure is intermittent. [Evidence](TEST_REPORTS/fish-relay-cli.md).
 - [ ] Execute the Fish E2E case against an isolated relay containing this patch.
 - [x] Live baseline QA: HTTP 200 Buzz page and 46-row ElevenLabs JSON; Agent Brave Settings/Voice/ElevenLabs/filter/Cancel flow, inspected screenshot and console/network receipts. Fish integration acceptance remains open.
+
+## Fish audio P4 native iOS
+
+- [ ] In progress: accept Fish selection/assignment keys on the shared grammar and retain existing voice precedence.
+- [ ] Admit Fish channel overrides through NativeAgentVoice's existing bridge route.
+- [ ] Cover Fish and ElevenLabs shared grammar vectors with fixed case counts, plus Fish routing and override behavior.
+- [ ] Run the native simulator suite before/after, demonstrate named mutation failures, and record the handoff. Physical builds/installs, deployment and push are outside this phase.

@@ -117,7 +117,10 @@ enum NativeVoicePolicy {
               let engine = value["engine"] as? String, let key = value["key"] as? String else { return nil }
         if engine == "pocket", key != "pocket:eve",
            key.range(of: "^pocket:(?:[a-z0-9_-]+|imported:[a-f0-9]{64})$", options: .regularExpression) != nil { return (engine, key) }
-        if engine == "eleven", key.range(of: "^eleven:[A-Za-z0-9]{10,36}$", options: .regularExpression) != nil { return (engine, key) }
+        // Same ASCII grammar as relay valid_eleven_voice_key / valid_fish_voice_key.
+        // ICU's $ also matches before a trailing newline; \z requires the entire raw key.
+        if engine == "eleven", key.range(of: "^eleven:[A-Za-z0-9]{10,36}\\z", options: .regularExpression) != nil { return (engine, key) }
+        if engine == "fish", key.range(of: "^fish:[A-Za-z0-9]{16,64}\\z", options: .regularExpression) != nil { return (engine, key) }
         // Byte-for-byte the relay's valid_chatterbox_voice_key (web isValidChatterboxKey).
         if engine == "chatterbox", key.range(of: "^chatterbox:[a-z0-9][a-z0-9_-]{0,47}$", options: .regularExpression) != nil { return (engine, key) }
         return nil
