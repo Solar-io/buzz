@@ -1,7 +1,12 @@
 import { expect, type Page } from "@playwright/test";
 import { test } from "./helpers/agentBraveTest";
 import { hexId, mockEvent } from "./helpers/mockRelay";
-import { channelPath, mainComposer, openShell } from "./helpers/shellPage";
+import {
+  channelPath,
+  mainComposer,
+  openShell,
+  shot,
+} from "./helpers/shellPage";
 
 const ROOT = hexId(90001);
 const NEXT = hexId(90003);
@@ -299,24 +304,120 @@ for (const theme of ["buzz", "buzz-dark"]) {
     });
   }
 
-  test(`Canvas overlays a row too narrow for both panes ${theme}`, async ({
-    page,
-  }) => {
-    await page.setViewportSize({ width: 1054, height: 900 });
-    await openConversation(page, theme, 480);
-    await openCanvas(page);
-    const main = page.locator(".buzz-content-scrollbar > main");
-    const dock = page.getByTestId("right-dock");
-    await expect(dock).toHaveCSS("position", "absolute");
-    expect((await main.boundingBox())?.width).toBeGreaterThanOrEqual(400);
-    const chatBounds = await main.boundingBox();
-    const dockBounds = await dock.boundingBox();
-    expect(dockBounds?.x).toBe(chatBounds?.x);
-    expect(dockBounds?.width).toBe(chatBounds?.width);
-    await expect(page.getByLabel("Resize side panel")).toBeHidden();
-    await noOverflow(page);
-    await page.getByTestId("right-pane-tab-work").click();
-    await expect(page.getByTestId("channel-canvas")).toHaveCount(0);
-    await expect(mainComposer(page)).toBeVisible();
-  });
+  for (const [sidebar, width] of [
+    [480, 1054],
+    [260, 1054],
+    [260, 1280],
+  ]) {
+    for (const tab of ["work", "canvas"]) {
+      test(`${tab} dock stays usable with sidebar ${sidebar} at ${width} ${theme}`, async ({
+        page,
+      }) => {
+        await page.setViewportSize({ width, height: 900 });
+        await openConversation(page, theme, sidebar);
+        await expect(page.locator("html")).toHaveAttribute(
+          "data-palette",
+          theme === "buzz" ? "buzz-light" : "buzz-dark",
+        );
+        expect(
+          (await page.getByTestId("app-shell-sidebar").boundingBox())?.width,
+        ).toBe(sidebar);
+        const dock = page.getByTestId("right-dock");
+        const main = page.locator(".buzz-content-scrollbar > main");
+        const back = page.getByRole("button", {
+          name: "Back to chat",
+          exact: true,
+        });
+        if (tab === "canvas") {
+          await page.getByTestId("right-pane-tab-canvas").click();
+          await expect(dock.getByTestId("channel-canvas")).toBeVisible();
+        }
+        await expect(page.getByTestId(`right-pane-tab-${tab}`)).toHaveAttribute(
+          "aria-selected",
+          "true",
+        );
+        await expect
+          .poll(async () => (await dock.boundingBox())?.width ?? 0)
+          .toBeGreaterThanOrEqual(320);
+        const chatBounds = await main.boundingBox();
+        const dockBounds = await dock.boundingBox();
+        expect(chatBounds && dockBounds).toBeTruthy();
+        if (!chatBounds || !dockBounds) throw new Error("Missing pane bounds");
+        expect(chatBounds.width).toBeGreaterThanOrEqual(400);
+        if (sidebar === 480) {
+          await expect(dock).toHaveCSS("position", "absolute");
+          expect(dockBounds.x).toBe(chatBounds.x);
+          expect(dockBounds.width).toBe(chatBounds.width);
+          await expect(page.getByLabel("Resize side panel")).toBeHidden();
+          await expect(back).toBeVisible();
+        } else {
+          await expect(dock).toHaveCSS("position", "sticky");
+          expect(dockBounds.x).toBeGreaterThanOrEqual(
+            chatBounds.x + chatBounds.width,
+          );
+          await expect(page.getByLabel("Resize side panel")).toBeVisible();
+          await expect(back).toBeHidden();
+        }
+        for (const id of ["work", "canvas"]) {
+          const button = page.getByTestId(`right-pane-tab-${id}`);
+          expect(
+            await button.evaluate((element) => {
+              const rect = element.getBoundingClientRect();
+              const viewport =
+                element.parentElement?.parentElement?.getBoundingClientRect();
+              return (
+                viewport != null &&
+                rect.left >= viewport.left &&
+                rect.right <= viewport.right &&
+                element.scrollWidth <= element.clientWidth &&
+                element.contains(
+                  document.elementFromPoint(
+                    rect.x + rect.width / 2,
+                    rect.y + rect.height / 2,
+                  ),
+                )
+              );
+            }),
+            `${id} tab is uncut and receives pointer input`,
+          ).toBe(true);
+        }
+        if (tab === "work") {
+          const needs = dock.locator('[data-testid^="need-row-"]');
+          await expect(needs.first()).toBeVisible();
+          expect(await needs.count()).toBeGreaterThan(0);
+          expect(
+            (await needs.first().boundingBox())?.width,
+          ).toBeGreaterThanOrEqual(280);
+        }
+        await noOverflow(page);
+        await shot(page, `dock-${tab}-${sidebar}-${width}-${theme}`);
+        if (sidebar === 480) {
+          // Tab switching keeps the usable overlay; only Back returns to chat.
+          await page.getByTestId("right-pane-tab-work").click();
+          await expect(dock).toHaveCSS("position", "absolute");
+          await page.getByTestId("right-pane-tab-canvas").click();
+          await expect(dock.getByTestId("channel-canvas")).toBeVisible();
+          await back.click();
+          await expect(dock).toHaveCSS("position", "sticky");
+          await expect(page.getByTestId("work-rail-collapsed")).toBeVisible();
+          await mainComposer(page).click();
+          await mainComposer(page).fill("Back in the conversation");
+          await expect(mainComposer(page)).toBeFocused();
+          await page.getByTestId("work-rail-collapsed-canvas").click();
+          await expect(dock).toHaveCSS("position", "absolute");
+          await back.click();
+          await page.getByRole("button", { name: /^Expand Work/ }).click();
+          await expect(dock).toHaveCSS("position", "absolute");
+        }
+        await page.setViewportSize({ width: 1440, height: 900 });
+        await expect(dock).toHaveCSS("position", "sticky");
+        await expect
+          .poll(async () => (await dock.boundingBox())?.width ?? 0)
+          .toBe(540);
+        expect(
+          await page.evaluate(() => localStorage.getItem("buzz.work-width.v1")),
+        ).toBe("540");
+      });
+    }
+  }
 }
