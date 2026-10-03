@@ -1,4 +1,8 @@
 - [x] Work row context: title → own in-turn message → trigger/parent precedence, bounded history fetching, unit boundaries, two mutation kills, and desktop/phone fixtures.
+- [x] Parity W11a: Library tabs (Definitions, Teams, Catalog, Snapshots) and one New agent menu.
+- [x] Parity W11a: Blank create cards using existing create wire contract and built-in defaults; linked/team creation stays locked for P2.
+- [x] Parity W11a: behavioral regressions, fail-first proof, web checks and built-app 1440/390 screenshots. Evidence: [W11a report](TEST_REPORTS/parity-w11a.md).
+- [ ] Parity W11a: live throwaway-agent creation/start acceptance with an authorized owner signer and a reporting desktop. The coding shell has no Buzz signing credentials; the live browser reports no desktop for its identity.
 - [x] QA 63eeb8a14: 4,081 unit tests, static/build checks, Work E2E, Agent Brave, request census, edge cases and precedence mutation. Findings: docs/TEST_REPORTS/qa-work-63eeb8a14/test-report-2026-10-02.md.
 - [x] QA-WORK-001 (High): fixed — live kind-9 subscription for running turns and Done turns inside a 90 s grace (`liveSlots`); regression `web/tests/e2e/work-activity.spec.ts`.
 - [ ] QA-WORK-002 (Medium): prune lifetime activity/tried maps when pair windows/channels expire; add churn coverage.
