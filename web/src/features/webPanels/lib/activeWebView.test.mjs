@@ -7,7 +7,9 @@ import {
   activeWebReducer,
   pickFilesPanel,
   webLayerMode,
+  webViewKey,
 } from "./activeWebView.ts";
+import { DAILY_DIGEST_PANEL, DAILY_DIGEST_TARGET } from "./dailyDigest.ts";
 
 const link = (panelId) => ({ kind: "link", panelId });
 const files = (panelId) => ({ kind: "files", panelId });
@@ -15,6 +17,53 @@ const files = (panelId) => ({ kind: "files", panelId });
 function run(...actions) {
   return actions.reduce(activeWebReducer, INITIAL_ACTIVE_WEB);
 }
+
+test("Daily Digest has a fixed target, title and edition URL", () => {
+  assert.deepEqual(DAILY_DIGEST_TARGET, {
+    kind: "digest",
+    panelId: "daily-digest",
+  });
+  assert.equal(DAILY_DIGEST_PANEL.label, "Daily Digest");
+  assert.equal(
+    DAILY_DIGEST_PANEL.url,
+    "https://crichton.tailb3d4b8.ts.net:6450/edition/latest.html",
+  );
+  assert.equal(webViewKey(DAILY_DIGEST_TARGET), "digest:daily-digest");
+});
+
+test("Daily Digest replaces Files and hides for a conversation without losing its frame", () => {
+  const shown = run(
+    { type: "show", target: files("files") },
+    { type: "focus", focused: true },
+    { type: "show", target: DAILY_DIGEST_TARGET },
+  );
+  assert.deepEqual(shown.active, { kind: "digest", panelId: "daily-digest" });
+  assert.deepEqual(shown.mounted, ["files:files", "digest:daily-digest"]);
+  assert.equal(shown.focus, false);
+  assert.equal(webLayerMode(shown), "page");
+  const hidden = activeWebReducer(shown, { type: "hide" });
+  assert.equal(hidden.active, null);
+  assert.equal(webLayerMode(hidden), "none");
+  assert.deepEqual(hidden.mounted, ["files:files", "digest:daily-digest"]);
+});
+
+test("Daily Digest shares the four-frame LRU and refreshes on another click", () => {
+  const shown = run(
+    { type: "show", target: DAILY_DIGEST_TARGET },
+    { type: "show", target: link("1") },
+    { type: "show", target: link("2") },
+    { type: "show", target: files("files") },
+    { type: "show", target: DAILY_DIGEST_TARGET },
+    { type: "show", target: link("3") },
+  );
+  assert.deepEqual(shown.active, { kind: "link", panelId: "3" });
+  assert.deepEqual(shown.mounted, [
+    "link:2",
+    "files:files",
+    "digest:daily-digest",
+    "link:3",
+  ]);
+});
 
 test("link A then link B: B shows at once and A stays mounted (was: B ignored)", () => {
   const state = run(

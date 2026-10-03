@@ -36,7 +36,7 @@ export function ttsBridgeUrl(hostname: string): string {
 
 /** What one selection asks the bridge for. */
 export interface BridgeSpeakRequest {
-  engine: "pocket" | "chatterbox" | "eleven";
+  engine: "pocket" | "chatterbox" | "eleven" | "fish";
   voice: string;
 }
 
@@ -52,7 +52,8 @@ export interface BridgeSpeakRequest {
  *    `pocket-selected-pending-engine`), so the OS robot is never the
  *    fallback for an imported selection.
  *  - `chatterbox:<slug>` → Chatterbox roster slug;
- *  - `eleven:<voiceid>` → ElevenLabs voice id.
+ *  - `eleven:<voiceid>` → ElevenLabs voice id;
+ *  - `fish:<modelid>` → Fish Audio model id.
  */
 export function selectionToBridgeRequest(
   selection: AgentVoiceSelection,
@@ -71,6 +72,9 @@ export function selectionToBridgeRequest(
   }
   if (selection.engine === "eleven") {
     return { engine: "eleven", voice: selection.key.slice("eleven:".length) };
+  }
+  if (selection.engine === "fish") {
+    return { engine: "fish", voice: selection.key.slice("fish:".length) };
   }
   return null;
 }

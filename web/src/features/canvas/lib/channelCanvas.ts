@@ -13,9 +13,18 @@
  */
 
 import type { NostrFilter } from "@/shared/lib/nostr-client";
+import type { UnsignedNostrEvent } from "@/shared/lib/nostr-signer";
 import { CHANNEL_CANVAS_KEY } from "@/features/shelf/lib/fileTabs.ts";
 
 export const KIND_CANVAS = 40100;
+
+/** Append a channel canvas set; empty markdown clears it (buzz-sdk build_set_canvas). */
+export function buildCanvasEvent(
+  channelId: string,
+  markdown: string,
+): Omit<UnsignedNostrEvent, "created_at"> {
+  return { kind: KIND_CANVAS, tags: [["h", channelId]], content: markdown };
+}
 
 export interface ChannelCanvasDoc {
   eventId: string;
@@ -90,11 +99,8 @@ export function hasCanvasContent(doc: ChannelCanvasDoc | null): boolean {
 }
 
 /**
- * Does Canvas list the channel canvas? When it has content, yes. While the
- * query is still out, only if it is the document the viewer is on — so
- * switching channels does not flash a "Channel canvas" tab into every
- * conversation that has none, and does not drop the viewer off the canvas
- * they were reading while the next one loads.
+ * Content pins the canvas. An explicit choice (About > Canvas) also keeps an
+ * empty canvas listed so it can be created, or edited again after Clear.
  */
 export function channelCanvasListed(
   phase: ChannelCanvasPhase,
@@ -104,5 +110,5 @@ export function channelCanvasListed(
   if (hasCanvasContent(doc)) {
     return true;
   }
-  return phase === "loading" && selected === CHANNEL_CANVAS_KEY;
+  return phase !== "idle" && selected === CHANNEL_CANVAS_KEY;
 }

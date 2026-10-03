@@ -13,6 +13,11 @@
 import { useMemo, useState, type ReactNode } from "react";
 import {
   Bell,
+  BookOpen,
+  Headphones,
+  KeyRound,
+  Hash,
+  ChevronRight,
   Bot,
   Database,
   FlaskConical,
@@ -28,11 +33,17 @@ import { cn } from "@/shared/lib/cn";
 
 import {
   filterSettingsGroups,
+  filterSettingsAgents,
+  type SettingsAgent,
   type SettingsGroupMeta,
   type SettingsGroupId,
 } from "./settingsGroups";
 
 const GROUP_ICONS: Record<SettingsGroupId, ReactNode> = {
+  accounts: <KeyRound className="h-4 w-4" />,
+  library: <BookOpen className="h-4 w-4" />,
+  voice: <Headphones className="h-4 w-4" />,
+  channels: <Hash className="h-4 w-4" />,
   account: <User className="h-4 w-4" />,
   notifications: <Bell className="h-4 w-4" />,
   appearance: <Palette className="h-4 w-4" />,
@@ -56,6 +67,10 @@ export interface SettingsNavProps {
   attentionGroup?: SettingsGroupId;
   /** Layout hook for the host (the rail owns the sidebar background). */
   className?: string;
+  agents?: readonly SettingsAgent[];
+  onSelectAgent?: (pubkey: string) => void;
+  phoneRoot?: boolean;
+  footer?: ReactNode;
 }
 
 /** One uppercase label per contiguous run of equal labels, as the nav shows. */
@@ -79,21 +94,26 @@ function NavItem({
   attention,
   group,
   onSelect,
+  phoneRoot,
 }: {
   active: SettingsGroupId;
+  phoneRoot?: boolean;
   attention?: boolean;
   group: SettingsGroupMeta;
   onSelect: (id: SettingsGroupId) => void;
 }) {
-  const isActive = group.id === active;
+  const isActive = !phoneRoot && group.id === active;
   return (
     <button
       className={cn(
         "flex w-full items-center gap-2.5 rounded-md px-2.5 py-1.5 text-left text-sm transition-colors",
+        phoneRoot &&
+          "min-h-12 rounded-none border-b border-border last:border-0",
         isActive
           ? "bg-sidebar-active font-semibold text-sidebar-active-foreground"
           : "hover:bg-sidebar-accent/60",
       )}
+      aria-current={isActive ? "page" : undefined}
       data-active={isActive || undefined}
       data-testid={`settings-nav-item-${group.id}`}
       onClick={() => onSelect(group.id)}
@@ -105,11 +125,14 @@ function NavItem({
       <span className="min-w-0 flex-1 truncate">{group.name}</span>
       {attention ? (
         <span
-          className="rounded-full bg-amber-500 px-1.5 py-px text-2xs font-bold leading-tight text-black"
+          className="rounded-full bg-honey px-1.5 py-px text-2xs font-bold leading-tight text-honey-ink"
           data-testid="settings-nav-badge-security"
         >
           1
         </span>
+      ) : null}
+      {phoneRoot ? (
+        <ChevronRight aria-hidden className="h-4 w-4 text-muted-foreground" />
       ) : null}
     </button>
   );
@@ -121,34 +144,45 @@ export function SettingsNav({
   className,
   groups,
   onSelect,
+  agents = [],
+  onSelectAgent,
+  phoneRoot = false,
+  footer,
 }: SettingsNavProps) {
   const [query, setQuery] = useState("");
   const matches = useMemo(
-    () => filterSettingsGroups(query, groups),
-    [groups, query],
+    () => filterSettingsGroups(query, groups, agents),
+    [groups, query, agents],
   );
 
+  const agentMatches = filterSettingsAgents(query, agents);
   return (
     <div
       className={cn("flex flex-col gap-1 px-2.5 pb-3", className)}
-      data-testid="settings-nav"
+      data-testid={phoneRoot ? "settings-root-list" : "settings-nav"}
     >
+      {phoneRoot ? footer : null}
       <div className="relative mx-1 mb-1.5 shrink-0">
         <Search className="pointer-events-none absolute top-1/2 left-2.5 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground/60" />
         <input
           aria-label="Search settings"
-          className="w-full rounded-md border border-border/60 bg-card py-1.5 pr-2.5 pl-8 text-sm text-foreground outline-none placeholder:text-muted-foreground/60 focus:border-primary"
+          className="w-full rounded-md border border-border/60 bg-card min-h-11 md:min-h-0 py-1.5 pr-2.5 pl-8 text-sm text-foreground outline-none placeholder:text-muted-foreground/60 focus:border-primary"
           data-testid="settings-nav-search"
           onChange={(event) => setQuery(event.target.value)}
           onKeyDown={(event) => {
             // Enter activates the first match, then clears so the full nav
             // is one keystroke away again.
-            if (event.key === "Enter" && matches.length > 0) {
-              onSelect(matches[0].id);
+            if (
+              event.key === "Enter" &&
+              (matches.length > 0 || agentMatches.length > 0)
+            ) {
+              if (agentMatches.length && onSelectAgent)
+                onSelectAgent(agentMatches[0].pubkey);
+              else if (matches.length) onSelect(matches[0].id);
               setQuery("");
             }
           }}
-          placeholder="Search settings…"
+          placeholder="Find a setting or agent…"
           type="text"
           value={query}
         />
@@ -160,16 +194,39 @@ export function SettingsNav({
             <p className="px-2.5 pt-3 pb-1 text-2xs font-semibold tracking-widest text-muted-foreground/70 uppercase">
               {run.label}
             </p>
-            {run.groups.map((group) => (
-              <NavItem
-                active={active}
-                attention={attentionGroup === group.id}
-                group={group}
-                key={group.id}
-                onSelect={onSelect}
-              />
-            ))}
+            <div
+              className={
+                phoneRoot
+                  ? "overflow-hidden rounded-xl border border-border bg-card"
+                  : undefined
+              }
+            >
+              {run.groups.map((group) => (
+                <NavItem
+                  active={active}
+                  phoneRoot={phoneRoot}
+                  attention={attentionGroup === group.id}
+                  group={group}
+                  key={group.id}
+                  onSelect={onSelect}
+                />
+              ))}
+            </div>
           </div>
+        ))}
+        {agentMatches.map((agent) => (
+          <button
+            key={agent.pubkey}
+            type="button"
+            className="flex min-h-11 w-full items-center gap-2 rounded-md px-2.5 text-left text-sm hover:bg-sidebar-accent"
+            onClick={() => {
+              onSelectAgent?.(agent.pubkey);
+              setQuery("");
+            }}
+          >
+            <Bot aria-hidden className="h-4 w-4" />
+            {agent.name}
+          </button>
         ))}
         {matches.length === 0 ? (
           <p className="px-2.5 py-3 text-xs text-muted-foreground">
@@ -177,57 +234,7 @@ export function SettingsNav({
           </p>
         ) : null}
       </div>
-    </div>
-  );
-}
-
-/**
- * Narrow-viewport companion: the same groups as a horizontally scrollable
- * chip row rendered above the content pane.
- */
-export function SettingsChipRow({
-  active,
-  groups,
-  attentionGroup,
-  onSelect,
-}: {
-  active: SettingsGroupId;
-  groups: readonly SettingsGroupMeta[];
-  /** Same signal as the rail: amber dot on the group needing attention. */
-  attentionGroup?: SettingsGroupId;
-  onSelect: (id: SettingsGroupId) => void;
-}) {
-  return (
-    <div
-      className="flex gap-1.5 overflow-x-auto px-3 py-2"
-      data-testid="settings-chip-row"
-    >
-      {groups.map((group) => {
-        const isActive = group.id === active;
-        return (
-          <button
-            className={cn(
-              "shrink-0 rounded-full border px-3 py-1 text-xs whitespace-nowrap transition-colors",
-              isActive
-                ? "border-sidebar-active bg-sidebar-active font-semibold text-sidebar-active-foreground"
-                : "border-border bg-card hover:border-primary",
-            )}
-            data-testid={`settings-chip-${group.id}`}
-            key={group.id}
-            onClick={() => onSelect(group.id)}
-            type="button"
-          >
-            {group.name}
-            {attentionGroup === group.id ? (
-              <span
-                aria-label="needs attention"
-                className="ml-1.5 inline-block h-2 w-2 rounded-full bg-amber-500 align-middle"
-                data-testid="settings-chip-badge-security"
-              />
-            ) : null}
-          </button>
-        );
-      })}
+      {!phoneRoot ? footer : null}
     </div>
   );
 }

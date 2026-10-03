@@ -6,6 +6,7 @@ import { type ActiveWebView, useActiveWebView } from "./activeWebStore.ts";
 import { useFilesPathRequest } from "./filesPathStore.ts";
 import { useWebPanelDock } from "./hooks.ts";
 import { pickFilesPanel, webLayerMode } from "./lib/activeWebView.ts";
+import { DAILY_DIGEST_PANEL } from "./lib/dailyDigest.ts";
 
 /**
  * The shell's entry points into the web layer, kept out of `repos.tsx` so the
@@ -67,9 +68,12 @@ export function useShellWebView(navKey: string): {
   const activeTitle =
     active === null
       ? null
-      : active.kind === "link"
-        ? (shortcuts.find((s) => s.id === active.panelId)?.label ?? null)
-        : (files.panels.find((p) => p.id === active.panelId)?.label ?? "Files");
+      : active.kind === "digest"
+        ? DAILY_DIGEST_PANEL.label
+        : active.kind === "link"
+          ? (shortcuts.find((s) => s.id === active.panelId)?.label ?? null)
+          : (files.panels.find((p) => p.id === active.panelId)?.label ??
+            "Files");
   return {
     web,
     openFiles,

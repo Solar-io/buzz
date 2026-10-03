@@ -34,6 +34,7 @@ export function ChannelMembersButton({
   selfPubkey = null,
   variant = "count",
   agentPubkeys,
+  onOpenMembers,
 }: {
   /** The channel the roster belongs to (kind-9000 `h` tag for the add). */
   channelId: string;
@@ -53,6 +54,7 @@ export function ChannelMembersButton({
   variant?: "count" | "facepile";
   /** Known agents, for the facepile's "N agents" and its ordering. */
   agentPubkeys?: ReadonlySet<string>;
+  onOpenMembers?: () => void;
 }) {
   const [popoverOpen, setPopoverOpen] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
@@ -60,60 +62,60 @@ export function ChannelMembersButton({
     members.map((member) => member.pubkey),
     agentPubkeys,
   );
+  const trigger =
+    variant === "facepile" ? (
+      <button
+        type="button"
+        onClick={onOpenMembers}
+        data-testid="channel-members-trigger"
+        aria-label={`View channel members (${members.length})`}
+        title="Channel members"
+        className="flex h-8 shrink-0 items-center rounded-[9px] border border-border bg-card pr-2.5 pl-2 text-xs hover:bg-accent"
+      >
+        {/* No roster yet (loading, or a relay that serves none): the
+                  icon alone rather than a "0" that reads as an empty room. */}
+        {members.length === 0 && (
+          <Users aria-hidden className="size-4 text-muted-foreground" />
+        )}
+        {roster.faces.map((pubkey, index) => (
+          <AuthorAvatar
+            key={pubkey}
+            pubkey={pubkey}
+            label={authorLabel(pubkey, profiles)}
+            picture={profiles.get(pubkey)?.avatar}
+            size="sm"
+            className={cn("size-5.5 ring-2 ring-card", index > 0 && "-ml-1.25")}
+          />
+        ))}
+        {members.length > 0 && (
+          <span className="ml-2 font-semibold tabular-nums text-foreground">
+            {members.length}
+          </span>
+        )}
+        {roster.agents > 0 && (
+          <span className="ml-1.5 font-mono text-2xs text-muted-foreground">
+            {roster.agents} {roster.agents === 1 ? "agent" : "agents"}
+          </span>
+        )}
+      </button>
+    ) : (
+      <button
+        type="button"
+        onClick={onOpenMembers}
+        data-testid="channel-members-trigger"
+        aria-label={`View channel members (${members.length})`}
+        title="Channel members"
+        className="flex shrink-0 items-center gap-1 rounded-full border border-border px-2 py-1 text-2xs text-muted-foreground hover:bg-accent hover:text-foreground"
+      >
+        <Users aria-hidden className="h-4 w-4" />
+        <span className="min-w-[1ch] tabular-nums">{members.length}</span>
+      </button>
+    );
+  if (onOpenMembers) return <>{trigger}</>;
   return (
     <>
       <Popover onOpenChange={setPopoverOpen} open={popoverOpen}>
-        <PopoverTrigger asChild>
-          {variant === "facepile" ? (
-            <button
-              type="button"
-              data-testid="channel-members-trigger"
-              aria-label={`View channel members (${members.length})`}
-              title="Channel members"
-              className="flex h-8 shrink-0 items-center rounded-[9px] border border-border bg-card pr-2.5 pl-2 text-xs hover:bg-accent"
-            >
-              {/* No roster yet (loading, or a relay that serves none): the
-                  icon alone rather than a "0" that reads as an empty room. */}
-              {members.length === 0 && (
-                <Users aria-hidden className="size-4 text-muted-foreground" />
-              )}
-              {roster.faces.map((pubkey, index) => (
-                <AuthorAvatar
-                  key={pubkey}
-                  pubkey={pubkey}
-                  label={authorLabel(pubkey, profiles)}
-                  picture={profiles.get(pubkey)?.avatar}
-                  size="sm"
-                  className={cn(
-                    "size-5.5 ring-2 ring-card",
-                    index > 0 && "-ml-1.25",
-                  )}
-                />
-              ))}
-              {members.length > 0 && (
-                <span className="ml-2 font-semibold tabular-nums text-foreground">
-                  {members.length}
-                </span>
-              )}
-              {roster.agents > 0 && (
-                <span className="ml-1.5 font-mono text-2xs text-muted-foreground">
-                  {roster.agents} {roster.agents === 1 ? "agent" : "agents"}
-                </span>
-              )}
-            </button>
-          ) : (
-            <button
-              type="button"
-              data-testid="channel-members-trigger"
-              aria-label={`View channel members (${members.length})`}
-              title="Channel members"
-              className="flex shrink-0 items-center gap-1 rounded-full border border-border px-2 py-1 text-2xs text-muted-foreground hover:bg-accent hover:text-foreground"
-            >
-              <Users aria-hidden className="h-4 w-4" />
-              <span className="min-w-[1ch] tabular-nums">{members.length}</span>
-            </button>
-          )}
-        </PopoverTrigger>
+        <PopoverTrigger asChild>{trigger}</PopoverTrigger>
         <PopoverContent
           align="end"
           className="max-h-80 w-64 overflow-y-auto p-1"

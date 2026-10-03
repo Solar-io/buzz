@@ -70,6 +70,14 @@ fn openai_model_normalization_keeps_agent_text_models() {
                     created: Some(2),
                 },
                 OpenAiModelListItem {
+                    id: "gpt-6.1-sol".to_string(),
+                    created: Some(9),
+                },
+                OpenAiModelListItem {
+                    id: "gpt-6-luna".to_string(),
+                    created: Some(8),
+                },
+                OpenAiModelListItem {
                     id: "o4-mini".to_string(),
                     created: Some(3),
                 },
@@ -89,12 +97,8 @@ fn openai_model_normalization_keeps_agent_text_models() {
     assert_eq!(
         ids_and_names,
         vec![
-            (
-                "chatgpt-5.5-pro".to_string(),
-                Some("ChatGPT 5.5 Pro".to_string()),
-            ),
-            ("o4-mini".to_string(), Some("o4-mini".to_string())),
-            ("gpt-5.4-mini".to_string(), Some("GPT-5.4 mini".to_string()),),
+            ("gpt-6.1-sol".to_string(), Some("GPT-6.1 Sol".to_string())),
+            ("gpt-6-luna".to_string(), Some("GPT-6 Luna".to_string())),
         ]
     );
 }
@@ -986,4 +990,22 @@ fn normalize_agent_models_reads_acp_option_name_label() {
         Some("Most capable for ambitious work")
     );
     assert_eq!(response.models[1].name.as_deref(), Some("Legacy Label"));
+}
+
+#[test]
+fn openai_compat_hides_pre_gpt6_openai_ids_but_keeps_other_vendors() {
+    let models = normalize_openai_compatible_models(
+        OpenAiModelListResponse {
+            data: vec![
+                OpenAiModelListItem { id: "codex/gpt-5.5".to_string(), created: Some(6) },
+                OpenAiModelListItem { id: "codex/gpt-6-sol".to_string(), created: Some(5) },
+                OpenAiModelListItem { id: "openai/o4-mini".to_string(), created: Some(4) },
+                OpenAiModelListItem { id: "glm-5.3".to_string(), created: Some(3) },
+                OpenAiModelListItem { id: "codex/gpt-6.1-sol".to_string(), created: Some(2) },
+            ],
+        },
+        Some("openai-compat"),
+    );
+    let ids = models.into_iter().map(|model| model.id).collect::<Vec<_>>();
+    assert_eq!(ids, vec!["codex/gpt-6-sol", "glm-5.3", "codex/gpt-6.1-sol"]);
 }

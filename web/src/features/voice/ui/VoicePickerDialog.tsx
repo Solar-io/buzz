@@ -9,7 +9,7 @@ import {
   DialogTitle,
 } from "@/shared/ui/dialog";
 
-import { useChatterboxVoices, useElevenVoices } from "../hooks.ts";
+import { useChatterboxVoices, useBridgeVoices } from "../hooks.ts";
 import type { AgentVoiceSelection } from "../lib/agentVoiceSelection.ts";
 import type { VoicePickerTarget } from "../lib/chatterboxRoster.ts";
 import { VoiceEngineTabs } from "./VoiceEngineTabs.tsx";
@@ -20,6 +20,7 @@ import {
   filterVoiceOptions,
   initialEngine,
   sameOption,
+  withCurrentPinned,
   type VoiceEngine,
   type VoicePickerOption,
 } from "./voicePickerOptions.ts";
@@ -37,6 +38,7 @@ export function VoicePickerList({
   busy,
   ready,
   engine,
+  query,
 }: {
   options: VoicePickerOption[];
   current: AgentVoiceSelection | undefined;
@@ -46,13 +48,17 @@ export function VoicePickerList({
   /** Has the source for this engine finished loading? */
   ready: boolean;
   engine: VoiceEngine;
+  /** The filter box text; a miss on it is "no match", not an empty bridge. */
+  query?: string;
 }) {
   if (options.length === 0) {
     return (
       <p className="py-4 text-center text-sm text-muted-foreground">
-        {ready
-          ? `No ${engineLabel(engine)} voices are available from the bridge.`
-          : "Loading voices…"}
+        {!ready
+          ? "Loading voices…"
+          : query?.trim()
+            ? "No voices match your search."
+            : `No ${engineLabel(engine)} voices are available from the bridge.`}
       </p>
     );
   }
@@ -108,7 +114,7 @@ export function VoicePickerList({
  * caller's `onConfirm` decides which kind, so assign mode cannot reach the
  * 30182 publisher by construction.
  *
- * ENGINE FIRST: a segmented control chooses Chatterbox or ElevenLabs and the
+ * ENGINE FIRST: a segmented control chooses Chatterbox, ElevenLabs or Fish Audio and the
  * list shows that engine's voices alone, with a filter box once the list
  * outgrows a glance. Reserved voices (Evie's) appear only when assigning to
  * the agent they belong to (`chatterboxRoster.ts isVoiceOfferedFor`).
@@ -122,6 +128,7 @@ export function VoicePickerDialog({
   open,
   onOpenChange,
   current,
+  currentLabel,
   onConfirm,
   mode = "self",
   target = null,
@@ -129,6 +136,7 @@ export function VoicePickerDialog({
   open: boolean;
   onOpenChange: (open: boolean) => void;
   current: AgentVoiceSelection | undefined;
+  currentLabel?: string;
   onConfirm: (selection: AgentVoiceSelection, label: string) => Promise<void>;
   mode?: "self" | "assign";
   /** The agent being assigned a voice (assign mode). */
@@ -136,7 +144,9 @@ export function VoicePickerDialog({
 }) {
   const { voices: chatterboxVoices, ready: chatterboxReady } =
     useChatterboxVoices();
-  const { voices: elevenVoices, ready: elevenReady } = useElevenVoices();
+  const { voices: elevenVoices, ready: elevenReady } =
+    useBridgeVoices("eleven");
+  const { voices: fishVoices, ready: fishReady } = useBridgeVoices("fish");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState("");
@@ -166,13 +176,27 @@ export function VoicePickerDialog({
       engineVoiceOptions(engine, {
         chatterboxVoices,
         elevenVoices,
+        fishVoices,
         target: assignTarget,
       }),
-    [engine, chatterboxVoices, elevenVoices, assignTarget],
+    [engine, chatterboxVoices, elevenVoices, fishVoices, assignTarget],
   );
   const options = useMemo(
-    () => filterVoiceOptions(allOptions, query),
-    [allOptions, query],
+    () =>
+      withCurrentPinned(
+        filterVoiceOptions(allOptions, query),
+        (engine === "fish"
+          ? fishReady
+          : engine === "eleven"
+            ? elevenReady
+            : false) &&
+          current?.engine === engine &&
+          !allOptions.some((row) => sameOption(row, current))
+          ? current
+          : undefined,
+        currentLabel,
+      ),
+    [allOptions, query, engine, fishReady, elevenReady, current, currentLabel],
   );
 
   // One previewer for the dialog's lifetime; its AudioContext is built on
@@ -214,7 +238,7 @@ export function VoicePickerDialog({
           <DialogDescription>
             {mode === "assign"
               ? "As this agent's owner, your choice is what every listener hears. Preview any voice, then confirm."
-              : "Binds your own signed-in identity. Chatterbox voices run locally; ElevenLabs voices come from the community library. Preview any of them, then confirm."}
+              : "Binds your own signed-in identity. Chatterbox voices run locally; ElevenLabs and Fish Audio voices come from the community library. Preview any of them, then confirm."}
           </DialogDescription>
         </DialogHeader>
 
@@ -253,7 +277,14 @@ export function VoicePickerDialog({
           current={current}
           engine={engine}
           options={options}
-          ready={engine === "chatterbox" ? chatterboxReady : elevenReady}
+          query={query}
+          ready={
+            engine === "chatterbox"
+              ? chatterboxReady
+              : engine === "fish"
+                ? fishReady
+                : elevenReady
+          }
           onPreview={(option) =>
             previewerRef.current.preview({
               engine: option.engine,

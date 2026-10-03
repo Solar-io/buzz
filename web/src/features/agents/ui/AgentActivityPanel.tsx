@@ -155,6 +155,7 @@ export function AgentActivityPanel({
   mobileOpen,
   onCloseMobile,
   onCloseDesktop,
+  presentation = "panel",
 }: {
   agentPubkey: string;
   agentName: string;
@@ -169,6 +170,8 @@ export function AgentActivityPanel({
   onCloseMobile: () => void;
   /** Collapses the desktop right pane entirely. */
   onCloseDesktop?: () => void;
+  /** Settings Activity tab embeds the transcript without the DM sheet chrome. */
+  presentation?: "panel" | "inline";
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   // Thought rows the reader expanded, by entry id (collapsed by default).
@@ -368,12 +371,14 @@ export function AgentActivityPanel({
     // never an automatic cover over the conversation.
     <aside
       className={
-        mobileOpen
-          ? // Overlay below lg; at lg the SAME open state docks as the
-            // right pane (lg:hidden here would make the 🧠 reopen button
-            // dead on desktop — the overlay and the dock must compose).
-            "fixed inset-0 z-40 flex flex-col bg-background pt-[max(0.5rem,env(safe-area-inset-top))] lg:static lg:inset-auto lg:z-auto lg:w-[var(--thread-width)] lg:shrink-0 lg:border-l lg:border-border lg:pt-0"
-          : "hidden lg:static lg:flex lg:w-[var(--thread-width)] lg:shrink-0 lg:flex-col lg:border-l lg:border-border"
+        presentation === "inline"
+          ? "flex h-[60dvh] min-h-0 w-full flex-col rounded-xl border border-border bg-card"
+          : mobileOpen
+            ? // Overlay below lg; at lg the SAME open state docks as the
+              // right pane (lg:hidden here would make the 🧠 reopen button
+              // dead on desktop — the overlay and the dock must compose).
+              "fixed inset-0 z-40 flex flex-col bg-background pt-[max(0.5rem,env(safe-area-inset-top))] lg:static lg:inset-auto lg:z-auto lg:w-[var(--thread-width)] lg:shrink-0 lg:border-l lg:border-border lg:pt-0"
+            : "hidden lg:static lg:flex lg:w-[var(--thread-width)] lg:shrink-0 lg:flex-col lg:border-l lg:border-border"
       }
       data-agent-panel={agentPubkey}
       data-custom-content-pane="thinking"
@@ -396,19 +401,21 @@ export function AgentActivityPanel({
             composer, that toggle is visible, and this hides. (The Replies
             switch that sat beside it went with the thread tab: threads open
             inline now.) */}
-        <div className="absolute right-2 top-2 z-10 flex items-center gap-1">
-          <button
-            type="button"
-            aria-label="Close thinking panel"
-            className="rounded-md bg-card/90 p-1 text-sm text-muted-foreground backdrop-blur-sm hover:bg-accent lg:hidden"
-            onClick={() => {
-              onCloseMobile();
-              onCloseDesktop?.();
-            }}
-          >
-            ✕
-          </button>
-        </div>
+        {presentation !== "inline" && (
+          <div className="absolute right-2 top-2 z-10 flex items-center gap-1">
+            <button
+              type="button"
+              aria-label="Close thinking panel"
+              className="rounded-md bg-card/90 p-1 text-sm text-muted-foreground backdrop-blur-sm hover:bg-accent lg:hidden"
+              onClick={() => {
+                onCloseMobile();
+                onCloseDesktop?.();
+              }}
+            >
+              ✕
+            </button>
+          </div>
+        )}
         {working.working && working.startedAt !== null && (
           <div className="mb-2 flex items-center gap-2">
             <AuthorAvatar

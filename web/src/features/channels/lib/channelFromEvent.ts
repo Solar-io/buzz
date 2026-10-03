@@ -1,6 +1,10 @@
 import type { SignedNostrEvent } from "@/shared/lib/nostr-signer";
 
 export interface ChannelSummary {
+  /** Addressable-event tie breaker, absent in older browser seeds. */
+  metadataEventId?: string;
+  /** Joining policy from NIP-29's closed flag; independent of visibility. */
+  joining?: "anyone" | "invite";
   id: string;
   name: string;
   about: string;
@@ -76,6 +80,8 @@ export function channelFromEvent(
     .filter((tag) => tag[0] === "p" && typeof tag[1] === "string")
     .map((tag) => tag[1]);
   return {
+    metadataEventId: event.id,
+    joining: tags.some((tag) => tag[0] === "closed") ? "invite" : "anyone",
     id,
     name: name || id,
     about,

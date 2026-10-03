@@ -1,4 +1,4 @@
-import { Lock } from "lucide-react";
+import { Lock, Settings } from "lucide-react";
 import type { ScratchActions } from "@/features/commands/lib/commands.ts";
 import {
   scratchInfo,
@@ -14,7 +14,7 @@ import { AuthorAvatar } from "./AuthorAvatar.tsx";
 import { ChannelMembersButton } from "./ChannelMembersButton.tsx";
 
 /**
- * The first non-empty of topic → about → purpose, or null. A scratch
+ * The first non-empty of topic → purpose → about, or null. A scratch
  * channel's parent marker is machine text and never reads here.
  */
 export function channelTopic(channel: {
@@ -24,8 +24,8 @@ export function channelTopic(channel: {
 }): string | null {
   for (const value of [
     channel.topic,
-    channel.about ? withoutScratchMarker(channel.about) : channel.about,
     channel.purpose,
+    channel.about ? withoutScratchMarker(channel.about) : channel.about,
   ]) {
     const trimmed = value?.trim();
     if (trimmed) {
@@ -63,6 +63,7 @@ export function ChannelHeader({
   agentPubkeys,
   dmAgentPubkey,
   scratch,
+  onOpenSettings,
 }: {
   channel: ChannelSummary;
   /** The resolved conversation name (a DM's is its participants). */
@@ -75,6 +76,7 @@ export function ChannelHeader({
   agentPubkeys: ReadonlySet<string>;
   /** The DM's agent counterpart, when it is a 1:1 DM with a known agent. */
   dmAgentPubkey: string | null;
+  onOpenSettings?: (tab: "about" | "members") => void;
   /** Scratch-channel wiring; the header draws it only for a scratch channel. */
   scratch?: {
     actions: ScratchActions;
@@ -102,6 +104,9 @@ export function ChannelHeader({
       contacts={contacts}
       selfPubkey={selfPubkey}
       agentPubkeys={agentPubkeys}
+      onOpenMembers={
+        onOpenSettings ? () => onOpenSettings("members") : undefined
+      }
     />
   );
   const info = scratch ? scratchInfo(channel, scratch.channels) : null;
@@ -118,7 +123,22 @@ export function ChannelHeader({
         phone={phone}
         memberPubkeys={members.map((member) => member.pubkey)}
         agentPubkeys={agentPubkeys}
-        roster={roster("count")}
+        roster={
+          <div className="flex items-center gap-1">
+            {roster("count")}
+            {!phone && onOpenSettings && (
+              <button
+                type="button"
+                aria-label="Channel settings"
+                data-testid="channel-settings-trigger"
+                className="flex size-8 items-center justify-center rounded-lg text-ink-2 hover:bg-accent"
+                onClick={() => onOpenSettings("about")}
+              >
+                <Settings aria-hidden className="size-4" />
+              </button>
+            )}
+          </div>
+        }
       />
     );
   }
@@ -173,6 +193,18 @@ export function ChannelHeader({
       {!dm && (
         <div className="ml-auto flex shrink-0 items-center gap-1.5">
           {roster("facepile")}
+          {onOpenSettings && (
+            <button
+              type="button"
+              aria-label="Channel settings"
+              title="Channel settings"
+              data-testid="channel-settings-trigger"
+              className="flex size-8 items-center justify-center rounded-lg border border-border bg-card text-ink-2 hover:bg-accent"
+              onClick={() => onOpenSettings("about")}
+            >
+              <Settings aria-hidden className="size-4" />
+            </button>
+          )}
         </div>
       )}
     </header>

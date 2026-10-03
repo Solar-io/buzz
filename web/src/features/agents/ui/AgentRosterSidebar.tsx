@@ -144,8 +144,7 @@ export function AgentRosterSidebar({
           </div>
         )}
         <p className="text-xs text-muted-foreground">
-          Registry from the relay (kind 30177). Changes ride the sealed
-          admin-command channel and are applied by your desktop.
+          Your agents. Changes are sent securely to Buzz Desktop.
         </p>
       </section>
       <fieldset
@@ -218,7 +217,7 @@ function AgentRosterRow({
             )}
             {row.personaLinked && (
               <span
-                title="Definition-linked: its persona (kind 30175) supplies the definition"
+                title="Linked to an agent definition"
                 className="ml-2 rounded bg-accent px-1.5 py-0.5 text-badge font-normal uppercase tracking-wide text-muted-foreground"
               >
                 linked
@@ -426,8 +425,7 @@ function OwnerProfileCard({ session }: { session: RelaySession }) {
       </div>
       {!open && (
         <p className="text-sm text-muted-foreground">
-          Published as your kind-0 metadata — the name other members and agents
-          see.
+          Your public profile — the name other members and agents see.
         </p>
       )}
       {open && (

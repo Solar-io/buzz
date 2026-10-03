@@ -1,5 +1,5 @@
 import { Maximize2, Minimize2, X } from "lucide-react";
-import type { ComponentProps, CSSProperties } from "react";
+import { lazy, Suspense, type ComponentProps, type CSSProperties } from "react";
 import { AgentActivityPanel } from "@/features/agents/ui/AgentActivityPanel";
 import { channelCanvasListed } from "@/features/canvas/lib/channelCanvas.ts";
 import { CanvasPane } from "@/features/canvas/ui/CanvasPane";
@@ -28,6 +28,12 @@ import {
 
 type ActivityProps = ComponentProps<typeof AgentActivityPanel>;
 type WorkProps = ComponentProps<typeof WorkTab>;
+
+const ChannelCanvasSheet = lazy(() =>
+  import("@/features/canvas/ui/ChannelCanvasSheet").then((module) => ({
+    default: module.ChannelCanvasSheet,
+  })),
+);
 
 export interface RightPaneHostProps {
   layout: RightPaneLayout;
@@ -115,10 +121,14 @@ export function RightPaneHost({
   const files = useFileTabs();
   const docked = useDockedPane();
   const conversationId = layout.conversationCovered ? null : work.channelId;
-  const canvasDoc = useChannelCanvas(
-    docked && layout.hostVisible && files ? (conversationId ?? null) : null,
-  );
   const chosen = files?.state.active ?? null;
+  const canvasDoc = useChannelCanvas(
+    layout.hostVisible &&
+      files &&
+      (docked || (files.state.open && chosen === CHANNEL_CANVAS_KEY))
+      ? (conversationId ?? null)
+      : null,
+  );
   const items = canvasItemKeys(
     files?.state.files.map((file) => file.key) ?? [],
     conversationId != null &&
@@ -154,6 +164,19 @@ export function RightPaneHost({
       data-testid="right-pane-host"
       data-active-tab={strip.active ?? "none"}
     >
+      {!docked &&
+      files?.state.open &&
+      chosen === CHANNEL_CANVAS_KEY &&
+      conversationId != null ? (
+        <Suspense fallback={null}>
+          <ChannelCanvasSheet
+            channelId={conversationId}
+            doc={canvasDoc.doc}
+            phase={canvasDoc.phase}
+            onClose={() => files.show(false)}
+          />
+        </Suspense>
+      ) : null}
       {(layout.handle || canvasOn) && !expanded && (
         // biome-ignore lint/a11y/useFocusableInteractive: pointer-only resize handle; keyboard resize is not implemented
         // biome-ignore lint/a11y/useSemanticElements: pointer-only resize handle; keyboard resize is not implemented
@@ -287,7 +310,11 @@ export function RightPaneHost({
                 files={files.state.files}
                 channelCanvas={
                   conversationId != null && items.includes(CHANNEL_CANVAS_KEY)
-                    ? { channelId: conversationId, doc: canvasDoc.doc }
+                    ? {
+                        channelId: conversationId,
+                        doc: canvasDoc.doc,
+                        phase: canvasDoc.phase,
+                      }
                     : null
                 }
                 expanded={expanded}

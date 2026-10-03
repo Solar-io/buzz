@@ -6,6 +6,7 @@ import {
 import type { ChannelSummary } from "@/features/channels/useChannels";
 import type { DmSummary } from "@/features/dms/hooks";
 import { isScratchChannel } from "@/features/scratch/lib/scratchChannel.ts";
+import { CHANNEL_LIFETIMES } from "./newChannelRequest.ts";
 
 /** Everything {@link useChannelLists} sections the sidebar from. */
 export interface ChannelListsInput {
@@ -44,8 +45,9 @@ export interface ChannelLists {
  *
  * Archived channels (expired transport rooms etc.) hide from the sidebar —
  * the relay's `archived` tag exists for exactly this. Ephemeral channels are
- * transport rooms and never enter the main channel list — except scratch
- * channels, which get a section of their own. Forum-type channels split into
+ * transport rooms and never enter the main channel list — except the explicit
+ * creation lifetime presets and scratch channels, which get their own section.
+ * Forum-type channels split into
  * their own sidebar section (and their own channel body); streams keep the
  * Channels list.
  */
@@ -70,10 +72,18 @@ export function useChannelLists({
         ),
     [channels, exitingScratchIds],
   );
-  const permanentChannels = useMemo(
+  const listedChannels = useMemo(
     () =>
       channels
-        .filter((channel) => !channel.archived && channel.ttlSeconds === null)
+        .filter(
+          (channel) =>
+            !channel.archived &&
+            !isScratchChannel(channel) &&
+            (channel.ttlSeconds === null ||
+              CHANNEL_LIFETIMES.some(
+                ({ seconds }) => seconds > 0 && seconds === channel.ttlSeconds,
+              )),
+        )
         .sort((a, b) =>
           a.name.localeCompare(b.name, undefined, {
             sensitivity: "base",
@@ -82,12 +92,12 @@ export function useChannelLists({
     [channels],
   );
   const streams = useMemo(
-    () => permanentChannels.filter((channel) => channel.type !== "forum"),
-    [permanentChannels],
+    () => listedChannels.filter((channel) => channel.type !== "forum"),
+    [listedChannels],
   );
   const forums = useMemo(
-    () => permanentChannels.filter((channel) => channel.type === "forum"),
-    [permanentChannels],
+    () => listedChannels.filter((channel) => channel.type === "forum"),
+    [listedChannels],
   );
   const landingChannelIds = useMemo(() => {
     const favorites = new Set(favoriteChannelIds(channelPrefs));

@@ -153,6 +153,9 @@ const { QueryClient, QueryClientProvider } = await import(
   "@tanstack/react-query"
 );
 const { ChannelSidebar } = await import("./ChannelSidebar.tsx");
+const { dispatchActiveWeb, resetActiveWebForTests } = await import(
+  "../../webPanels/activeWebStore.ts"
+);
 
 const COLLAPSED_KEY = "buzz.collapsed-sections.v1";
 const SELF = "ab".repeat(32);
@@ -236,6 +239,7 @@ function props({ forums = [FORUM_READ, FORUM_UNREAD], favorites = [] } = {}) {
 }
 
 async function mount(overrides) {
+  resetActiveWebForTests();
   const container = dom.window.document.createElement("div");
   dom.window.document.body.appendChild(container);
   const root = createRoot(container);
@@ -297,6 +301,26 @@ function precedes(a, b) {
     a.compareDocumentPosition(b) & dom.window.Node.DOCUMENT_POSITION_FOLLOWING,
   );
 }
+
+test("Daily Digest sits between Forums and Links and selects through the real web store", async () => {
+  dom.window.localStorage.clear();
+  const view = await mount();
+  try {
+    const digest = Array.from(view.sidebar().querySelectorAll("button")).find(
+      (button) => button.textContent === "Daily Digest",
+    );
+    assert.ok(digest, "Daily Digest renders even with no saved Links");
+    assert.ok(precedes(view.navRow("Forums"), digest), "below Forums");
+    assert.ok(precedes(digest, view.navRow("Links")), "above Links");
+    assert.equal(digest.getAttribute("data-active"), "false");
+    await view.click(digest, "Daily Digest");
+    assert.equal(digest.getAttribute("data-active"), "true");
+    await act(async () => dispatchActiveWeb({ type: "hide" }));
+    assert.equal(digest.getAttribute("data-active"), "false");
+  } finally {
+    await view.unmount();
+  }
+});
 
 test("the rail has no profile row and no relay label, and Vitals is the last thing in it", async () => {
   dom.window.localStorage.clear();

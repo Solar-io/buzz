@@ -3203,8 +3203,8 @@ pub async fn run_prompt_task(
     let voice_turn_overrides = crate::voice_turn::VoiceTurnOverrides::from_env_for_turn(
         batch
             .as_ref()
-            .and_then(|b| b.events.last())
-            .map(|be| be.event.content.as_str()),
+            .and_then(|b| b.events.last().map(|be| be.event.content.as_str())),
+        Some(&ctx.agent_keys.public_key().to_hex()),
     );
 
     // 💬 — fire-and-forget so the prompt fires immediately.

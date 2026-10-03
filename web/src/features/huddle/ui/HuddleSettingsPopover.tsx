@@ -3,13 +3,14 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import {
   useChatterboxVoices,
-  useElevenVoices,
+  useBridgeVoices,
 } from "@/features/voice/hooks.ts";
 import { VoiceEngineTabs } from "@/features/voice/ui/VoiceEngineTabs.tsx";
 import {
   engineLabel,
   engineVoiceOptions,
   initialEngine,
+  withCurrentPinned,
   type VoiceEngine,
 } from "@/features/voice/ui/voicePickerOptions.ts";
 import { createVoicePreviewer } from "@/features/voice/ui/voicePreview.ts";
@@ -46,7 +47,9 @@ export function HuddleSettingsPopover({
   const [engine, setEngine] = useState<VoiceEngine>(initialEngine(prefs.voice));
   const { voices: chatterboxVoices, ready: chatterboxReady } =
     useChatterboxVoices();
-  const { voices: elevenVoices, ready: elevenReady } = useElevenVoices();
+  const { voices: elevenVoices, ready: elevenReady } =
+    useBridgeVoices("eleven");
+  const { voices: fishVoices, ready: fishReady } = useBridgeVoices("fish");
   const previewerRef = useRef(createVoicePreviewer());
 
   useEffect(() => {
@@ -59,13 +62,27 @@ export function HuddleSettingsPopover({
     }
   }, [open, prefs.voice]);
 
+  const ready =
+    engine === "chatterbox"
+      ? chatterboxReady
+      : engine === "fish"
+        ? fishReady
+        : elevenReady;
   const options = useMemo(
     // No target: a channel override covers every agent in the room, so
     // reserved voices (Evie's) are never offered here.
-    () => engineVoiceOptions(engine, { chatterboxVoices, elevenVoices }),
-    [engine, chatterboxVoices, elevenVoices],
+    () =>
+      withCurrentPinned(
+        engineVoiceOptions(engine, {
+          chatterboxVoices,
+          elevenVoices,
+          fishVoices,
+        }),
+        ready && prefs.voice?.engine === engine ? prefs.voice : null,
+        prefs.voice?.label,
+      ),
+    [engine, chatterboxVoices, elevenVoices, fishVoices, ready, prefs.voice],
   );
-  const ready = engine === "chatterbox" ? chatterboxReady : elevenReady;
 
   return (
     <Popover onOpenChange={setOpen} open={open}>
@@ -108,6 +125,7 @@ export function HuddleSettingsPopover({
                   >
                     <span className="min-w-0 flex-1 truncate text-xs">
                       {option.label}
+                      {option.notInLibrary ? " · not in library" : ""}
                     </span>
                     <Button
                       data-testid="huddle-voice-preview"
@@ -128,7 +146,11 @@ export function HuddleSettingsPopover({
                       onClick={() =>
                         onChange({
                           ...prefs,
-                          voice: { engine: option.engine, key: option.key },
+                          voice: {
+                            engine: option.engine,
+                            key: option.key,
+                            label: option.label,
+                          },
                         })
                       }
                       size="sm"

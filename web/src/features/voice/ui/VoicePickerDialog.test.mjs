@@ -159,8 +159,8 @@ test("the current selection renders as Selected and others as Select", async () 
     [...container.querySelectorAll('[data-testid="voice-picker-select"]')].map(
       (button) => button.textContent,
     ),
-    ["Select", "Selected"],
-    "the April row (fixture index 1) is the current selection",
+    ["Selected", "Select"],
+    "the April row sorts first and is the current selection",
   );
   await unmount();
 });
@@ -192,7 +192,7 @@ test("the loading state names itself before EOSE, the empty state after", async 
   await empty.unmount();
 });
 
-test("the engine tabs offer exactly Chatterbox and ElevenLabs, and report the active one", async () => {
+test("the engine tabs offer exactly Chatterbox, ElevenLabs and Fish Audio, and report the active one", async () => {
   const chosen = [];
   const { container, unmount } = await mount(
     React.createElement(VoiceEngineTabs, {
@@ -203,14 +203,14 @@ test("the engine tabs offer exactly Chatterbox and ElevenLabs, and report the ac
   const buttons = [
     ...container.querySelectorAll('[data-testid^="voice-engine-"]'),
   ].filter((node) => node.tagName === "BUTTON");
-  assert.equal(buttons.length, 2, "two engines, no third");
+  assert.equal(buttons.length, 3, "all three engines");
   assert.deepEqual(
     buttons.map((button) => button.textContent),
-    ["Chatterbox", "ElevenLabs"],
+    ["Chatterbox", "ElevenLabs", "Fish Audio"],
   );
   assert.deepEqual(
     buttons.map((button) => button.getAttribute("aria-pressed")),
-    ["true", "false"],
+    ["true", "false", "false"],
     "the active engine is the pressed one",
   );
   await act(async () => {
@@ -233,4 +233,16 @@ after(() => {
   if (originals.navigator) {
     Object.defineProperty(globalThis, "navigator", originals.navigator);
   }
+});
+
+test("an empty filter result says no match, not that the bridge has no voices", async () => {
+  const missed = await mount(list({ options: [], query: "zzzz" }));
+  assert.equal(missed.container.textContent, "No voices match your search.");
+  await missed.unmount();
+  const empty = await mount(list({ options: [], query: "  " }));
+  assert.equal(
+    empty.container.textContent,
+    "No Chatterbox voices are available from the bridge.",
+  );
+  await empty.unmount();
 });

@@ -50,12 +50,14 @@ export type HuddleDuplexMode = "half" | "barge";
  * but an override stored before that still decodes and still speaks: the
  * bridge aliases pocket presets to the same-named Chatterbox voice.
  */
-export type HuddleVoiceEngine = "pocket" | "chatterbox" | "eleven";
+export type HuddleVoiceEngine = "pocket" | "chatterbox" | "eleven" | "fish";
 
 /** A per-channel voice override, in the same shape the bridge consumes. */
 export interface HuddleVoiceOverride {
   engine: HuddleVoiceEngine;
   key: string;
+  /** Captured display name survives soft removal from the bridge library. */
+  label?: string;
 }
 
 export interface HuddlePrefs {
@@ -87,18 +89,23 @@ function parseVoice(raw: unknown): HuddleVoiceOverride | null {
   if (raw === null || typeof raw !== "object") {
     return null;
   }
-  const candidate = raw as { engine?: unknown; key?: unknown };
+  const candidate = raw as { engine?: unknown; key?: unknown; label?: unknown };
   if (
     candidate.engine !== "pocket" &&
     candidate.engine !== "chatterbox" &&
-    candidate.engine !== "eleven"
+    candidate.engine !== "eleven" &&
+    candidate.engine !== "fish"
   ) {
     return null;
   }
   if (typeof candidate.key !== "string" || candidate.key === "") {
     return null;
   }
-  return { engine: candidate.engine, key: candidate.key };
+  return {
+    engine: candidate.engine,
+    key: candidate.key,
+    ...(typeof candidate.label === "string" ? { label: candidate.label } : {}),
+  };
 }
 
 function parseDuplex(raw: unknown): HuddleDuplexMode {

@@ -28,6 +28,7 @@ import {
   currentTurns,
   detailFor,
   hasEnded,
+  jobsRunning,
   STATUS_STALE_S,
   type StatusStore,
   type StatusTurn,
@@ -173,4 +174,24 @@ export function lifecycleRows(
       a.key.localeCompare(b.key),
   );
   return { rows, spokenFor };
+}
+
+/** Independent background jobs, newest start first; silent jobs belong in Done. */
+export function jobRows(store: StatusStore, nowS: number): RunRow[] {
+  return jobsRunning(store, nowS)
+    .map((job) => ({
+      key: `job:${job.agentPubkey}:${job.channelId}:${job.jobId}`,
+      agentPubkey: job.agentPubkey,
+      channelId: job.channelId,
+      turnId: null,
+      state: "live" as const,
+      source: "job" as const,
+      startedAt: job.started,
+      lastBeatAt: job.beatAt,
+      title: job.title,
+      progress: null,
+      triggerId: job.trigger,
+      job: { id: job.jobId, role: job.role, engine: job.engine },
+    }))
+    .sort((a, b) => b.startedAt - a.startedAt || a.key.localeCompare(b.key));
 }

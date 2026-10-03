@@ -102,7 +102,7 @@ export function DmComposerActions({
       agentPubkey={dmAgentPubkey}
       panes={panes}
       dictation={dictation}
-      showMembers={phone}
+      showMembers={false}
     />
   );
   // Files or a link page covers the conversation on a phone: its controls

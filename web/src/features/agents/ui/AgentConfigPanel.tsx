@@ -63,6 +63,7 @@ export function AgentConfigPanel({
   roster,
   viewerIsOwner,
   onDeleted,
+  settingsOnly = false,
 }: {
   row: RosterRow;
   profile?: Profile;
@@ -79,6 +80,8 @@ export function AgentConfigPanel({
    */
   viewerIsOwner: boolean;
   onDeleted: () => void;
+  /** W9a's shell owns identity, live control, memory and lifecycle actions. */
+  settingsOnly?: boolean;
 }) {
   const prefill = useMemo(
     // The kind-0 profile picture is the only avatar the web can see; it is
@@ -207,7 +210,7 @@ export function AgentConfigPanel({
 
   return (
     <div className="space-y-6">
-      <IdentitySection row={row} profile={profile} />
+      {!settingsOnly && <IdentitySection row={row} profile={profile} />}
       {row.personaLinked && (
         <DefinitionEditorSection
           row={row}
@@ -307,15 +310,19 @@ export function AgentConfigPanel({
           onChange={(next) => set("effort", next)}
         />
       )}
-      <LiveControlSection
-        session={session}
-        agentPubkey={row.pubkey}
-        modelSuggestions={modelSuggestions("", registryModels)}
-      />
-      <MemorySectionBlock
-        agentPubkey={row.pubkey}
-        viewerIsOwner={viewerIsOwner}
-      />
+      {!settingsOnly && (
+        <LiveControlSection
+          session={session}
+          agentPubkey={row.pubkey}
+          modelSuggestions={modelSuggestions("", registryModels)}
+        />
+      )}
+      {!settingsOnly && (
+        <MemorySectionBlock
+          agentPubkey={row.pubkey}
+          viewerIsOwner={viewerIsOwner}
+        />
+      )}
       <ActionsRow
         busy={busy}
         pendingCount={pendingForAgent.length}
@@ -427,8 +434,8 @@ function MemorySectionBlock({
       </div>
       <MemorySection agentPubkey={agentPubkey} viewerIsOwner={viewerIsOwner} />
       <p className="text-xs text-muted-foreground">
-        What this agent has remembered (NIP-AE). Read-only here — memories are
-        written by the agent itself.
+        What this agent has remembered. Read-only here — memories are written by
+        the agent itself.
       </p>
     </div>
   );

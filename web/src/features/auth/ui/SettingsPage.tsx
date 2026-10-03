@@ -4,8 +4,8 @@
  *
  * The selected group is the `group` search param on this route, so any pane
  * is linkable and the browser back button moves between groups; the route
- * owns the param (`repos.settings.tsx`) and hands it in as a prop, defaulting
- * to the Account group.
+ * owns the selectors (`repos.settings.tsx`); owners land on Agents, other
+ * viewers land on Account. A phone starts at the settings root list.
  *
  * This file is a composition root: each group renders feature-owned cards
  * that keep their own files, state, and logic — only the containers and the
@@ -14,7 +14,7 @@
  * not here.
  *
  * Deliberately NOT here, with the reason:
- *   voice, compute, hosted communities, mobile pairing, updates — each needs a
+ *   compute, hosted communities, mobile pairing, updates — each needs a
  *   native capability (local model files, mesh compute, a Tauri-side auth
  *   token, the pairing sidecar relay, the desktop updater).
  */
@@ -48,6 +48,7 @@ import { KeyboardShortcutsCard } from "@/features/settings/ui/KeyboardShortcutsC
 import { useFeatureEnabled } from "@/features/settings/useFeatureFlags";
 import { AgentVoicesCard } from "@/features/voice/ui/AgentVoicesCard.tsx";
 import { VoiceSettingsCard } from "@/features/voice/ui/VoiceSettingsCard.tsx";
+import { VoiceLibraryCard } from "@/features/voice/ui/VoiceLibraryCard.tsx";
 import { useOwnPubkey } from "@/shared/lib/useOwnPubkey";
 
 import { AppearanceSection } from "./AppearanceSection";
@@ -60,9 +61,15 @@ import {
   PairDeviceSection,
 } from "./settings/DeviceSection";
 import { FilesUrlSection, ProfileSection } from "./settings/MiscSections";
-import { AgentsConnectionSettings } from "@/features/agents/ui/AgentsConnectionSettings";
+import { useAgentRegistry } from "@/features/agents/useAgentRegistry";
+import { useDesktopCatalogs } from "@/features/agents/useDesktopCatalogs";
+import { ownsSettingsAgents } from "@/features/agents/lib/desktopConnection";
+import { DesktopConnectionFooter } from "@/features/agents/settings/DesktopConnectionFooter";
+import { AgentsAdminPage } from "@/features/agents/ui/AgentsAdminPage";
+import { AgentScreen } from "@/features/agents/settings/agent-screen/AgentScreen";
+import { ClaudePoolsSection } from "./settings/ClaudePoolsSection";
 import { FilesSitesSection } from "@/features/webPanels/ui/FilesSitesSection";
-import { SettingsChipRow, SettingsNav } from "./settings/SettingsNav";
+import { SettingsNav } from "./settings/SettingsNav";
 import {
   DEFAULT_SETTINGS_GROUP,
   resolveSettingsGroup,
@@ -104,9 +111,11 @@ function PaneHeading({ group }: { group: SettingsGroupMeta }) {
 export interface SettingsPageProps {
   /** The `group` search param; absent (or unknown) falls back to Account. */
   group?: string;
+  agent?: string;
+  tab?: string;
 }
 
-export function SettingsPage({ group }: SettingsPageProps) {
+export function SettingsPage({ group, agent, tab }: SettingsPageProps) {
   const self = useOwnPubkey();
   const [profileOpen, setProfileOpen] = useState(false);
   const navigate = useNavigate({ from: "/repos/settings" });
@@ -115,10 +124,20 @@ export function SettingsPage({ group }: SettingsPageProps) {
   const templatesEnabled = useFeatureEnabled("channel-templates");
 
   const nativeIOS = isNativeIOS();
-  const groups = visibleSettingsGroups(nativeIOS);
-  const parsed = resolveSettingsGroup(group);
-  // A deep link to a group this device does not show (agents on iOS) falls
-  // back to the default instead of an empty pane.
+  const phone = usePhoneLayout();
+  const registry = useAgentRegistry();
+  const catalogs = useDesktopCatalogs();
+  const ownsAgents = ownsSettingsAgents(catalogs, registry);
+  const showPhoneRoot = phone && !group && !agent;
+  const selectAgent = (pubkey: string) => {
+    void navigate({
+      to: "/repos/settings",
+      search: { group: "agents", agent: pubkey },
+    });
+  };
+  const groups = visibleSettingsGroups(phone);
+  const parsed = resolveSettingsGroup(agent ? "agents" : group, { ownsAgents });
+  // Keyboard is omitted on phones; its deep link falls back to Account.
   const active = groups.some((candidate) => candidate.id === parsed)
     ? parsed
     : DEFAULT_SETTINGS_GROUP;
@@ -129,9 +148,8 @@ export function SettingsPage({ group }: SettingsPageProps) {
     (id: SettingsGroupId) => {
       void navigate({
         to: "/repos/settings",
-        // `account` is the default, so it stays paramless; any other group
-        // is a shareable `?group=` link.
-        search: id === "account" ? {} : { group: id },
+        // Keep Account explicit: an owner has a different default landing.
+        search: { group: id },
       });
     },
     [navigate],
@@ -162,7 +180,6 @@ export function SettingsPage({ group }: SettingsPageProps) {
 
   // Canvas below the shell mirrors the rail/pane split (see shellCanvas.ts).
   // 15.5rem = the rail's `w-62`; the rail is hidden below md.
-  const phone = usePhoneLayout();
   useShellSidebarWidthVar(
     shellSidebarWidth({ chromeless: false, phone, width: "15.5rem" }),
   );
@@ -188,6 +205,7 @@ export function SettingsPage({ group }: SettingsPageProps) {
           >
             <Link to="/repos">← Back to Buzz</Link>
           </Button>
+          <h1 className="px-2 pt-2 text-xl font-semibold">Settings</h1>
         </div>
         <SettingsNav
           active={active}
@@ -195,41 +213,63 @@ export function SettingsPage({ group }: SettingsPageProps) {
           className="min-h-0 flex-1"
           groups={groups}
           onSelect={selectGroup}
+          agents={registry}
+          onSelectAgent={selectAgent}
+          footer={<DesktopConnectionFooter catalogs={catalogs} />}
         />
       </nav>
 
       <div className="flex min-w-0 flex-1 flex-col">
         {/* Narrow viewports: back header plus the nav as a chip row. */}
-        <header
-          className="flex shrink-0 items-center justify-between gap-2 px-4 pt-[max(0.75rem,env(safe-area-inset-top))] md:hidden"
-          data-testid="settings-header"
-        >
-          <Button
-            asChild
-            className="min-h-11 min-w-11 md:min-h-8 md:min-w-0"
-            size="sm"
-            variant="ghost"
+        {!agent && (
+          <header
+            className="flex shrink-0 items-center justify-between gap-2 px-4 pt-[max(0.75rem,env(safe-area-inset-top))] md:hidden"
+            data-testid="settings-header"
           >
-            <Link to="/repos">← Back</Link>
-          </Button>
-          <h1 className="text-lg font-semibold">Settings</h1>
-        </header>
-        <div className="shrink-0 md:hidden">
-          <SettingsChipRow
+            <Button
+              className="min-h-11 min-w-11 md:min-h-8 md:min-w-0"
+              size="sm"
+              variant="ghost"
+              onClick={() => {
+                void navigate(
+                  showPhoneRoot
+                    ? { to: "/repos" }
+                    : { to: "/repos/settings", search: {} },
+                );
+              }}
+            >
+              ← {showPhoneRoot ? "Back" : "Settings"}
+            </Button>
+            <h1 className="text-lg font-semibold">Settings</h1>
+          </header>
+        )}
+        {showPhoneRoot ? (
+          <SettingsNav
             active={active}
             groups={groups}
-            attentionGroup={backupPending ? "security" : undefined}
             onSelect={selectGroup}
+            agents={registry}
+            onSelectAgent={selectAgent}
+            phoneRoot
+            attentionGroup={backupPending ? "security" : undefined}
+            className="min-h-0 flex-1 px-4"
+            footer={<DesktopConnectionFooter catalogs={catalogs} />}
           />
-        </div>
+        ) : null}
 
         <main
-          className="buzz-content-scrollbar min-h-0 flex-1 overflow-y-auto"
+          className={
+            showPhoneRoot
+              ? "hidden"
+              : "buzz-content-scrollbar min-h-0 flex-1 overflow-y-auto"
+          }
           data-testid="settings-scroll"
         >
-          <div className="mx-auto max-w-[45rem] px-4 py-6 pb-[max(1.5rem,env(safe-area-inset-bottom))] md:px-8">
+          <div
+            className={`mx-auto ${active === "agents" || active === "library" ? "max-w-6xl" : "max-w-[45rem]"} px-4 py-6 pb-[max(1.5rem,env(safe-area-inset-bottom))] md:px-8`}
+          >
             <div data-testid={`settings-pane-${active}`}>
-              {activeMeta ? <PaneHeading group={activeMeta} /> : null}
+              {activeMeta && !agent ? <PaneHeading group={activeMeta} /> : null}
 
               {active === "account" ? (
                 <>
@@ -242,12 +282,17 @@ export function SettingsPage({ group }: SettingsPageProps) {
                   <div className="space-y-4">
                     <ProfileSection onOpen={() => setProfileOpen(true)} />
                     <PresenceSettingsCard />
-                    <VoiceSettingsCard selfPubkey={self} />
-                    <AgentVoicesCard />
                   </div>
                 </>
               ) : null}
 
+              {active === "voice" ? (
+                <div className="space-y-4">
+                  <VoiceSettingsCard selfPubkey={self} />
+                  <AgentVoicesCard />
+                  <VoiceLibraryCard />
+                </div>
+              ) : null}
               {active === "notifications" ? (
                 <div className="space-y-4">
                   {/*
@@ -282,14 +327,51 @@ export function SettingsPage({ group }: SettingsPageProps) {
                   <CommunityMembersCard />
                   <CustomEmojiSettingsCard />
                   <InvitesCard />
-                  {templatesEnabled ? <ChannelTemplatesSettingsCard /> : null}
                 </div>
               ) : null}
 
+              {active === "channels" ? (
+                templatesEnabled ? (
+                  <ChannelTemplatesSettingsCard />
+                ) : (
+                  <p className="text-sm text-muted-foreground">
+                    Channel templates are turned off. Enable them in Advanced.
+                  </p>
+                )
+              ) : null}
               {active === "agents" ? (
-                <div className="space-y-4">
-                  <AgentsConnectionSettings />
-                </div>
+                agent ? (
+                  self ? (
+                    <AgentScreen
+                      key={agent}
+                      agentPubkey={agent}
+                      tab={tab}
+                      onBack={() => selectGroup("agents")}
+                      onSelect={selectAgent}
+                      onTab={(nextTab) =>
+                        void navigate({
+                          to: "/repos/settings",
+                          search: { group: "agents", agent, tab: nextTab },
+                        })
+                      }
+                    />
+                  ) : (
+                    <p className="text-sm text-muted-foreground">
+                      Unlock your key to manage this agent.
+                    </p>
+                  )
+                ) : (
+                  <AgentsAdminPage embedded />
+                )
+              ) : null}
+              {active === "accounts" ? <ClaudePoolsSection /> : null}
+              {active === "library" ? (
+                <AgentsAdminPage
+                  key={tab ?? "definitions"}
+                  embedded
+                  section="library"
+                  tab={tab}
+                />
               ) : null}
 
               {active === "data" ? (
@@ -318,6 +400,9 @@ export function SettingsPage({ group }: SettingsPageProps) {
 
               {active === "advanced" ? (
                 <div className="space-y-4">
+                  <p className="text-sm text-muted-foreground">
+                    Keep awake, Git Bash and build options live in Buzz Desktop.
+                  </p>
                   <ExperimentsCard />
                 </div>
               ) : null}

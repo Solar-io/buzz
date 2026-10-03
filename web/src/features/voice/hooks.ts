@@ -1,6 +1,19 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import { useRelaySession } from "@/shared/api/RelaySessionProvider";
 import type { SignedNostrEvent } from "@/shared/lib/nostr-signer";
+import { useOwnPubkey } from "@/shared/lib/useOwnPubkey";
+import { listLibrary, voiceLibraryUrl } from "./lib/voiceLibraryApi.ts";
+import type { LibraryEngine, LibraryVoice } from "./lib/voiceLibraryModel.ts";
+import {
+  subscribeVoiceLibrary,
+  voiceLibraryVersion,
+} from "./lib/voiceLibraryRevision.ts";
 import { speechServiceUrl } from "@/shared/lib/relay-url";
 import {
   KIND_AGENT_VOICE,
@@ -118,41 +131,83 @@ export function useAgentVoiceSelections(): {
   return { byPubkey, ready, agentVoiceSelectionFor };
 }
 
-/**
- * The tts bridge's ElevenLabs voice library — the third engine family the
- * picker offers. Plain fetch of the bridge's `/voices/eleven` (the key never
- * leaves the server), built from the serving hostname exactly like the STT
- * bridge URL. No subscription: the library changes rarely and the bridge
- * caches upstream for ten minutes.
- */
-export function useElevenVoices(): {
-  voices: { id: string; label: string }[];
+/** Curated bridge rows; every mounted consumer refreshes after library edits. */
+export function useBridgeVoices(engine: LibraryEngine): {
+  voices: LibraryVoice[];
   ready: boolean;
+  error: string | null;
 } {
-  const [voices, setVoices] = useState<{ id: string; label: string }[]>([]);
+  const version = useSyncExternalStore(
+    subscribeVoiceLibrary,
+    voiceLibraryVersion,
+    voiceLibraryVersion,
+  );
+  const [state, setState] = useState<{
+    voices: LibraryVoice[];
+    ready: boolean;
+    error: string | null;
+  }>({ voices: [], ready: false, error: null });
+  // biome-ignore lint/correctness/useExhaustiveDependencies: version is the explicit cross-picker mutation invalidation signal
+  useEffect(() => {
+    const controller = new AbortController();
+    setState({ voices: [], ready: false, error: null });
+    void listLibrary(engine, controller.signal).then(
+      (voices) => {
+        if (!controller.signal.aborted)
+          setState({ voices, ready: true, error: null });
+      },
+      (cause: unknown) => {
+        if (!controller.signal.aborted)
+          setState({
+            voices: [],
+            ready: true,
+            error:
+              cause instanceof Error ? cause.message : "Could not load voices.",
+          });
+      },
+    );
+    return () => controller.abort();
+  }, [engine, version]);
+  return state;
+}
+
+/** Fail closed until the bridge's admin allowlist and current identity resolve. */
+export function useVoiceLibraryAdmin(): { isAdmin: boolean; ready: boolean } {
+  const pubkey = useOwnPubkey();
+  const [admins, setAdmins] = useState<string[]>([]);
   const [ready, setReady] = useState(false);
   useEffect(() => {
-    if (typeof window === "undefined") {
-      return;
-    }
     const controller = new AbortController();
-    fetch(new URL("/voices/eleven", speechServiceUrl("tts")).href, {
-      signal: controller.signal,
-    })
-      .then((res) =>
-        res.ok ? res.json() : Promise.reject(new Error(`bridge ${res.status}`)),
+    void fetch(voiceLibraryUrl("/healthz"), { signal: controller.signal })
+      .then((response) =>
+        response.ok
+          ? response.json()
+          : Promise.reject(new Error("Bridge unavailable")),
       )
-      .then((body: { voices?: { id: string; label: string }[] }) => {
-        setVoices(Array.isArray(body.voices) ? body.voices : []);
+      .then((body: { libraryAdmins?: unknown }) => {
+        if (!controller.signal.aborted)
+          setAdmins(
+            Array.isArray(body.libraryAdmins)
+              ? body.libraryAdmins.filter(
+                  (item): item is string => typeof item === "string",
+                )
+              : [],
+          );
       })
       .catch(() => {
-        // Keyless or unreachable: the picker simply shows the other engines.
-        setVoices([]);
+        if (!controller.signal.aborted) setAdmins([]);
       })
-      .finally(() => setReady(true));
+      .finally(() => {
+        if (!controller.signal.aborted) setReady(true);
+      });
     return () => controller.abort();
   }, []);
-  return { voices, ready };
+  return {
+    isAdmin:
+      pubkey !== null &&
+      admins.some((admin) => admin.toLowerCase() === pubkey.toLowerCase()),
+    ready,
+  };
 }
 
 /**
@@ -209,7 +264,7 @@ export function useAgentVoiceAssignments(): {
 /**
  * The tts bridge's Chatterbox roster (`GET /voices/chatterbox`) — the voices
  * the picker offers and the labels every surface shows. Plain fetch like
- * {@link useElevenVoices}; the bridge caches the service's roster for 60 s
+ * {@link useBridgeVoices}; the bridge caches the service's roster for 60 s
  * and serves the last good copy (`stale: true`) when the service is down.
  */
 export function useChatterboxVoices(): {

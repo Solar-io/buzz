@@ -36,21 +36,24 @@
 //!   default); a configured id that the agent's catalog does not list is
 //!   ignored for that turn. There is deliberately no text model knob.
 //!
-//! Per-agent config file (a richer layer OVER both env knobs):
+//! Per-agent config file (a richer layer OVER all three env knobs):
 //! `~/.buzz/agent-effort.json` (path overridable via `BUZZ_AGENT_EFFORT_CONFIG`):
 //!
 //! ```json
 //! {
-//!   "*":    { "text": "max", "voice": "low" },
-//!   "Evie": { "text": "medium" }
+//!   "*":    { "text": "max", "voice": "low", "voiceModel": "unset" },
+//!   "Evie": { "text": "medium", "voiceModel": "model-id" }
 //! }
 //! ```
 //!
-//! The agent key is the sidecar's own display name (`BUZZ_ACP_DISPLAY_NAME`),
-//! matched case-insensitively; an explicit per-agent entry beats the `*`
-//! wildcard, and a missing class key inside an entry falls through to the
-//! next tier. Precedence per knob, voice and text independently: per-agent
-//! file entry > `*` file entry > env var > unset. The file is read fresh at
+//! Agent keys are the sidecar's own lowercase pubkey hex (stable across
+//! renames), or its display name (`BUZZ_ACP_DISPLAY_NAME`, matched
+//! case-insensitively for backwards compatibility). Precedence for each of
+//! `text`, `voice`, and `voiceModel` independently: exact lowercase pubkey
+//! entry > name entry > `*` > env var > unset. A missing key falls through
+//! to the next tier; explicit `unset` or blank masks all lower tiers.
+//! `voiceModel` applies only to marked turns and keeps the existing catalog
+//! validation and post-turn model restoration. The file is read fresh at
 //! each turn resolution so edits land on the next turn without a restart; a
 //! missing, invalid-JSON, or non-object file behaves as absent (fail-soft).
 //! A class value that is present but not in the vocabulary is `Invalid` —
@@ -92,8 +95,8 @@ pub const ENV_TEXT_EFFORT: &str = "BUZZ_TEXT_TURN_EFFORT";
 /// Env var selecting the optional per-turn model for marked turns.
 pub const ENV_MODEL: &str = "BUZZ_VOICE_TURN_MODEL";
 
-/// Env var carrying the sidecar's own display name — the per-agent key the
-/// effort config file matches against. Present on every sidecar process.
+/// Env var carrying the sidecar's own display name — the legacy agent key
+/// the effort config file matches against. Present on every sidecar process.
 pub const ENV_AGENT_NAME: &str = "BUZZ_ACP_DISPLAY_NAME";
 
 /// Env var overriding the per-agent effort config file path (test seam).
@@ -199,7 +202,7 @@ pub fn resolve_effort_override(value: Option<&str>) -> EffortOverride {
     }
 }
 
-/// Resolve the model override from an env value.
+/// Resolve the model override from a file or env value.
 ///
 /// Model ids are adapter-defined strings, so there is no local validity
 /// check beyond presence: any non-blank, non-`unset` value is passed through
@@ -220,6 +223,8 @@ pub struct EffortFileEntry {
     pub text: Option<String>,
     /// Effort for marked turns.
     pub voice: Option<String>,
+    /// Model for marked turns (`voiceModel` in the config file).
+    pub voice_model: Option<String>,
 }
 
 impl EffortFileEntry {
@@ -234,23 +239,34 @@ impl EffortFileEntry {
 }
 
 /// The parsed per-agent effort config file, narrowed to the layers that can
-/// apply to ONE agent: its own entry (case-insensitive exact match on the
-/// display name) and the `*` wildcard.
+/// apply to ONE agent: its exact lowercase pubkey, its case-insensitive
+/// display name, and the `*` wildcard.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct AgentEffortFile {
     /// The `*` wildcard entry — applies to every agent.
     pub wildcard: EffortFileEntry,
     /// The matching per-agent entry, when the file has one.
     pub agent: EffortFileEntry,
+    /// The matching lowercase pubkey entry, independent of display name.
+    pub pubkey: EffortFileEntry,
 }
 
 impl AgentEffortFile {
-    /// The config-file raw value for `class`: the per-agent entry when it
-    /// carries the key, else the wildcard, else `None` (fall through to env).
+    /// The raw value for `class`: pubkey > name > wildcard > absent.
     pub fn class_value(&self, class: EffortClass) -> Option<&str> {
-        self.agent
+        self.pubkey
             .class_value(class)
+            .or_else(|| self.agent.class_value(class))
             .or_else(|| self.wildcard.class_value(class))
+    }
+
+    /// The raw marked-turn model: pubkey > name > wildcard > absent.
+    pub fn voice_model_value(&self) -> Option<&str> {
+        self.pubkey
+            .voice_model
+            .as_deref()
+            .or(self.agent.voice_model.as_deref())
+            .or(self.wildcard.voice_model.as_deref())
     }
 }
 
@@ -269,10 +285,10 @@ fn class_value_from(
     })
 }
 
-/// Parse the per-agent effort config file content, narrowed to `agent_name`.
+/// Parse the config file, narrowed to the agent's identity and display name.
 ///
-/// The agent key matches case-insensitively against `agent_name` (the
-/// sidecar's display name); `*` is the wildcard. Per-entry failure is
+/// Pubkeys match exact lowercase 64-character hex; legacy name keys match
+/// case-insensitively against `agent_name`; `*` is the wildcard. Per-entry failure is
 /// fail-soft: an entry whose value is not an object is ignored with a warn
 /// and the rest of the file still applies. File-level failure (invalid JSON,
 /// non-object root) is an `Err` — the caller treats the whole file as
@@ -280,6 +296,7 @@ fn class_value_from(
 pub fn parse_agent_effort_file(
     raw: &str,
     agent_name: Option<&str>,
+    agent_pubkey: Option<&str>,
 ) -> Result<AgentEffortFile, String> {
     let parsed: serde_json::Value =
         serde_json::from_str(raw).map_err(|e| format!("invalid JSON: {e}"))?;
@@ -287,6 +304,12 @@ pub fn parse_agent_effort_file(
         .as_object()
         .ok_or_else(|| "content is valid JSON but not an object".to_string())?;
     let mut file = AgentEffortFile::default();
+    let agent_pubkey = agent_pubkey.filter(|pk| {
+        pk.len() == 64
+            && pk
+                .bytes()
+                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    });
     for (key, value) in root {
         let Some(entry_obj) = value.as_object() else {
             tracing::warn!(
@@ -299,9 +322,21 @@ pub fn parse_agent_effort_file(
         let entry = EffortFileEntry {
             text: class_value_from(entry_obj, EffortClass::Text.key()),
             voice: class_value_from(entry_obj, EffortClass::Voice.key()),
+            // A malformed model value masks lower tiers rather than turning
+            // arbitrary JSON into an adapter-defined model id.
+            voice_model: entry_obj.get("voiceModel").map(|value| {
+                if let Some(model) = value.as_str() {
+                    model.to_string()
+                } else {
+                    tracing::warn!(target: "pool::voice", "invalid voiceModel type — ignoring override");
+                    String::new()
+                }
+            }),
         };
         if key == WILDCARD_KEY {
             file.wildcard = entry;
+        } else if agent_pubkey.is_some_and(|pk| key == pk) {
+            file.pubkey = entry;
         } else if agent_name.is_some_and(|name| key.eq_ignore_ascii_case(name)) {
             file.agent = entry;
         }
@@ -320,13 +355,15 @@ pub struct TurnKnobs<'a> {
     pub text_env: Option<&'a str>,
     /// `BUZZ_VOICE_TURN_MODEL`.
     pub model_env: Option<&'a str>,
-    /// `BUZZ_ACP_DISPLAY_NAME` — the config file's agent key.
+    /// `BUZZ_ACP_DISPLAY_NAME` — the config file's legacy name key.
     pub agent_name: Option<&'a str>,
+    /// The harness's own lowercase public key hex — stable across renames.
+    pub agent_pubkey: Option<&'a str>,
     /// Raw config-file content; `None` = file absent (or unusable).
     pub file_content: Option<&'a str>,
 }
 
-/// Resolve one knob across its tiers: config file (per-agent > wildcard,
+/// Resolve one knob across its tiers: config file (pubkey > name > wildcard,
 /// already narrowed by the parse) first, env second, unset last.
 ///
 /// A present-but-invalid value poisons its tier — it yields `Invalid` (warn
@@ -411,7 +448,7 @@ impl VoiceTurnOverrides {
             EffortClass::Text
         };
         let file = knobs.file_content.and_then(|raw| {
-            match parse_agent_effort_file(raw, knobs.agent_name) {
+            match parse_agent_effort_file(raw, knobs.agent_name, knobs.agent_pubkey) {
                 Ok(file) => Some(file),
                 Err(reason) => {
                     tracing::warn!(
@@ -440,7 +477,11 @@ impl VoiceTurnOverrides {
             Self {
                 effort,
                 text_effort: None,
-                model: resolve_model_override(knobs.model_env),
+                model: resolve_model_override(
+                    file.as_ref()
+                        .and_then(AgentEffortFile::voice_model_value)
+                        .or(knobs.model_env),
+                ),
             }
         } else {
             Self {
@@ -453,8 +494,8 @@ impl VoiceTurnOverrides {
 
     /// [`Self::resolve_for_turn`] with every source read from the process
     /// environment and the config file. The single impure seam — pool calls
-    /// this once per turn.
-    pub fn from_env_for_turn(content: Option<&str>) -> Self {
+    /// this once per turn, passing its own public key (never the sender's).
+    pub fn from_env_for_turn(content: Option<&str>, agent_pubkey: Option<&str>) -> Self {
         let voice_env = std::env::var(ENV_EFFORT).ok();
         let text_env = std::env::var(ENV_TEXT_EFFORT).ok();
         let model_env = std::env::var(ENV_MODEL).ok();
@@ -467,6 +508,7 @@ impl VoiceTurnOverrides {
                 text_env: text_env.as_deref(),
                 model_env: model_env.as_deref(),
                 agent_name: agent_name.as_deref(),
+                agent_pubkey,
                 file_content: file_content.as_deref(),
             },
         )
@@ -537,641 +579,5 @@ fn read_agent_effort_file() -> Option<String> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::{
-        default_config_path, is_voice_turn_content, parse_agent_effort_file,
-        resolve_effort_override, resolve_model_override, AgentEffortFile, EffortClass,
-        EffortFileEntry, EffortOverride, TurnKnobs, VoiceTurnOverrides, VIDEO_TURN_MARKER,
-        VOICE_TURN_MARKER, WILDCARD_KEY,
-    };
-
-    #[test]
-    fn markers_are_pinned() {
-        // The desktop bridge emits exactly this shape (mark_video_turn);
-        // the web voice mode must emit the matching one.
-        assert_eq!(VIDEO_TURN_MARKER, "[video] ");
-        assert_eq!(VOICE_TURN_MARKER, "[voice] ");
-    }
-
-    #[test]
-    fn detects_both_markers() {
-        assert!(is_voice_turn_content("[video] what's the weather"));
-        assert!(is_voice_turn_content("[voice] what's the weather"));
-    }
-
-    #[test]
-    fn no_marker_for_plain_or_mid_text_mentions() {
-        // The hard requirement: an ordinary turn is not voice-shaped, and a
-        // marker that arrives mid-text does not mark the turn.
-        assert!(!is_voice_turn_content("what's the weather"));
-        assert!(!is_voice_turn_content("hey [voice] are you there"));
-        assert!(!is_voice_turn_content("read me [video] the thing"));
-    }
-
-    #[test]
-    fn marker_without_trailing_space_is_not_a_marker() {
-        assert!(!is_voice_turn_content("[video]news"));
-        assert!(!is_voice_turn_content("[voice]news"));
-        assert!(!is_voice_turn_content("[video]"));
-    }
-
-    #[test]
-    fn effort_unset_when_env_missing_blank_or_unset() {
-        assert_eq!(resolve_effort_override(None), EffortOverride::Unset);
-        assert_eq!(resolve_effort_override(Some("")), EffortOverride::Unset);
-        assert_eq!(resolve_effort_override(Some("  ")), EffortOverride::Unset);
-        assert_eq!(
-            resolve_effort_override(Some("unset")),
-            EffortOverride::Unset
-        );
-        assert_eq!(
-            resolve_effort_override(Some("UNSET")),
-            EffortOverride::Unset
-        );
-    }
-
-    #[test]
-    fn effort_applies_recognized_values_normalized() {
-        // The full adapter vocabulary (SDK supportedEffortLevels + default):
-        // every level Sam can name must reach the wire normalized lowercase.
-        assert_eq!(
-            resolve_effort_override(Some("low")),
-            EffortOverride::Apply("low".into())
-        );
-        assert_eq!(
-            resolve_effort_override(Some("medium")),
-            EffortOverride::Apply("medium".into())
-        );
-        assert_eq!(
-            resolve_effort_override(Some("high")),
-            EffortOverride::Apply("high".into())
-        );
-        assert_eq!(
-            resolve_effort_override(Some("xhigh")),
-            EffortOverride::Apply("xhigh".into())
-        );
-        assert_eq!(
-            resolve_effort_override(Some("max")),
-            EffortOverride::Apply("max".into())
-        );
-        assert_eq!(
-            resolve_effort_override(Some("default")),
-            EffortOverride::Apply("default".into())
-        );
-        assert_eq!(
-            resolve_effort_override(Some(" LOW ")),
-            EffortOverride::Apply("low".into())
-        );
-        assert_eq!(
-            resolve_effort_override(Some("Max")),
-            EffortOverride::Apply("max".into())
-        );
-    }
-
-    #[test]
-    fn effort_rejects_unrecognized_values() {
-        // Values the adapter cannot honor (the SDK catalog has no "off" or
-        // "minimal" effort) must invalidate rather than silently no-op — a
-        // knob that looks set but does nothing is worse than a loud warning.
-        assert_eq!(
-            resolve_effort_override(Some("off")),
-            EffortOverride::Invalid("off".into())
-        );
-        assert_eq!(
-            resolve_effort_override(Some("minimal")),
-            EffortOverride::Invalid("minimal".into())
-        );
-        assert_eq!(
-            resolve_effort_override(Some("loww")),
-            EffortOverride::Invalid("loww".into())
-        );
-        assert_eq!(
-            resolve_effort_override(Some("maximum")),
-            EffortOverride::Invalid("maximum".into())
-        );
-    }
-
-    #[test]
-    fn model_override_off_by_default_and_passthrough_when_set() {
-        assert_eq!(resolve_model_override(None), None);
-        assert_eq!(resolve_model_override(Some("")), None);
-        assert_eq!(resolve_model_override(Some("unset")), None);
-        assert_eq!(
-            resolve_model_override(Some(" deepseek-v4-flash ")),
-            Some("deepseek-v4-flash".to_string())
-        );
-    }
-
-    // ---------------------------------------------------------------------
-    // Text-turn knob + layered config file
-    // ---------------------------------------------------------------------
-
-    /// Shorthand: resolve with only the text env knob set.
-    fn text_only(content: &str, text_env: Option<&str>) -> VoiceTurnOverrides {
-        VoiceTurnOverrides::resolve_for_turn(
-            Some(content),
-            &TurnKnobs {
-                text_env,
-                ..TurnKnobs::default()
-            },
-        )
-    }
-
-    #[test]
-    fn text_knob_resolves_on_unmarked_turn() {
-        let overrides = text_only("ordinary typed message", Some("max"));
-        assert_eq!(overrides.text_effort.as_deref(), Some("max"));
-        assert_eq!(overrides.effort, None, "the voice knob stays untouched");
-        assert_eq!(overrides.model, None, "no text model knob exists");
-        assert!(!overrides.is_noop());
-    }
-
-    #[test]
-    fn text_knob_unset_on_unmarked_turn_is_noop() {
-        // THE byte-identical requirement for the default deployment: no
-        // knobs, no file → the unmarked path resolves to the no-op default.
-        let overrides = text_only("ordinary typed message", None);
-        assert!(overrides.is_noop());
-        assert_eq!(overrides, VoiceTurnOverrides::default());
-    }
-
-    #[test]
-    fn text_knob_invalid_value_is_noop_on_effort() {
-        let overrides = text_only("ordinary typed message", Some("banana"));
-        assert_eq!(overrides.text_effort, None, "Invalid → warn + proceed");
-        assert!(overrides.is_noop());
-    }
-
-    #[test]
-    fn text_knob_on_marked_turn_is_ignored() {
-        // Partition, env tier: a marked turn never consults the text knob.
-        let overrides = VoiceTurnOverrides::resolve_for_turn(
-            Some("[voice] what's the weather"),
-            &TurnKnobs {
-                text_env: Some("max"),
-                ..TurnKnobs::default()
-            },
-        );
-        assert!(overrides.is_noop());
-        assert_eq!(overrides.text_effort, None);
-    }
-
-    #[test]
-    fn voice_knob_on_unmarked_turn_is_ignored() {
-        // Partition, the other half: an unmarked turn never consults the
-        // voice knob (this is the env-only shape `for_turn` pins too).
-        let overrides = VoiceTurnOverrides::resolve_for_turn(
-            Some("ordinary typed message"),
-            &TurnKnobs {
-                voice_env: Some("low"),
-                ..TurnKnobs::default()
-            },
-        );
-        assert!(overrides.is_noop());
-        assert_eq!(overrides.effort, None);
-    }
-
-    #[test]
-    fn unmarked_turn_resolves_to_noop_even_with_env_set() {
-        // THE original requirement, env-only shape: no marker → no voice
-        // override, whatever the voice knobs say.
-        let overrides = VoiceTurnOverrides::for_turn(
-            Some("ordinary typed message"),
-            Some("low"),
-            Some("deepseek-v4-flash"),
-        );
-        assert!(overrides.is_noop());
-        assert_eq!(overrides, VoiceTurnOverrides::default());
-    }
-
-    #[test]
-    fn missing_content_is_never_a_voice_turn() {
-        let overrides = VoiceTurnOverrides::for_turn(None, Some("low"), None);
-        assert!(overrides.is_noop());
-    }
-
-    #[test]
-    fn marked_turn_resolves_env_knobs() {
-        let overrides = VoiceTurnOverrides::for_turn(
-            Some("[voice] what's the weather"),
-            Some("low"),
-            Some("deepseek-v4-flash"),
-        );
-        assert_eq!(overrides.effort.as_deref(), Some("low"));
-        assert_eq!(overrides.text_effort, None);
-        assert_eq!(overrides.model.as_deref(), Some("deepseek-v4-flash"));
-    }
-
-    #[test]
-    fn marked_turn_with_no_env_stays_noop() {
-        // Marked but both knobs unset (the DEFAULT deployment): the turn
-        // runs at normal config, identically to today.
-        let overrides = VoiceTurnOverrides::for_turn(Some("[video] hello"), None, None);
-        assert!(overrides.is_noop());
-    }
-
-    #[test]
-    fn marked_turn_with_invalid_effort_is_noop_on_effort() {
-        let overrides = VoiceTurnOverrides::for_turn(Some("[voice] hi"), Some("loww"), None);
-        assert_eq!(overrides.effort, None);
-    }
-
-    // ----- config file parsing -----
-
-    const FILE_BOTH: &str = r#"{
-        "*":    { "text": "max", "voice": "low" },
-        "Evie": { "text": "medium" }
-    }"#;
-
-    fn knobs_with_file<'a>(
-        file: &'a str,
-        agent: Option<&'a str>,
-        text_env: Option<&'a str>,
-        voice_env: Option<&'a str>,
-    ) -> TurnKnobs<'a> {
-        TurnKnobs {
-            voice_env,
-            text_env,
-            agent_name: agent,
-            file_content: Some(file),
-            ..TurnKnobs::default()
-        }
-    }
-
-    #[test]
-    fn parse_narrows_to_agent_and_wildcard() {
-        let file = parse_agent_effort_file(FILE_BOTH, Some("Evie")).expect("parses");
-        assert_eq!(
-            file.agent,
-            EffortFileEntry {
-                text: Some("medium".into()),
-                voice: None,
-            }
-        );
-        assert_eq!(
-            file.wildcard,
-            EffortFileEntry {
-                text: Some("max".into()),
-                voice: Some("low".into()),
-            }
-        );
-    }
-
-    #[test]
-    fn parse_agent_key_is_case_insensitive() {
-        let file = parse_agent_effort_file(FILE_BOTH, Some("eViE")).expect("parses");
-        assert_eq!(
-            file.agent.text.as_deref(),
-            Some("medium"),
-            "the per-agent entry must match regardless of case"
-        );
-    }
-
-    #[test]
-    fn parse_without_agent_name_reads_wildcard_only() {
-        // A sidecar with no display name in its env gets exactly the
-        // wildcard tiers, never someone else's entry.
-        let file = parse_agent_effort_file(FILE_BOTH, None).expect("parses");
-        assert_eq!(file.agent, EffortFileEntry::default());
-        assert_eq!(file.wildcard.voice.as_deref(), Some("low"));
-    }
-
-    #[test]
-    fn parse_ignores_other_agents_entries() {
-        let file = parse_agent_effort_file(FILE_BOTH, Some("Duncan")).expect("parses");
-        assert_eq!(file.agent, EffortFileEntry::default());
-        assert_eq!(file.class_value(EffortClass::Text), Some("max"));
-    }
-
-    #[test]
-    fn parse_rejects_invalid_json_and_non_object_root() {
-        assert!(parse_agent_effort_file("not json {", Some("Evie")).is_err());
-        assert!(parse_agent_effort_file("[]", Some("Evie")).is_err());
-        assert!(parse_agent_effort_file("\"a string\"", Some("Evie")).is_err());
-        assert!(parse_agent_effort_file("5", Some("Evie")).is_err());
-    }
-
-    #[test]
-    fn parse_skips_non_object_entries() {
-        // Per-entry fail-soft: a malformed entry is ignored with a warn, the
-        // rest of the file still applies.
-        let raw = r#"{ "Evie": "medium", "*": { "voice": "low" } }"#;
-        let file = parse_agent_effort_file(raw, Some("Evie")).expect("parses");
-        assert_eq!(file.agent, EffortFileEntry::default());
-        assert_eq!(file.wildcard.voice.as_deref(), Some("low"));
-    }
-
-    #[test]
-    fn parse_serializes_non_string_class_values_for_loud_failure() {
-        // A non-string class value is PRESENT, so it must fail the
-        // vocabulary check (Invalid) rather than fall through to env.
-        let raw = r#"{ "*": { "text": 5 } }"#;
-        let file = parse_agent_effort_file(raw, Some("Evie")).expect("parses");
-        assert_eq!(file.wildcard.text.as_deref(), Some("5"));
-        let overrides = VoiceTurnOverrides::resolve_for_turn(
-            Some("plain text"),
-            &TurnKnobs {
-                text_env: Some("low"),
-                agent_name: Some("Evie"),
-                file_content: Some(raw),
-                ..TurnKnobs::default()
-            },
-        );
-        assert_eq!(
-            overrides.text_effort, None,
-            "invalid file value poisons its tier — no fallthrough to env"
-        );
-    }
-
-    #[test]
-    fn parse_ignores_unknown_keys_inside_entries() {
-        let raw = r#"{ "*": { "text": "max", "model": "m-9", "bogus": true } }"#;
-        let file = parse_agent_effort_file(raw, None).expect("parses");
-        assert_eq!(file.wildcard.text.as_deref(), Some("max"));
-        assert_eq!(file.wildcard.voice, None);
-    }
-
-    #[test]
-    fn wildcard_key_is_pinned() {
-        assert_eq!(WILDCARD_KEY, "*");
-    }
-
-    // ----- full precedence matrix -----
-
-    #[test]
-    fn precedence_matrix_voice_per_agent_beats_wildcard_beats_env_beats_unset() {
-        let marked = Some("[voice] hello");
-
-        // per-agent > wildcard
-        let overrides = VoiceTurnOverrides::resolve_for_turn(
-            marked,
-            &knobs_with_file(FILE_BOTH, Some("Evie"), None, None),
-        );
-        assert_eq!(
-            overrides.effort.as_deref(),
-            Some("low"),
-            "Evie has no voice key → wildcard voice wins"
-        );
-
-        let file_agent_voice = r#"{
-            "*":    { "voice": "low" },
-            "Evie": { "voice": "high" }
-        }"#;
-        let overrides = VoiceTurnOverrides::resolve_for_turn(
-            marked,
-            &knobs_with_file(file_agent_voice, Some("Evie"), None, None),
-        );
-        assert_eq!(
-            overrides.effort.as_deref(),
-            Some("high"),
-            "per-agent entry must beat the wildcard"
-        );
-
-        // wildcard > env
-        let overrides = VoiceTurnOverrides::resolve_for_turn(
-            marked,
-            &knobs_with_file(FILE_BOTH, Some("Evie"), None, Some("xhigh")),
-        );
-        assert_eq!(
-            overrides.effort.as_deref(),
-            Some("low"),
-            "wildcard file entry must beat the env knob"
-        );
-
-        // env > unset
-        let overrides = VoiceTurnOverrides::for_turn(marked, Some("xhigh"), None);
-        assert_eq!(overrides.effort.as_deref(), Some("xhigh"));
-
-        // unset → no override
-        let overrides = VoiceTurnOverrides::for_turn(marked, None, None);
-        assert_eq!(overrides.effort, None);
-    }
-
-    #[test]
-    fn precedence_matrix_text_per_agent_beats_wildcard_beats_env_beats_unset() {
-        let plain = "ordinary typed message";
-
-        // per-agent > wildcard
-        let overrides = VoiceTurnOverrides::resolve_for_turn(
-            Some(plain),
-            &knobs_with_file(FILE_BOTH, Some("Evie"), None, None),
-        );
-        assert_eq!(
-            overrides.text_effort.as_deref(),
-            Some("medium"),
-            "per-agent text entry must beat the wildcard"
-        );
-
-        // wildcard > env
-        let overrides = VoiceTurnOverrides::resolve_for_turn(
-            Some(plain),
-            &knobs_with_file(FILE_BOTH, Some("Duncan"), Some("low"), None),
-        );
-        assert_eq!(
-            overrides.text_effort.as_deref(),
-            Some("max"),
-            "wildcard text entry must beat the env knob"
-        );
-
-        // env > unset
-        let overrides = text_only(plain, Some("low"));
-        assert_eq!(overrides.text_effort.as_deref(), Some("low"));
-
-        // unset → no override (byte-identical default)
-        let overrides = text_only(plain, None);
-        assert_eq!(overrides.text_effort, None);
-    }
-
-    #[test]
-    fn missing_class_key_falls_through_tier_by_tier() {
-        // Evie's entry has only `text`; her VOICE tier falls per-agent →
-        // wildcard, while her TEXT tier stops at per-agent.
-        let overrides = VoiceTurnOverrides::resolve_for_turn(
-            Some("[voice] hello"),
-            &knobs_with_file(FILE_BOTH, Some("Evie"), None, None),
-        );
-        assert_eq!(
-            overrides.effort.as_deref(),
-            Some("low"),
-            "missing per-agent voice key → wildcard voice stands"
-        );
-        let overrides = VoiceTurnOverrides::resolve_for_turn(
-            Some("typed message"),
-            &knobs_with_file(FILE_BOTH, Some("Evie"), None, None),
-        );
-        assert_eq!(
-            overrides.text_effort.as_deref(),
-            Some("medium"),
-            "present per-agent text key stops the fall-through"
-        );
-
-        // When NEITHER file tier carries the class, the env knob stands:
-        // this file has no wildcard voice and Evie has no voice key.
-        let overrides = VoiceTurnOverrides::resolve_for_turn(
-            Some("[voice] hello"),
-            &knobs_with_file(
-                r#"{ "Evie": { "text": "medium" } }"#,
-                Some("Evie"),
-                None,
-                Some("high"),
-            ),
-        );
-        assert_eq!(
-            overrides.effort.as_deref(),
-            Some("high"),
-            "class key missing at both file tiers → env knob stands"
-        );
-
-        // Duncan has no entry at all: his TEXT tier falls wildcard (absent)
-        // → env.
-        let overrides = VoiceTurnOverrides::resolve_for_turn(
-            Some("typed message"),
-            &knobs_with_file(
-                r#"{ "Evie": { "text": "medium" } }"#,
-                Some("Duncan"),
-                Some("low"),
-                None,
-            ),
-        );
-        assert_eq!(
-            overrides.text_effort.as_deref(),
-            Some("low"),
-            "no matching file entry → env knob stands"
-        );
-    }
-
-    #[test]
-    fn file_explicit_unset_masks_env() {
-        // `unset` is part of the vocabulary: an explicit file "unset" is a
-        // deliberate no-override for that class and masks the env knob.
-        let raw = r#"{ "*": { "text": "unset", "voice": "" } }"#;
-        let overrides = VoiceTurnOverrides::resolve_for_turn(
-            Some("typed message"),
-            &knobs_with_file(raw, None, Some("low"), None),
-        );
-        assert_eq!(overrides.text_effort, None);
-        let overrides = VoiceTurnOverrides::resolve_for_turn(
-            Some("[voice] hello"),
-            &knobs_with_file(raw, None, None, Some("low")),
-        );
-        assert_eq!(overrides.effort, None);
-    }
-
-    #[test]
-    fn invalid_file_value_does_not_fall_through_to_env() {
-        // A present-but-invalid file value warns and proceeds at normal
-        // config (same posture as an invalid env value) — it must not
-        // silently degrade into the env tier, which would apply a DIFFERENT
-        // config than the operator wrote.
-        let raw = r#"{ "*": { "voice": "banana" } }"#;
-        let overrides = VoiceTurnOverrides::resolve_for_turn(
-            Some("[voice] hello"),
-            &knobs_with_file(raw, None, None, Some("low")),
-        );
-        assert_eq!(overrides.effort, None);
-    }
-
-    #[test]
-    fn missing_or_broken_file_falls_back_to_env() {
-        // File absent: env knobs stand alone.
-        let overrides = VoiceTurnOverrides::resolve_for_turn(
-            Some("typed message"),
-            &TurnKnobs {
-                text_env: Some("low"),
-                file_content: None,
-                ..TurnKnobs::default()
-            },
-        );
-        assert_eq!(overrides.text_effort.as_deref(), Some("low"));
-
-        // Invalid JSON: warn + behave as absent.
-        let overrides = VoiceTurnOverrides::resolve_for_turn(
-            Some("typed message"),
-            &knobs_with_file("{not json", None, Some("low"), None),
-        );
-        assert_eq!(overrides.text_effort.as_deref(), Some("low"));
-
-        // Non-object root: same.
-        let overrides = VoiceTurnOverrides::resolve_for_turn(
-            Some("typed message"),
-            &knobs_with_file("[1,2,3]", None, Some("low"), None),
-        );
-        assert_eq!(overrides.text_effort.as_deref(), Some("low"));
-    }
-
-    #[test]
-    fn file_value_normalizes_like_env() {
-        // Same resolver, same normalization: case and whitespace do not
-        // reach the wire.
-        let raw = r#"{ "*": { "text": "  MAX " } }"#;
-        let overrides = VoiceTurnOverrides::resolve_for_turn(
-            Some("typed message"),
-            &knobs_with_file(raw, None, None, None),
-        );
-        assert_eq!(overrides.text_effort.as_deref(), Some("max"));
-    }
-
-    #[test]
-    fn file_default_value_passes_through() {
-        let raw = r#"{ "*": { "text": "default" } }"#;
-        let overrides = VoiceTurnOverrides::resolve_for_turn(
-            Some("typed message"),
-            &knobs_with_file(raw, None, None, None),
-        );
-        assert_eq!(overrides.text_effort.as_deref(), Some("default"));
-    }
-
-    #[test]
-    fn partition_holds_across_both_tiers() {
-        // The full stack, both classes at once: the marked turn resolves
-        // ONLY voice tiers, the unmarked turn ONLY text tiers — neither can
-        // see the other's sources.
-        let knobs = knobs_with_file(FILE_BOTH, Some("Evie"), Some("high"), Some("high"));
-        let marked = VoiceTurnOverrides::resolve_for_turn(Some("[video] hi"), &knobs);
-        assert_eq!(
-            marked.effort.as_deref(),
-            Some("low"),
-            "marked: Evie has no voice key → wildcard voice"
-        );
-        assert_eq!(marked.text_effort, None, "marked turn ignores text tiers");
-        assert_eq!(marked.effective_effort(), Some("low"));
-
-        let unmarked = VoiceTurnOverrides::resolve_for_turn(Some("typed message"), &knobs);
-        assert_eq!(
-            unmarked.text_effort.as_deref(),
-            Some("medium"),
-            "unmarked: per-agent text entry"
-        );
-        assert_eq!(unmarked.effort, None, "unmarked turn ignores voice tiers");
-        assert_eq!(unmarked.effective_effort(), Some("medium"));
-    }
-
-    #[test]
-    fn effective_effort_merges_the_partition() {
-        let mut overrides = VoiceTurnOverrides::default();
-        assert_eq!(overrides.effective_effort(), None);
-        overrides.effort = Some("low".into());
-        assert_eq!(overrides.effective_effort(), Some("low"));
-        overrides.effort = None;
-        overrides.text_effort = Some("max".into());
-        assert_eq!(overrides.effective_effort(), Some("max"));
-    }
-
-    #[test]
-    fn default_config_path_joins_home_and_is_none_without_home() {
-        assert_eq!(
-            default_config_path(Some("/Users/sam")).as_deref(),
-            Some(std::path::Path::new("/Users/sam/.buzz/agent-effort.json"))
-        );
-        assert_eq!(default_config_path(None), None);
-        assert_eq!(default_config_path(Some("   ")), None);
-    }
-
-    #[test]
-    fn agent_effort_file_default_is_empty() {
-        // A default (absent-file) resolution must equal the no-file one.
-        let file = AgentEffortFile::default();
-        assert_eq!(file.class_value(EffortClass::Text), None);
-        assert_eq!(file.class_value(EffortClass::Voice), None);
-    }
-}
+#[path = "voice_turn_tests.rs"]
+mod tests;
