@@ -41,3 +41,14 @@ W1 channel settings:
 - [x] W9a: Right now live model switch/cancel, channel add then start and remove, Memory/Activity; locked Logs.
 - [x] W9a: phone sub-pages, responsive cards, behavioural/mutation tests, scoped web gates and screenshots. Evidence: [W9a report](TEST_REPORTS/w9a-agent-screen.md).
 - [ ] W9a live acceptance: read-only Acid Burn comparison, then test-channel add/remove and cancellation on a throwaway agent. Needs an approved owner signing environment; this coder shell has no BUZZ_PRIVATE_KEY. Local mock journeys cover the client wiring.
+
+## Fish audio P2
+
+- [x] Shared Fish/ElevenLabs voice-key vectors (4 accept and 19/18 reject respectively).
+- [x] Relay selection (30182): Fish grammar, validation errors and fixture coverage.
+- [x] Relay assignment (30183): reuse selection grammar and cover Fish vectors.
+- [x] CLI select/assign Fish prefix, payload and compiled command help.
+- [x] Relay-backed E2E Fish acceptance/readback case implemented and compiled.
+- [x] Nine named mutation failures with fixed test counts, restored source, strict Clippy and formatting.
+- [ ] Clean unfiltered relay + CLI gate: CLI 483 pass; relay lib 1047 pass / 2 fail / 64 ignored. Parent control reproduces mesh echo 504; telemetry callsite failure is intermittent. [Evidence](TEST_REPORTS/fish-relay-cli.md).
+- [ ] Execute the Fish E2E case against an isolated relay containing this patch.
