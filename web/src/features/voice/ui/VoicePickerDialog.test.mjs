@@ -159,8 +159,8 @@ test("the current selection renders as Selected and others as Select", async () 
     [...container.querySelectorAll('[data-testid="voice-picker-select"]')].map(
       (button) => button.textContent,
     ),
-    ["Select", "Selected"],
-    "the April row (fixture index 1) is the current selection",
+    ["Selected", "Select"],
+    "the April row sorts first and is the current selection",
   );
   await unmount();
 });

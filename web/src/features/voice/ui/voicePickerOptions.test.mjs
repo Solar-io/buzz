@@ -11,6 +11,8 @@ import {
   filterVoiceOptions,
   initialEngine,
   sameOption,
+  sortVoiceOptions,
+  withCurrentPinned,
 } from "./voicePickerOptions.ts";
 import { parseChatterboxRoster } from "../lib/chatterboxRoster.ts";
 
@@ -268,4 +270,60 @@ test("a stored on-device selection matches no offered row", () => {
 
 test("every Preview speaks the same sample line", () => {
   assert.equal(PREVIEW_SAMPLE_TEXT, "Hi, this is my agent voice.");
+});
+
+for (const engine of ["chatterbox", "eleven", "fish"]) {
+  test(`engineVoiceOptions sorts ${engine} case-insensitively with numeric and accented labels`, () => {
+    const labels = ["zed", "bella", "Adam", "Émile", "10 Ten", "2 Two"];
+    const voices = labels.map((label, i) => ({ id: `${i}`, label }));
+    const chatterbox = labels.map((label, i) => ({
+      key: `chatterbox:v${i}`,
+      slug: `v${i}`,
+      label,
+      gender: "",
+      style: "",
+      reserved: false,
+      reservedFor: null,
+    }));
+    assert.deepEqual(
+      engineVoiceOptions(engine, {
+        chatterboxVoices: chatterbox,
+        elevenVoices: voices,
+        fishVoices: voices,
+      }).map((row) => row.label),
+      ["2 Two", "10 Ten", "Adam", "bella", "Émile", "zed"],
+    );
+    assert.equal(voices[0].label, "zed", "sorting never mutates source order");
+  });
+}
+test("sortVoiceOptions breaks case-insensitive ties by key, without mutating the input", () => {
+  const rows = [
+    { label: "Adam", key: "z" },
+    { label: "adam", key: "a" },
+  ];
+  assert.deepEqual(
+    sortVoiceOptions(rows).map((row) => row.key),
+    ["a", "z"],
+  );
+  assert.equal(rows[0].key, "z");
+});
+test("withCurrentPinned keeps a removed current voice first and the sorted library below it", () => {
+  const current = {
+    engine: "fish",
+    key: "fish:0123456789abcdef0123456789abcdef",
+  };
+  const options = [
+    { engine: "fish", key: "fish:ABCDEFGHIJKLMNOP", label: "Adam" },
+  ];
+  const rows = withCurrentPinned(options, current, "Zed's stored label");
+  assert.deepEqual(
+    rows.map((row) => row.label),
+    ["Zed's stored label", "Adam"],
+  );
+  assert.equal(rows[0].notInLibrary, true);
+  assert.equal(rows[0].detail, "not in library");
+  assert.ok(sameOption(rows[0], current));
+  assert.equal(withCurrentPinned(rows, current).length, 2);
+  assert.equal(initialEngine(current), "fish");
+  assert.equal(engineLabel("fish"), "Fish Audio");
 });
