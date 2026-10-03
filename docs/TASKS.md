@@ -5,12 +5,13 @@
 - [ ] QA-WORK-003 (Medium): keep fenced-code language markers out of meaningful row summaries; define non-text fallbacks.
 
 Parity W8a roster:
-- [ ] Read-only roster with team/model/effort, observer Working and catalog Claimed status.
-- [ ] Counted status chips, team/name filters and existing stale-registration set.
-- [ ] Content-width table columns and phone list, accessible selection.
-- [ ] Row lifecycle/Open/Message/snapshot/Unregister and targeted bulk lifecycle.
-- [ ] Bulk channel adds, confirmation, desktop acknowledgement/refusal receipts and safe unregister guards.
-- [ ] Required web checks, named mechanism mutations and built-app 1440/390 screenshots.
+- [x] Read-only roster with team/model/effort, observer Working and catalog Claimed status.
+- [x] Counted status chips, team/name filters and existing stale-registration set.
+- [x] Content-width table columns and phone list, accessible selection.
+- [x] Row lifecycle/Open/Message/snapshot/Unregister and targeted bulk lifecycle.
+- [x] Bulk channel adds, confirmation, desktop acknowledgement/refusal receipts and safe unregister guards.
+- [x] Required web checks, named mechanism mutations and built-app 1440/390 screenshots.
+- [ ] W8a live acceptance: throwaway agents and private-channel checks need an enrolled owner signing environment. Evidence: [W8a handoff](TEST_REPORTS/parity-w8a.md).
 
 - [x] Parity A1: implement pubkey > display name > wildcard > env resolution for each turn knob; add marked-turn `voiceModel`; wire both harness call sites.
 - [x] Parity A1: add six named regressions plus tier/type edge cases; show mechanism mutations failing with unchanged test counts.
