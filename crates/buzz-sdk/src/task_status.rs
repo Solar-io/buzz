@@ -1,13 +1,13 @@
 //! Builders for kind-30624 agent task status heads.
 //!
-//! Both builders assemble the tags, run them through the single wire validator
+//! All builders assemble the tags, run them through the single wire validator
 //! (`buzz_core::task_status`) and only then return an [`EventBuilder`] with the
 //! caller's `created_at` pinned. A builder can therefore never emit an event
 //! the relay would reject.
 
 use buzz_core::kind::KIND_AGENT_TASK_STATUS;
 use buzz_core::task_status::{
-    validate_task_status_parts, TaskState, DETAIL_D_PREFIX, TURN_D_PREFIX,
+    validate_task_status_parts, TaskState, DETAIL_D_PREFIX, JOB_D_PREFIX, TURN_D_PREFIX,
 };
 use nostr::{EventBuilder, Kind, Tag, Timestamp};
 use uuid::Uuid;
@@ -61,6 +61,80 @@ fn tags_from(raw: &[Vec<String>]) -> Result<Vec<Tag>, SdkError> {
                 .map_err(|e| SdkError::InvalidTag(e.to_string()))
         })
         .collect()
+}
+
+/// Inputs for an independent background job (`job:<channel>:<job id>`) head.
+#[derive(Debug, Clone)]
+pub struct TaskJob<'a> {
+    /// Channel the job runs in (`h`).
+    pub channel: Uuid,
+    /// Independent job id, 1..=64 ASCII characters.
+    pub job_id: &'a str,
+    /// Role, e.g. coder or tester.
+    pub role: &'a str,
+    /// Job lifecycle state.
+    pub state: TaskState,
+    /// Job start, unix seconds.
+    pub started: u64,
+    /// End time, required iff terminal.
+    pub ended: Option<u64>,
+    /// Optional model identifier.
+    pub model: Option<&'a str>,
+    /// Optional human title.
+    pub title: Option<&'a str>,
+    /// Optional launching turn id.
+    pub turn_id: Option<&'a str>,
+    /// Optional first trigger (64 lowercase hex).
+    pub trigger: Option<&'a str>,
+    /// Error reason, allowed only with state=error.
+    pub reason: Option<&'a str>,
+    /// Event timestamp; the running job's heartbeat.
+    pub created_at: u64,
+}
+
+/// Addressable `d` tag for an independent job. The builder validates the id.
+pub fn job_d_tag(channel: Uuid, job_id: &str) -> String {
+    format!("{JOB_D_PREFIX}{channel}:{job_id}")
+}
+
+/// Build a complete replacement job head, validated before return.
+pub fn build_task_job(input: &TaskJob<'_>) -> Result<EventBuilder, SdkError> {
+    let mut raw = vec![
+        vec!["d".into(), job_d_tag(input.channel, input.job_id)],
+        vec!["h".into(), input.channel.to_string()],
+        vec!["role".into(), input.role.to_string()],
+        vec!["state".into(), input.state.as_str().to_string()],
+        vec!["started".into(), input.started.to_string()],
+    ];
+    if let Some(ended) = input.ended {
+        raw.push(vec!["ended".into(), ended.to_string()]);
+    }
+    for (name, value) in [
+        ("model", input.model),
+        ("title", input.title),
+        ("turn", input.turn_id),
+    ] {
+        if let Some(value) = value {
+            raw.push(vec![name.into(), value.to_string()]);
+        }
+    }
+    if let Some(trigger) = input.trigger {
+        raw.push(vec![
+            "e".into(),
+            trigger.into(),
+            String::new(),
+            "trigger".into(),
+        ]);
+    }
+    if let Some(reason) = input.reason {
+        raw.push(vec!["reason".into(), reason.into()]);
+    }
+    validate_task_status_parts(&raw, "").map_err(|e| SdkError::InvalidInput(e.to_string()))?;
+    Ok(
+        EventBuilder::new(Kind::Custom(KIND_AGENT_TASK_STATUS as u16), "")
+            .tags(tags_from(&raw)?)
+            .custom_created_at(Timestamp::from(input.created_at)),
+    )
 }
 
 /// Build a lifecycle head. Validated before return.
@@ -189,5 +263,63 @@ mod tests {
             ..input
         };
         assert!(build_task_detail(&empty).is_err());
+    }
+    fn job() -> TaskJob<'static> {
+        TaskJob {
+            channel: Uuid::parse_str("0f5c1e8a-2b3d-4c5e-8f60-718293a4b5c6").unwrap(),
+            job_id: "coder-1",
+            role: "coder",
+            state: TaskState::Running,
+            started: 1000,
+            ended: None,
+            model: Some("gpt-6.1-sol"),
+            title: Some("Fix it"),
+            turn_id: Some("turn-1"),
+            trigger: Some("ab".repeat(32).leak()),
+            reason: None,
+            created_at: 1001,
+        }
+    }
+
+    #[test]
+    fn build_job_roundtrips_through_core_validator() {
+        let input = job();
+        let event = build_task_job(&input)
+            .unwrap()
+            .sign_with_keys(&Keys::generate())
+            .unwrap();
+        let head = parse_task_status(&event).unwrap();
+        assert_eq!(head.namespace, StatusNamespace::Job);
+        assert_eq!(head.channel, input.channel);
+        assert_eq!(head.job_id.as_deref(), Some("coder-1"));
+        assert_eq!(head.role.as_deref(), Some("coder"));
+        assert_eq!(head.model.as_deref(), Some("gpt-6.1-sol"));
+        assert_eq!(head.title.as_deref(), Some("Fix it"));
+        assert_eq!(head.turn_id, "turn-1");
+        assert_eq!(head.trigger, input.trigger.map(str::to_string));
+        assert_eq!(event.created_at.as_secs(), 1001);
+        let tags: Vec<_> = event
+            .tags
+            .iter()
+            .map(|t| t.as_slice()[0].as_str())
+            .collect();
+        assert_eq!(
+            tags,
+            ["d", "h", "role", "state", "started", "model", "title", "turn", "e"]
+        );
+    }
+
+    #[test]
+    fn build_job_refuses_invalid_input() {
+        assert!(build_task_job(&TaskJob {
+            job_id: "bad id",
+            ..job()
+        })
+        .is_err());
+        assert!(build_task_job(&TaskJob {
+            ended: Some(1002),
+            ..job()
+        })
+        .is_err());
     }
 }

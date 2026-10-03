@@ -138,6 +138,7 @@ pub async fn cmd_set(
 /// Dispatch `buzz status …`.
 pub async fn dispatch(cmd: crate::StatusCmd, client: &BuzzClient) -> Result<(), CliError> {
     match cmd {
+        crate::StatusCmd::Job(cmd) => super::status_job::dispatch(cmd, client).await,
         crate::StatusCmd::Set {
             channel,
             title,

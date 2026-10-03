@@ -977,6 +977,9 @@ pub enum CanvasCmd {
 
 #[derive(Subcommand)]
 pub enum StatusCmd {
+    /// Long background jobs; the Work rail drops jobs after 5 min without a beat
+    #[command(subcommand)]
+    Job(commands::status_job::StatusJobCmd),
     /// Set the title and/or progress of your running turn in a channel
     ///
     /// Your running/done state is published automatically by the harness;
