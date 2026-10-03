@@ -1,0 +1,20 @@
+--- PLAN.md
++++ PLAN.md
+@@ -580,7 +580,7 @@
+ 
+ **Files:**
+ - Library › Definition editor gains a Name pool list (30175 `name_pool`) and **Duplicate** (new 30175 with a fresh `d` tag and the "(copy)" name).
+-- **Share with specific people…**: the coder must locate the desktop's mechanism (`rg -n "share" desktop/src/features/agents/*persona*`) and mirror it exactly. If it turns out to need desktop-local state, it moves to L3 and the plan is amended. Do not invent a new wire shape.
++- **Share with specific people… — moved to L3 (Q5 resolved, 2026-10-03):** `PersonaShareDialog` calls `encode_agent_snapshot_for_send` with the local persona id, PNG format, optional linked-agent memory and avatar, then uploads/sends that snapshot in a DM. The encoder reads desktop-local definition/state; this is not a recipient-tagged 30175 operation. W11b builds only name pool and duplicate; L3 must forward/reuse the existing snapshot sharing path without inventing a new wire shape.
+ - `lib/personaEdit.ts` extended.
+ 
+ **Compatibility:** shared-instructions rule 12. Reject invisible/bidi characters at the web editor too (mirror `definition_validation`). Never strip silently.
+@@ -1156,7 +1156,7 @@
+ - **Q2 (W1):** Does the desktop edit `purpose` or `about` for "Purpose"? Mirror it, and never clobber a scratch channel's `about` marker.
+ - **Q3 (W3/DR1b):** What is the retention window for 24200 frames (relay config)? It bounds how old a reviewable draft can be.
+ - **Q4 (L3):** What exactly is "AI-config mode" in the desktop persona editor? If it isn't a persisted field, drop it, with Sam's OK.
+-- **Q5 (W11b):** What is the persona "share with specific people" mechanism? If it is not relay-only, move it to L3.
++- **Q5 (W11b), resolved 2026-10-03:** Specific-people sharing uses desktop-local `encode_agent_snapshot_for_send` (PNG snapshot) plus DM attachment send, not 30175 recipient tags. Assigned to L3 under W11b's approved contingency.
+ - **Q6 (P0):** Sam approves the three-release cadence and the relaunch windows.
+ 
+ ## 11. Architecture verdict

@@ -13,12 +13,14 @@ import {
   agentsSharingDefinition,
   buildPersonaUpdate,
   definitionEditable,
+  personaNamePool,
 } from "../lib/personaEdit";
 import { targetForAgent, type RosterRow } from "../lib/roster";
 import { controlsEnabled } from "../lib/adminCommandCapabilities";
 import type { DesktopCatalog } from "../lib/desktopCatalog";
 import type { useAdminCommands } from "./AgentAdminPanel";
 import { ModelProviderFields, SectionHeading } from "./AgentFormSections";
+import { DefinitionNamePool } from "./DefinitionNamePool";
 
 /**
  * Edit a linked agent's kind-30175 definition from the web: republish the
@@ -113,6 +115,9 @@ export function DefinitionEditor({
   const [prompt, setPrompt] = useState(persona.systemPrompt);
   const [model, setModel] = useState(persona.model);
   const [provider, setProvider] = useState(persona.provider);
+  const [namePool, setNamePool] = useState(() =>
+    personaNamePool(base.content).join("\n"),
+  );
   const [busy, setBusy] = useState(false);
   const [restartOffer, setRestartOffer] = useState(false);
 
@@ -127,7 +132,15 @@ export function DefinitionEditor({
     }
     const built = buildPersonaUpdate(
       base,
-      { displayName: name, systemPrompt: prompt, model, provider },
+      {
+        displayName: name,
+        systemPrompt: prompt,
+        model,
+        provider,
+        namePool: namePool
+          .split("\n")
+          .filter((name) => name !== "" && !/^[\p{White_Space}]+$/u.test(name)),
+      },
       Math.floor(Date.now() / 1000),
     );
     if ("error" in built) {
@@ -214,6 +227,11 @@ export function DefinitionEditor({
         catalogs={catalogs}
         hideHarness
         labelPrefix="Definition "
+      />
+      <DefinitionNamePool
+        value={namePool}
+        onChange={setNamePool}
+        disabled={busy}
       />
       {shared.length > 1 && (
         <p className="rounded-md bg-accent/40 px-2 py-1 text-xs text-muted-foreground">

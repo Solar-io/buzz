@@ -141,3 +141,10 @@ P0 verifier follow-up:
 - [x] Run required web/desktop checks and named fail-then-pass mutations; commit evidence.
 
 Evidence: [P0 verifier fixes](TEST_REPORTS/parity-p0-verifier-fixes.md).
+
+W11b definition extras (in progress):
+- [ ] Name pool list, relay round-trip and explicit Unicode rejection.
+- [ ] Private duplicate with fresh coordinate, copy name and preserved prompt bytes.
+- [ ] Resolve Q5 from desktop sharing; document native-state dependency in L3.
+- [ ] Required web checks, named mechanism withdrawal and 1440/390 built-app screenshots.
+- [ ] Live duplicate/name-pool reconciliation in desktop with an authorized throwaway definition.

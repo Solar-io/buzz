@@ -1,5 +1,6 @@
 import type { SignedNostrEvent } from "@/shared/lib/nostr-signer";
 import { validateAgentDefinitionText } from "./definitionText.ts";
+import { UUID_D_RE } from "./definitionManage.ts";
 import type { RosterRow } from "./roster.ts";
 
 /**
@@ -15,6 +16,8 @@ export interface DefinitionEdits {
   systemPrompt: string;
   model: string;
   provider: string;
+  /** Omitted by older editors; an empty list explicitly clears the pool. */
+  namePool?: string[];
 }
 
 export interface PersonaUpdateTemplate {
@@ -57,6 +60,78 @@ function currentString(parsed: Record<string, unknown>, key: string): string {
   return typeof value === "string" ? value : "";
 }
 
+/** Read the desktop's ordered name list without changing its entries. */
+export function personaNamePool(content: string): string[] {
+  try {
+    const parsed = JSON.parse(content);
+    return Array.isArray(parsed?.name_pool) &&
+      parsed.name_pool.every((name: unknown) => typeof name === "string")
+      ? [...parsed.name_pool]
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+/** Validate pool entries before normalization so invisible characters reject. */
+function validateNamePool(names: readonly string[]): string | null {
+  for (const name of names) {
+    const result = validateAgentDefinitionText(name, "");
+    if (!result.ok) return `Name pool: ${result.error}`;
+  }
+  return null;
+}
+
+/** Copy saved relay content to a fresh, private definition coordinate. */
+export function buildPersonaDuplicate(
+  latest: Pick<SignedNostrEvent, "content" | "tags">,
+  id: string,
+  nowSecs: number,
+): { template: PersonaUpdateTemplate } | { error: string } {
+  if (
+    !UUID_D_RE.test(id) ||
+    latest.tags.some((tag) => tag[0] === "d" && tag[1] === id)
+  ) {
+    return { error: "The copy needs a fresh definition id." };
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(latest.content);
+  } catch {
+    return { error: "The current definition is not valid JSON." };
+  }
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return { error: "The current definition is not a JSON object." };
+  }
+  const content = parsed as Record<string, unknown>;
+  const validation = validateAgentDefinitionText(
+    currentString(content, "display_name"),
+    currentString(content, "system_prompt"),
+  );
+  if (!validation.ok) return { error: validation.error };
+  content.display_name = `${content.display_name} (copy)`;
+  const copyValidation = validateAgentDefinitionText(
+    content.display_name as string,
+    currentString(content, "system_prompt"),
+  );
+  if (!copyValidation.ok) return { error: copyValidation.error };
+  const poolError = validateNamePool(personaNamePool(latest.content));
+  if (poolError) return { error: poolError };
+  return {
+    template: {
+      kind: 30175,
+      tags: [
+        ["d", id],
+        ...latest.tags
+          .filter((tag) => tag[0] !== "d" && tag[0] !== "shared")
+          .map((tag) => [...tag]),
+      ],
+      content: JSON.stringify(content),
+      created_at: nowSecs,
+    },
+  };
+}
+
 /**
  * Build the replacement 30175 template. Keys are written only when their
  * value changes, so untouched keys (including unknown future ones) keep
@@ -78,6 +153,12 @@ export function buildPersonaUpdate(
     return { error: "The current definition is not a JSON object." };
   }
   const content = parsed as Record<string, unknown>;
+  // Validate the raw reviewed text BEFORE any normalization (rule 12).
+  const rawValidation = validateAgentDefinitionText(
+    edits.displayName,
+    edits.systemPrompt,
+  );
+  if (!rawValidation.ok) return { error: rawValidation.error };
   let changed = false;
 
   const setString = (key: string, value: string, deleteWhenBlank: boolean) => {
@@ -93,9 +174,22 @@ export function buildPersonaUpdate(
   };
 
   setString("display_name", edits.displayName.trim(), false);
-  setString("system_prompt", edits.systemPrompt.trim(), false);
+  setString("system_prompt", edits.systemPrompt, false);
   setString("model", edits.model.trim(), true);
   setString("provider", edits.provider.trim(), true);
+
+  if (edits.namePool !== undefined) {
+    const poolError = validateNamePool(edits.namePool);
+    if (poolError) return { error: poolError };
+    const names = edits.namePool.map((name) => name.trim());
+    if (
+      JSON.stringify(names) !== JSON.stringify(personaNamePool(latest.content))
+    ) {
+      changed = true;
+      if (names.length === 0) delete content.name_pool;
+      else content.name_pool = names;
+    }
+  }
 
   const validation = validateAgentDefinitionText(
     currentString(content, "display_name"),

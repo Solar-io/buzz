@@ -3,6 +3,8 @@ import { test } from "node:test";
 import {
   agentsSharingDefinition,
   buildPersonaUpdate,
+  buildPersonaDuplicate,
+  personaNamePool,
   definitionEditable,
 } from "./personaEdit.ts";
 
@@ -146,4 +148,179 @@ test("agentsSharingDefinition returns only rows linked to that id", () => {
   const roster = [row("helper"), row("other"), row("helper"), row(null, null)];
   assert.equal(agentsSharingDefinition(roster, "helper").length, 2);
   assert.equal(agentsSharingDefinition(roster, "missing").length, 0);
+});
+
+const COPY_ID = "b5416ed8-a623-42ca-850f-e5cd17687726";
+
+test("duplicate gets a new d and identical prompt bytes", () => {
+  const prompt = " \tReview **literal** [links](https://iana.org).\n\n ";
+  const base = latest({
+    content: JSON.stringify({
+      display_name: "Helper",
+      system_prompt: prompt,
+      name_pool: ["A", "B"],
+      avatar_url: "https://iana.org/avatar.png",
+      runtime: "codex",
+      model: "m1",
+      provider: "zai",
+      respond_to: "owner-only",
+      parallelism: 2,
+      x_future: { keep: true },
+    }),
+    tags: [
+      ["d", "helper"],
+      ["shared", "true"],
+      ["zz", "1"],
+    ],
+  });
+  const result = buildPersonaDuplicate(base, COPY_ID, 900);
+  assert.equal(result.template.kind, 30175);
+  assert.deepEqual(result.template.tags, [
+    ["d", COPY_ID],
+    ["zz", "1"],
+  ]);
+  assert.equal(result.template.created_at, 900);
+  assert.deepEqual(JSON.parse(result.template.content), {
+    ...JSON.parse(base.content),
+    display_name: "Helper (copy)",
+  });
+  assert.equal(JSON.parse(result.template.content).system_prompt, prompt);
+  assert.equal(JSON.parse(base.content).display_name, "Helper");
+});
+
+test("duplicate refuses reused or non-UUID coordinates", () => {
+  for (const id of ["helper", "", "invalid", COPY_ID.toUpperCase()]) {
+    assert.equal(
+      buildPersonaDuplicate(latest(), id, 1).error,
+      "The copy needs a fresh definition id.",
+    );
+  }
+  assert.equal(
+    buildPersonaDuplicate(latest({ tags: [["d", COPY_ID]] }), COPY_ID, 1).error,
+    "The copy needs a fresh definition id.",
+  );
+});
+
+test("duplicate refuses invalid JSON and names exceeding the desktop bound", () => {
+  for (const content of ["[1]", "null", "{bad", '"string"']) {
+    assert.equal(
+      typeof buildPersonaDuplicate(latest({ content }), COPY_ID, 1).error,
+      "string",
+    );
+  }
+  const base = latest({
+    content: JSON.stringify({
+      display_name: "a".repeat(123),
+      system_prompt: "",
+    }),
+  });
+  assert.match(
+    buildPersonaDuplicate(base, COPY_ID, 1).error,
+    /Display name is too long/,
+  );
+});
+
+test("name pool round-trips", () => {
+  const base = latest();
+  const result = buildPersonaUpdate(
+    base,
+    edits({ namePool: ["Alice", "Bob", "Alice"] }),
+    5000,
+  );
+  assert.deepEqual(personaNamePool(result.template.content), [
+    "Alice",
+    "Bob",
+    "Alice",
+  ]);
+  assert.deepEqual(JSON.parse(result.template.content), {
+    ...JSON.parse(base.content),
+    name_pool: ["Alice", "Bob", "Alice"],
+  });
+  assert.deepEqual(
+    buildPersonaUpdate(
+      { ...base, ...result.template },
+      edits({ namePool: ["Alice", "Bob", "Alice"] }),
+      5001,
+    ),
+    { error: "No changes to save." },
+  );
+});
+
+test("name pool clear removes the optional wire field", () => {
+  const result = buildPersonaUpdate(latest(), edits({ namePool: [] }), 5000);
+  assert.equal("name_pool" in JSON.parse(result.template.content), false);
+  assert.deepEqual(personaNamePool(result.template.content), []);
+});
+
+test("name pool keeps order and rejects invisible names before trimming", () => {
+  const result = buildPersonaUpdate(
+    latest(),
+    edits({ namePool: [" Bob ", "Alice"] }),
+    5000,
+  );
+  assert.deepEqual(personaNamePool(result.template.content), ["Bob", "Alice"]);
+  for (const name of ["\uFEFFBob", "Bo\u202Eb", "\u200B", ""]) {
+    assert.match(
+      buildPersonaUpdate(latest(), edits({ namePool: [name] }), 5000).error,
+      /^Name pool:/,
+    );
+  }
+});
+
+test("name pool reader tolerates absent and malformed content", () => {
+  for (const content of [
+    "{}",
+    "null",
+    "{bad",
+    '{"name_pool":1}',
+    '{"name_pool":["a",1]}',
+  ]) {
+    assert.deepEqual(personaNamePool(content), []);
+  }
+});
+
+test("bidi character in prompt is rejected with a message", () => {
+  const result = buildPersonaUpdate(
+    latest(),
+    edits({ systemPrompt: "Be \u202Ekind." }),
+    5000,
+  );
+  assert.deepEqual(result, {
+    error:
+      "Agent instructions contains prohibited invisible or formatting character U+202E",
+  });
+  const duplicate = buildPersonaDuplicate(
+    latest({
+      content: JSON.stringify({
+        display_name: "Helper",
+        system_prompt: "Be \u202Ekind.",
+      }),
+    }),
+    COPY_ID,
+    5000,
+  );
+  assert.deepEqual(duplicate, result);
+});
+
+test("prompt bytes survive edits and leading invisible formatting is never stripped", () => {
+  const prompt = " \n\tBe kind.\n ";
+  const result = buildPersonaUpdate(
+    latest(),
+    edits({ systemPrompt: prompt }),
+    5000,
+  );
+  assert.equal(JSON.parse(result.template.content).system_prompt, prompt);
+  assert.match(
+    buildPersonaUpdate(
+      latest(),
+      edits({ systemPrompt: "\uFEFFBe kind." }),
+      5000,
+    ).error,
+    /U\+FEFF/,
+  );
+  assert.match(
+    buildPersonaUpdate(latest(), edits({ displayName: "\uFEFFHelper" }), 5000)
+      .error,
+    /U\+FEFF/,
+  );
 });
