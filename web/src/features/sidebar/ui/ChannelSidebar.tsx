@@ -26,6 +26,7 @@ import type { ReadState } from "@/features/channels/lib/readState.ts";
 import { NewChannelDialog } from "@/features/channels/ui/NewChannelDialog";
 import type { ChannelSummary } from "@/features/channels/useChannels";
 import type { DmSummary } from "@/features/dms/hooks";
+import { dmDisplayName } from "@/features/dms/lib/dmNaming.ts";
 import { NewDmDialog } from "@/features/dms/ui/NewDmDialog";
 import { scratchInfo } from "@/features/scratch/lib/scratchChannel.ts";
 import { ScratchGlyph } from "@/features/scratch/ui/ScratchChrome";
@@ -318,8 +319,8 @@ export function ChannelSidebar({
   const shownId = webView.active === null ? selectedId : undefined;
   const channelSelected = (channel: ChannelSummary) => channel.id === shownId;
   const dmUnread = (dm: DmSummary) => dmRowUnread(dm, unreadInput);
-  // Favorites and Channels: unread first, then most frequently used, then
-  // newest activity / name (sectionOrder.ts). The open row ranks by its
+  // Favorites, Channels and DMs: unread by recency, then the four most
+  // used, then alphabetical (sectionOrder.ts). The open row ranks by its
   // facts at the moment it was opened, and the whole order holds while the
   // pointer is over the list, so nothing slides under a click.
   const visits = useVisitScores();
@@ -331,19 +332,24 @@ export function ChannelSidebar({
       readState.activity.get(channel.id)?.createdAt ?? channel.updatedAt,
     name: channel.name,
   });
+  const dmFacts = (dm: DmSummary): RankFacts => ({
+    unread: dmUnread(dm),
+    score: visitScore(visits, dm.channel.id, now),
+    lastActivity: dm.lastMessage?.created_at ?? dm.channel.updatedAt,
+    // The label the row shows (DmNavRow), so A–Z matches what you read.
+    name: dmDisplayName(
+      dm.channel.participantPubkeys,
+      dmIdentity.selfPubkey ?? "",
+      dmIdentity.profiles,
+    ),
+  });
   const favoriteFacts = (item: FavoriteItem): RankFacts => {
     switch (item.kind) {
       case "channel":
       case "forum":
         return channelFacts(item.channel);
       case "dm":
-        return {
-          unread: dmUnread(item.dm),
-          score: visitScore(visits, item.key, now),
-          lastActivity:
-            item.dm.lastMessage?.created_at ?? item.dm.channel.updatedAt,
-          name: item.dm.channel.name,
-        };
+        return dmFacts(item.dm);
       case "link":
         return {
           unread: false,
@@ -357,7 +363,9 @@ export function ChannelSidebar({
     const favorite = sections.favorites.find((item) => item.key === key);
     if (favorite) return favoriteFacts(favorite);
     const channel = sections.channels.find((row) => row.id === key);
-    return channel ? channelFacts(channel) : undefined;
+    if (channel) return channelFacts(channel);
+    const dm = sections.dms.find((row) => row.channel.id === key);
+    return dm ? dmFacts(dm) : undefined;
   });
   const [pointerInList, setPointerInList] = useState(false);
   const liveFavorites = rankSection(
@@ -372,6 +380,9 @@ export function ChannelSidebar({
     channelFacts,
     { frozen: openSnapshot },
   );
+  const liveDms = rankSection(sections.dms, (dm) => dm.channel.id, dmFacts, {
+    frozen: openSnapshot,
+  });
   const heldFavoriteKeys = useHeldKeys(
     liveFavorites.map((item) => item.key),
     pointerInList,
@@ -380,12 +391,19 @@ export function ChannelSidebar({
     liveChannels.map((channel) => channel.id),
     pointerInList,
   );
+  const heldDmKeys = useHeldKeys(
+    liveDms.map((dm) => dm.channel.id),
+    pointerInList,
+  );
   const favoriteRows = heldFavoriteKeys
     ? holdOrder(liveFavorites, (item) => item.key, heldFavoriteKeys)
     : liveFavorites;
   const channelRows = heldChannelKeys
     ? holdOrder(liveChannels, (channel) => channel.id, heldChannelKeys)
     : liveChannels;
+  const dmRows = heldDmKeys
+    ? holdOrder(liveDms, (dm) => dm.channel.id, heldDmKeys)
+    : liveDms;
 
   const renderChannel =
     (glyph: (channel: ChannelSummary) => ReactNode) =>
@@ -653,8 +671,8 @@ export function ChannelSidebar({
           />
         )}
         {sections.favorites.length > 0 && (
-          // Channels, forums, DMs and links the viewer pinned, unread first
-          // then most used (Sam 2026-09-29). Replaced the channel-only Starred.
+          // Channels, forums, DMs and links the viewer pinned, unread first,
+          // then four most used, then A–Z (Sam 2026-10-03). Replaced the channel-only Starred.
           <SidebarSection
             label="Favorites"
             items={favoriteRows}
@@ -686,7 +704,7 @@ export function ChannelSidebar({
         </SidebarSection>
         <SidebarSection
           label="Direct messages"
-          items={sections.dms}
+          items={dmRows}
           getKey={(dm) => dm.channel.id}
           renderItem={renderDm}
           isSelected={(dm) => dm.channel.id === shownId}

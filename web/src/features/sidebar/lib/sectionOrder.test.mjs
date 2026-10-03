@@ -14,35 +14,67 @@ const keyOf = (i) => i.key;
 const factsOf = (i) => i.facts;
 const keys = (items) => items.map(keyOf);
 
-test("unread first, then most used within each group", () => {
+test("unread by recency, then the four most used, then A-Z", () => {
   const items = [
-    item("quiet", { score: 0.2 }),
+    item("zulu", { score: 0.2 }),
     item("busy", { score: 9 }),
-    item("unreadRare", { unread: true, score: 0.1 }),
-    item("unreadHot", { unread: true, score: 4 }),
+    item("unreadOldHot", { unread: true, score: 40, lastActivity: 100 }),
+    item("unreadNewRare", { unread: true, score: 0.1, lastActivity: 300 }),
     item("mid", { score: 3 }),
+    item("low", { score: 1 }),
+    item("lower", { score: 0.5 }),
+    item("fifth", { score: 0.3 }),
+    item("alpha"),
+    item("charlie"),
   ];
   assert.deepEqual(keys(rankSection(items, keyOf, factsOf)), [
-    "unreadHot",
-    "unreadRare",
+    // 1. unread, most recent first — usage does not reorder them
+    "unreadNewRare",
+    "unreadOldHot",
+    // 2. the four highest visit scores among the read rows
     "busy",
     "mid",
-    "quiet",
+    "low",
+    "lower",
+    // 3. everything else alphabetically, regardless of score
+    "alpha",
+    "charlie",
+    "fifth",
+    "zulu",
   ]);
 });
 
-test("equal usage breaks by newest activity, then name, then key", () => {
+test("never-visited rows do not take a frequent slot", () => {
   const items = [
-    item("b-old", { score: 1, lastActivity: 100, name: "beta" }),
-    item("a-new", { score: 1, lastActivity: 200, name: "zeta" }),
-    item("c", { score: 1, lastActivity: 100, name: "Alpha" }),
-    item("d2", { score: 1, lastActivity: 100, name: "beta" }),
+    item("zed"),
+    item("used", { score: 2, name: "yankee" }),
+    item("apple"),
+  ];
+  assert.deepEqual(keys(rankSection(items, keyOf, factsOf)), [
+    "used",
+    "apple",
+    "zed",
+  ]);
+});
+
+test("ties break by name case-insensitively, then key", () => {
+  const items = [
+    item("b-new", { unread: true, lastActivity: 100, name: "beta" }),
+    item("c", { unread: true, lastActivity: 100, name: "Alpha" }),
+    item("a-new", { unread: true, lastActivity: 200, name: "zeta" }),
+    item("d2", { score: 1, name: "beta" }),
+    item("d1", { score: 1, name: "Beta" }),
+    item("e", { name: "Echo" }),
+    item("f", { name: "delta" }),
   ];
   assert.deepEqual(keys(rankSection(items, keyOf, factsOf)), [
     "a-new",
     "c",
-    "b-old",
+    "b-new",
+    "d1",
     "d2",
+    "f",
+    "e",
   ]);
 });
 

@@ -1,11 +1,16 @@
 /**
- * Ordering for the sidebar's Favorites and Channels sections (Sam,
- * 2026-09-29): unread items on top, and within the unread group and within
- * the rest, most frequently used first. DMs, Forums and Links keep their own
- * orders — nothing here touches them.
+ * Ordering for the sidebar's Favorites, Channels and Direct messages
+ * sections (Sam, 2026-10-03):
+ *
+ * 1. Unread items on top, most recent activity first.
+ * 2. The next {@link FREQUENT_SLOTS} are the most frequently used of the
+ *    rest (highest visit score; an item never visited does not qualify).
+ * 3. Everything else alphabetically.
+ *
+ * Forums and Links keep their own orders — nothing here touches them.
  *
  * Ties break deterministically so two renders with the same inputs can never
- * disagree: newest activity first, then name (case-insensitive), then key.
+ * disagree: name (case-insensitive), then key.
  *
  * Two stabilisers keep rows from moving under the pointer:
  *
@@ -37,28 +42,44 @@ export interface RankOptions {
   frozen?: { key: string; facts: RankFacts } | null;
 }
 
+/** How many read items rank by usage before the alphabetical remainder. */
+export const FREQUENT_SLOTS = 4;
+
 /** Visit scores closer than this are treated as equal (float decay noise). */
 const SCORE_EPSILON = 1e-6;
 
-function compareFacts(
-  a: RankFacts,
-  aKey: string,
-  b: RankFacts,
-  bKey: string,
-): number {
-  if (a.unread !== b.unread) return a.unread ? -1 : 1;
-  if (Math.abs(a.score - b.score) > SCORE_EPSILON) return b.score - a.score;
-  if (a.lastActivity !== b.lastActivity) return b.lastActivity - a.lastActivity;
-  const byName = a.name.localeCompare(b.name, undefined, {
+interface Ranked<T> {
+  item: T;
+  key: string;
+  facts: RankFacts;
+}
+
+function byName<T>(a: Ranked<T>, b: Ranked<T>): number {
+  const name = a.facts.name.localeCompare(b.facts.name, undefined, {
     sensitivity: "base",
   });
-  if (byName !== 0) return byName;
-  return aKey < bKey ? -1 : aKey > bKey ? 1 : 0;
+  if (name !== 0) return name;
+  return a.key < b.key ? -1 : a.key > b.key ? 1 : 0;
+}
+
+function byRecency<T>(a: Ranked<T>, b: Ranked<T>): number {
+  if (a.facts.lastActivity !== b.facts.lastActivity) {
+    return b.facts.lastActivity - a.facts.lastActivity;
+  }
+  return byName(a, b);
+}
+
+function byUsage<T>(a: Ranked<T>, b: Ranked<T>): number {
+  if (Math.abs(a.facts.score - b.facts.score) > SCORE_EPSILON) {
+    return b.facts.score - a.facts.score;
+  }
+  return byName(a, b);
 }
 
 /**
- * Rank a section: unread first, then visit score, then the tie-breaks.
- * Returns a new array; the input is React-owned and never mutated.
+ * Rank a section: unread by recency, then the {@link FREQUENT_SLOTS} most
+ * used, then the rest by name. Returns a new array; the input is React-owned
+ * and never mutated.
  */
 export function rankSection<T>(
   items: readonly T[],
@@ -66,14 +87,22 @@ export function rankSection<T>(
   factsOf: (item: T) => RankFacts,
   { frozen = null }: RankOptions = {},
 ): T[] {
-  const ranked = items.map((item) => {
+  const unread: Ranked<T>[] = [];
+  const read: Ranked<T>[] = [];
+  for (const item of items) {
     const key = getKey(item);
     const facts =
       frozen !== null && frozen.key === key ? frozen.facts : factsOf(item);
-    return { item, key, facts };
-  });
-  ranked.sort((a, b) => compareFacts(a.facts, a.key, b.facts, b.key));
-  return ranked.map((entry) => entry.item);
+    (facts.unread ? unread : read).push({ item, key, facts });
+  }
+  unread.sort(byRecency);
+  const used = read
+    .filter((entry) => entry.facts.score > SCORE_EPSILON)
+    .sort(byUsage)
+    .slice(0, FREQUENT_SLOTS);
+  const frequent = new Set(used);
+  const rest = read.filter((entry) => !frequent.has(entry)).sort(byName);
+  return [...unread, ...used, ...rest].map((entry) => entry.item);
 }
 
 /**
