@@ -4,7 +4,7 @@ Both vcrxm3xrk920 and je8htrkcvrcd reproduce on the baseline and are corrected.
 Worktree: `/Users/sgallant/software_development/.evie-worktrees/buzz-codex-20261003-124429`.
 Branch: `codex/buzz-codex-20261003-124429`.
 Baseline: `228ae06c4bab0026f2ba4bd810b788d15b32fb14`.
-Source commits: `58e03845f`, `13ffc34e1`.
+Source commits: `58e03845f`, `13ffc34e1`; QA follow-up: `a286ae533`.
 
 ## Changes
 
@@ -127,3 +127,75 @@ were cleaned up. The shared browser and unrelated tabs remain. All mutations
 are restored. No work remains within the assigned two-bug scope; the baseline
 lint errors remain documented above. Fleet focus-status publication was
 unavailable because this coding shell has no Buzz signing credentials.
+
+## QA-WEB-LAYOUT-001 follow-up
+
+QA's evidence in `.scratch/qa-layout/web-layout-bugs.md` and
+`reaction-checks.json` reproduces on `8a63b8131`: with Canvas open at 1054px,
+the 368.69px toolbar extends left of the 400px conversation. The new painted
+regression fails in both palettes: the 👍 button starts at **152.31px**, while
+chat starts at **263px**.
+
+`a286ae533` makes each message row an inline-size query container. Quick
+reactions disappear from the end of their priority order as the row narrows;
+the narrowest rows hide the group and its divider. Feedback retains its
+accessible name while its visual label gives way to the icon. Add reaction,
+Reply, Feedback and More actions remain available. A row-relative maximum
+width and wrapping bound the bar in exceptionally narrow rows. This follows
+the existing container-query idiom in `redesign.css`, including indented
+thread rows rather than relying on viewport width.
+
+The optional compact-row tidy is included: 1px padding around the existing
+28px controls and 1px border gives a **32px** bar, removing the 4px overhang.
+Click targets retain their existing size.
+
+Four new painted cases in `conversation-layout.spec.ts` cover both palettes:
+
+- `Neighbour toolbar stays inside conversation width and reacts at 1054`:
+  Canvas is open, chat is exactly 400px, every visible toolbar button lies
+  within chat and its centre receives pointer input. A real 👍 click emits
+  exactly one kind-7 event for the correct target/viewer, then its echoed
+  reaction renders as the viewer's pressed chip. More actions stays visible.
+- `Neighbour toolbar adapts to conversation width and fits compact rows`:
+  1054/1280/1320/1360/1400/1440px retain 1/1/2/3/4/5 quick reactions. Both
+  toolbar and grouped row measure 32px, with all four toolbar edges inside
+  the row. The first combined attempt assumed two reactions at 1280px; live
+  measurements showed the row was only 300.64px, and that test expectation
+  was corrected before the successful run.
+
+Hermit was activated for all commands. Receipts are in
+`.scratch/layout-toolbar/` and appended to `logs/verification.log`.
+
+| Check | Result | Receipt |
+|---|---|---|
+| `pnpm test` | 4,421 discovered/pass; zero fail/skip | `unit.log` |
+| `pnpm typecheck` | exit 0 | `typecheck.log` |
+| `pnpm build` | exit 0, including final restored bundle | `restored-e2e.log` |
+| Four-file Biome check | exit 0 | `biome.log` |
+| File-size check against `8a63b8131` | exit 0 | `file-sizes.log` |
+| Original E2E selection with four added cases | **28/28 pass**, zero skips | `restored-e2e.log` |
+
+Exact restored command (supported isolated headed fallback):
+
+```sh
+env -u BUZZ_E2E_CDP PLAYWRIGHT_PORT=18901 \
+  pnpm --dir web test:e2e:smoke conversation-layout canvas-edit shelf \
+  --headed --grep 'conversation width|Neighbour toolbar|Canvas overlays|Canvas:|canvas edit'
+```
+
+Source was committed before mutation and rebuilt on every run. Each selection
+discovered two tests, one per palette; those exact tests passed before the
+mutation. Restoring the committed source and rebuilding passes all 28 cases.
+
+| Mutation | Named failure in both palettes | Assertion | Receipt |
+|---|---|---|---|
+| Restore all three source files from `8a63b8131` | `Neighbour toolbar stays inside conversation width and reacts at 1054` | button x >=263; received 152.3125 | `mutation-containment.log` |
+| Restore 3px toolbar padding only | `Neighbour toolbar adapts to conversation width and fits compact rows` | height 32px; received 36px | `mutation-height.log` |
+
+Agent Brave also painted the freshly built worktree bundle at 1054px and
+completed a real 👍 click with the viewer's reaction chip rendered. Chat spans
+x=263–663; its five visible controls span x=345–515. The grouped row and bar
+both measure 32px. `brave-geometry.json` and visually inspected
+`toolbar-1054.png` retain that evidence. Its owned tab and temporary preview
+server were closed. UI fixtures simulate relay traffic; these checks do not
+claim live relay authorization or persistence. Existing build warnings remain.

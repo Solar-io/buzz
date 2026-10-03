@@ -1,3 +1,4 @@
+- [x] QA-WEB-LAYOUT-001: row-container queries progressively hide quick reactions, preserve More actions and contain the compact 32px toolbar. Four painted regressions, four named mutation failures, 4,421 units and 28 selected browser workflows pass. Evidence: [layout report](TEST_REPORTS/web-layout-bugs.md#qa-web-layout-001-follow-up).
 - [x] Web layout bugs vcrxm3xrk920 / je8htrkcvrcd: 400px conversation minimum, narrow-row Canvas overlay, neighbouring toolbar/input separation; 18 new browser regressions, six named mutation failures and Agent Brave before/after captures. Evidence: [layout report](TEST_REPORTS/web-layout-bugs.md).
 - [x] Work row context: title → own in-turn message → trigger/parent precedence, bounded history fetching, unit boundaries, two mutation kills, and desktop/phone fixtures.
 - [x] Parity W11a: Library tabs (Definitions, Teams, Catalog, Snapshots) and one New agent menu.
