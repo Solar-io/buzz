@@ -226,3 +226,9 @@ Evidence: [W9b2 current-main composition](TEST_REPORTS/parity-w9b2.md#w9b2-compo
 - [ ] Rendered Favorites, Channels and Direct messages order with hardcoded expectations.
 - [ ] Kill five-slot and raw-DM-order mutations; restore and rerun.
 - [ ] Required web unit, typecheck and Biome checks; commit spec and evidence.
+
+## Live sidebar QA — 2026-10-04
+
+- [x] Compare live/installed bundle, expand both sections, capture order/account/console and health evidence.
+- [ ] Rerun Sam-specific Channels and DM recency acceptance with Sam authenticated; current session is Crash Override.
+- [ ] Investigate repeated host-stats HTTP 401. See [report](TEST_REPORTS/test-report-2026-10-04-1021.md).

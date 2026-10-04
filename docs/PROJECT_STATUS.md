@@ -80,3 +80,5 @@ Auth notices now persist suppression after signed HTTP publication returns `acce
 ### ACP account-aware quota routing — 2026-10-04
 
 Quota routing uses shared account reset deadlines, actual slot attribution and pre-turn rerouting. ACP verification: 1,035 → 1,043 units plus nine integrations; release build, strict Clippy and formatting pass. [Evidence](TEST_REPORTS/auth-pool-account-aware.md).
+
+Live sidebar QA (2026-10-04): bundle identity and health pass; Sam-specific ordering acceptance is blocked by Crash Override authentication. Repeated host-stats 401 errors were observed. [Evidence](TEST_REPORTS/test-report-2026-10-04-1021.md).
