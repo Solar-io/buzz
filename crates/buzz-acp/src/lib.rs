@@ -9546,6 +9546,7 @@ mod error_outcome_emission_tests {
             );
             // Restart and complete through the real result handler: successful
             // results carry no batch, so completion must use dispatched identity.
+            let mut queue = EventQueue::new(mode);
             queue.load_auth_parked(path.clone(), auth_parking::now_secs());
             let replay = queue.flush_next().unwrap();
             assert_eq!(replay.events[0].event.id, original.events[0].event.id);
