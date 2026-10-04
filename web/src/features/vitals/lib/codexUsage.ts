@@ -7,6 +7,17 @@ export interface CodexUsageBucket {
   incomplete: boolean;
 }
 
+/**
+ * The hub's run-dry projection for the weekly window — the same 72 h, weekends
+ * ×1.5 calculation as Claude's /v1/runway. Absent from older hubs.
+ */
+export interface CodexRunway {
+  burnPerHour: number | null;
+  historyHours: number | null;
+  projectedAtReset: number | null;
+  dryAt: string | null;
+}
+
 /** A measured quota window; stale readings remain visible with a marker. */
 export interface CodexWindow {
   usedFraction: number | null;
@@ -15,6 +26,7 @@ export interface CodexWindow {
   capturedAt: string | null;
   stale: boolean;
   source: string;
+  runway: CodexRunway | null;
 }
 
 /** Weekly quota and Chicago-calendar usage totals, supplied by the hub. */
@@ -74,7 +86,35 @@ function window(value: unknown): CodexWindow | null {
     capturedAt: date(raw.capturedAt),
     stale: raw.stale,
     source: raw.source,
+    runway: runway(raw.runway),
   };
+}
+
+function runway(value: unknown): CodexRunway | null {
+  const raw = record(value);
+  if (!raw) return null;
+  return {
+    burnPerHour: number(raw.burnPerHour),
+    historyHours: number(raw.historyHours),
+    projectedAtReset: number(raw.projectedAtReset),
+    dryAt: date(raw.dryAt),
+  };
+}
+
+/**
+ * The sidebar clause after "N% free", worded like Claude's: "dry Tue 9:40 AM"
+ * when the projection runs out before the reset, "lasts to reset" when it
+ * does not, and null when there is no projection (no history, stale, or an
+ * older hub) — then the caller keeps showing the reset time.
+ */
+export function codexOutlook(
+  weekly: CodexWindow | null | undefined,
+  timeZone?: string,
+): string | null {
+  const r = weekly?.runway;
+  if (!r || weekly?.stale) return null;
+  if (r.dryAt !== null) return `dry ${codexReset(r.dryAt, timeZone)}`;
+  return r.projectedAtReset !== null ? "lasts to reset" : null;
 }
 
 function bucket(value: unknown): CodexUsageBucket | null {

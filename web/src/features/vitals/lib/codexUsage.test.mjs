@@ -5,6 +5,7 @@ import {
   codexCost,
   codexCredits,
   codexNumber,
+  codexOutlook,
   codexReset,
   codexTokens,
   parseCodex,
@@ -29,6 +30,7 @@ const LIVE = {
     capturedAt: "2026-10-02T21:13:06Z",
     stale: false,
     source: "codex-rollout",
+    runway: null,
   },
   short: null,
   credits: { balance: 12345, unlimited: false, capturedAt: null },
@@ -211,4 +213,67 @@ test("Codex HTTP failures, network errors and bad JSON resolve to null", async (
     json: async () => ({ v: 1 }),
   }));
   assert.equal(await fetchCodex(), null);
+});
+
+test("Codex outlook: dry before reset, lasts to reset, or nothing without a projection", () => {
+  const weekly = (runway, stale = false) =>
+    parseCodex({
+      ...LIVE,
+      weekly: { ...LIVE.weekly, usedFraction: 0.32, stale, runway },
+    }).weekly;
+  const dry = weekly({
+    burnPerHour: 0.0092,
+    historyHours: 36,
+    projectedAtReset: 1.72,
+    dryAt: "2026-10-06T14:40:04Z",
+  });
+  assert.deepEqual(dry.runway, {
+    burnPerHour: 0.0092,
+    historyHours: 36,
+    projectedAtReset: 1.72,
+    dryAt: "2026-10-06T14:40:04Z",
+  });
+  assert.equal(codexOutlook(dry, "America/Chicago"), "dry Tue 9:40 AM");
+  assert.equal(
+    codexOutlook(
+      weekly({
+        burnPerHour: 0.001,
+        historyHours: 72,
+        projectedAtReset: 0.5,
+        dryAt: null,
+      }),
+    ),
+    "lasts to reset",
+  );
+  // Unknown projection (too little history) or a stale reading says nothing; the reset time stays.
+  assert.equal(
+    codexOutlook(
+      weekly({
+        burnPerHour: null,
+        historyHours: 1,
+        projectedAtReset: null,
+        dryAt: null,
+      }),
+    ),
+    null,
+  );
+  assert.equal(
+    codexOutlook(
+      weekly(
+        {
+          burnPerHour: 0.01,
+          historyHours: 36,
+          projectedAtReset: 1.2,
+          dryAt: "2026-10-06T14:40:04Z",
+        },
+        true,
+      ),
+    ),
+    null,
+  );
+  // An older hub without the runway key parses to null, never a fabricated "lasts".
+  const { runway: _absent, ...older } = LIVE.weekly;
+  const parsedOlder = parseCodex({ ...LIVE, weekly: older }).weekly;
+  assert.equal(parsedOlder.runway, null);
+  assert.equal(codexOutlook(parsedOlder), null);
 });
