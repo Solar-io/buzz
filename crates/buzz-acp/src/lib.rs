@@ -9575,7 +9575,7 @@ mod error_outcome_emission_tests {
         let address = listener.local_addr().unwrap();
         let (tx, rx) = mpsc::channel(32);
         let task = tokio::spawn(async move {
-            let mut first = true;
+            let mut attempts = 0;
             loop {
                 let (mut socket, _) = listener.accept().await.unwrap();
                 let mut bytes = Vec::new();
@@ -9602,8 +9602,8 @@ mod error_outcome_emission_tests {
                 let event: nostr::Event =
                     serde_json::from_slice(&bytes[offset..offset + length]).unwrap();
                 event.verify().unwrap();
-                let status = if first && fail_first { 500 } else { 200 };
-                first = false;
+                let status = if attempts < 2 && fail_first { 500 } else { 200 };
+                attempts += 1;
                 socket.write_all(format!("HTTP/1.1 {status} Stub\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{{}}").as_bytes()).await.unwrap();
                 tx.send(event).await.unwrap();
             }
@@ -9716,7 +9716,15 @@ mod error_outcome_emission_tests {
             Some(path.clone()),
             auth_parking::now_secs(),
         );
-        drive_notice_failure(&mut restarted, &rest, batch).await;
+        drive_notice_failure(&mut restarted, &rest, batch.clone()).await;
+        receive_notice(&mut notices, &restarted, batch.channel_id).await;
+        let mut accepted_restart = startup_event_queue(
+            DedupMode::Queue,
+            300,
+            Some(path.clone()),
+            auth_parking::now_secs(),
+        );
+        drive_notice_failure(&mut accepted_restart, &rest, batch).await;
         assert!(
             tokio::time::timeout(Duration::from_millis(100), notices.recv())
                 .await
