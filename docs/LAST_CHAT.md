@@ -217,3 +217,8 @@ Description now supports multi-file Attach, file/image paste and drop using the 
 2026-10-03 — Hidden DM resurface
 
 Incoming kind-9/40002 messages restore other active hidden DM members asynchronously, with full relay-signed NIP-DV snapshots. Sender/later hides, duplicates, non-chat kinds and streams retain their state. A one-shot, tenant-resolved, 100-viewer worker repairs historical hides and retries stale snapshots; retained chat still qualifies after soft deletion. Source/test handoff: 847fada6e, 9e742679c, 0bcf72d3c, 9bd2b9200 and 1b19d1e1a. Eleven new PG tests, ten real NIP-DV cases, two built-relay startup checks and twenty compiling mutation kills pass. Final relay inventory 1,128 (1,051 pass / 77 ignored), DB 325 (113 pass / 212 ignored), test client 296 (6 pass / 290 ignored). Standard Clippy/build/fmt and just test pass; parent controls identify intermittent mesh echo 504 and the existing broader Clippy ordering error. [Handoff and rollout command](TEST_REPORTS/dm-resurface.md).
+
+
+2026-10-03 — OAuth-expired ACP batch recovery
+
+ACP retains auth-failed messages in a pubkey-keyed atomic journal, probes every 60 seconds without retry-budget cost, caps parking at six hours and posts one threaded notice per channel until success/dead-letter. Startup restores unexpired work with original receipt order and cancelled context. Queue and Drop modes share recovery; ordinary error/quota paths retain their behavior. 1,022 -> 1,032 units plus nine integrations, strict Clippy and fmt pass. Removing the new classifier arm fails the named regression; restored full suite passes. [Evidence and journal path](TEST_REPORTS/oauth-auth-parking.md).
