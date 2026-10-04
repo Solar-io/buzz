@@ -1,4 +1,4 @@
-import { Maximize2, Minimize2, X } from "lucide-react";
+import { ArrowLeft, Maximize2, Minimize2, X } from "lucide-react";
 import { lazy, Suspense, type ComponentProps, type CSSProperties } from "react";
 import { AgentActivityPanel } from "@/features/agents/ui/AgentActivityPanel";
 import { channelCanvasListed } from "@/features/canvas/lib/channelCanvas.ts";
@@ -196,6 +196,7 @@ export function RightPaneHost({
         data-expanded={expanded ? "true" : undefined}
         className={cn(
           "buzz-right-dock contents",
+          (canvasOn || layout.work === "open") && "buzz-work-canvas-dock",
           docks &&
             // Sticky + self-start: on a long view page the ROW scrolls, and
             // the dock must stay in the viewport rather than ride the page.
@@ -222,6 +223,20 @@ export function RightPaneHost({
             data-testid="right-pane-tabs"
             className="hidden h-11 shrink-0 items-center gap-1 border-b border-border bg-rail px-2 lg:flex"
           >
+            {tabs.includes("work") && (
+              <button
+                type="button"
+                className="buzz-overlay-back h-7.5 shrink-0 items-center gap-1 rounded-[7px] px-2 text-xs text-ink-2 hover:bg-accent hover:text-foreground"
+                onClick={() => {
+                  files?.show(false);
+                  onSelectTab("work");
+                  work.onCollapse();
+                }}
+              >
+                <ArrowLeft aria-hidden className="size-3.5" />
+                Back to chat
+              </button>
+            )}
             <div className="flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto [scrollbar-width:none]">
               {tabs.map((tab) => {
                 const selected = tab === strip.active;

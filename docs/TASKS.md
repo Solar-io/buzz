@@ -1,3 +1,9 @@
+- [x] OAuth parking QA round 2: accepted-delivery notice suppression, failed POST retry, startup constructor and real handler regressions; five named mutation kills. Optional process restart fixture skipped with rationale. [Receipt](TEST_REPORTS/oauth-auth-parking.md#round-2--accepted-notice-acknowledgement-and-production-wiring).
+- [x] OAuth-expired ACP turns: 60-second probes, six-hour cap, channel notice deduplication and atomic replay. 1,022 -> 1,032 units plus nine integrations pass; strict Clippy/fmt and named classifier mutation. [Receipt](TEST_REPORTS/oauth-auth-parking.md).
+- [x] x5fq4jncejx5 capture implementation: composer-backed Attach/paste/drop, cursor markdown, pending-create lock, 16-KiB body bound and signed-media Notes/lightbox. 4,421 -> 4,437 units; two Agent Brave workflows; seven unit mutations and a create-wire browser mutation. Authenticated relay acceptance requires an enrolled test identity. [Receipt](TEST_REPORTS/item-attachments.md).
+- [x] Web Work dock follow-up: Work/Canvas share the 320px usable minimum and 723px row overlay with Back to chat. Twelve painted sidebar/tab cases, eight named mutation failures, 4,421 units and 38 selected browser workflows pass. Evidence: [layout report](TEST_REPORTS/web-layout-bugs.md#work-dock-minimum-follow-up--2026-10-03).
+- [x] QA-WEB-LAYOUT-001: row-container queries progressively hide quick reactions, preserve More actions and contain the compact 32px toolbar. Four painted regressions, four named mutation failures, 4,421 units and 28 selected browser workflows pass. Evidence: [layout report](TEST_REPORTS/web-layout-bugs.md#qa-web-layout-001-follow-up).
+- [x] Web layout bugs vcrxm3xrk920 / je8htrkcvrcd: 400px conversation minimum, narrow-row Canvas overlay, neighbouring toolbar/input separation; 18 new browser regressions, six named mutation failures and Agent Brave before/after captures. Evidence: [layout report](TEST_REPORTS/web-layout-bugs.md).
 - [x] Work row context: title → own in-turn message → trigger/parent precedence, bounded history fetching, unit boundaries, two mutation kills, and desktop/phone fixtures.
 - [x] Parity W11a: Library tabs (Definitions, Teams, Catalog, Snapshots) and one New agent menu.
 - [x] Parity W11a: Blank create cards using existing create wire contract and built-in defaults; linked/team creation stays locked for P2.
@@ -197,6 +203,23 @@ W8a integration evidence: [current-main composition](TEST_REPORTS/parity-w8a.md#
 - [x] Record evidence and commit the integration in the provisioned branch.
 
 Evidence: [W9b2 current-main composition](TEST_REPORTS/parity-w9b2.md#w9b2-composition-with-current-main--2026-10-03).
+- [x] Huddle archive discovery: refresh kind:39000 and evict subscriptions after grace-fire archive, silently and best-effort.
+- [x] Huddle archive discovery: bounded, tenant-scoped, fail-open startup repair; prove selector, batching and idempotence.
+- [x] Huddle archive discovery: mutation proof, relay baseline/final counts, strict Clippy and committed handoff. Evidence: [report](TEST_REPORTS/huddle-archive-discovery.md).
+- [ ] Huddle archive discovery full-suite gate: unchanged `api::mesh_demo::tests::demo_join_forwarded_arm_round_trips_echo` returns 504 instead of 200 before and after this change; no approval to waive the gate.
+
+- [x] Huddle archive isolated runtime QA: HTTP readiness with correlated logs; Agent Brave parent-message golden path; real audio grace fire and signed archived metadata readback; owned-fixture cleanup. Sidebar transition/desktop acceptance is not established by this check.
+- [x] DM resurface: accepted kind-9/40002 messages clear other active DM members' hides and publish NIP-DV asynchronously; exclude duplicates and non-message/stream events.
+- [x] DM resurface: bounded, tenant-scoped startup backfill for messages newer than hidden_at; idempotence and snapshot-publication retries.
+- [x] DM resurface: isolated Postgres regressions, NIP-DV relay E2E, before/after crate counts and named mutation failures.
+- [x] DM resurface: fork manifest, NIP-DV extension, committed coding handoff and exact deployment command.
+
+
+## ACP account-aware quota routing (2026-10-04)
+
+- [x] Account-scoped reset parsing, shared atomic pool-status file and routing.
+- [x] Quota and pre-turn rerouting through the existing overflow respawn path.
+- [x] Full ACP suite, release build and incident mutation receipt ([report](TEST_REPORTS/auth-pool-account-aware.md)).
 
 ## Web sidebar order QA (2026-10-03)
 

@@ -1,4 +1,8 @@
+Item capture descriptions support composer-backed picker/paste/drop, bounded cursor markdown and authenticated timeline media rendering. The kind-30623 body is carried through create. 4,437 units and two Agent Brave fixture workflows pass; enrolled relay acceptance remains a separate check. [Attachment receipt](TEST_REPORTS/item-attachments.md).
+
 Work rows resolve an agent's own kind-9 message within the turn window after a 30624 title. Short trigger asks recover their NIP-10 parent. WorkProvider uses bounded, debounced history requests, closed on EOSE; only running query keys renew each minute.
+
+Work and Canvas share a 320px usable dock minimum and the existing 723px shell-row overlay query. Narrow rows retain both tabs and an explicit Back to chat control that closes Canvas and folds Work; widening restores the stored width. Twelve painted sidebar/tab cases, eight named mutation failures, 4,421 units and the restored 38-case browser selection prove the follow-up. [Work dock evidence](TEST_REPORTS/web-layout-bugs.md#work-dock-minimum-follow-up--2026-10-03).
 
 W1 adds the channel settings sheet and About controls: name, purpose, visibility, lifetime, archive/unarchive, join/leave/delete, Canvas and local templates. Members and Workflows remain phase placeholders. Archived channels disable the main composer and inline replies. Evidence and the live-relay acceptance boundary are recorded in TEST_REPORTS/parity-w1.md.
 
@@ -51,3 +55,28 @@ Vitals exposes each pool account's first empty time, handoff and next-reset usag
 W9b2 adds Identity, patch-only blind Environment variables and confirmed Remove cards to the agent screen, with phone sub-pages and desktop acknowledgements. The legacy page paths are retired while Library/creation/roster consumers remain reachable. 4,345 → 4,357 unit tests, nine source reversions with fixed 12-test counts and five W9b2 built-app smoke cases cover the change. [Evidence](TEST_REPORTS/parity-w9b2.md).
 
 W9b2 composes Identity/Environment/Remove and legacy-page retirement with W8a's roster table and P0 presence locks. Library extras, guarded creation, footer and navigation are retained. Validation: 4,421 web units, typecheck, 39-file Biome, build, 50 requested browser cases and a named lock-withdrawal failure followed by a restored pass. [Composition receipt](TEST_REPORTS/parity-w9b2.md#w9b2-composition-with-current-main--2026-10-03).
+
+Huddle grace-fire archives refresh relay-signed NIP-29 discovery and evict channel subscriptions without a system message. A one-shot startup worker repairs stale archived metadata in tenant-scoped batches of 100, logs counts, and tolerates errors. All 18 Postgres-backed huddle regressions and 13 binary tests pass; both required mechanism mutations fail their named tests. Strict relay Clippy and formatting pass. The full relay suite retains its baseline mesh echo failure. [Evidence](TEST_REPORTS/huddle-archive-discovery.md).
+
+Huddle archive runtime QA exercised the built relay and web UI on an isolated test database: HTTP readiness, browser parent messaging and real audio grace-fire metadata readback pass. Live sidebar transition and physical desktop acceptance remain unmeasured. See the runtime receipt in TEST_REPORTS/huddle-archive-discovery.md.
+
+Web conversation layout fixes protect 400px of chat beside the dock (including a return to Work), overlay Canvas when the resized shell row cannot hold both panes, and keep message actions within their row above adjacent thread reply inputs. The existing phone document sheets and explicit full-row expansion remain. Browser geometry regressions live in web/tests/e2e/conversation-layout.spec.ts. Both full unit runs have 4,421 passing tests; 24 selected browser workflows pass after six named mutation failures. [Evidence and unchanged baseline lint errors](TEST_REPORTS/web-layout-bugs.md).
+
+QA-WEB-LAYOUT-001 adds row-container queries that progressively hide quick reactions while preserving More actions, plus a bounded 32px compact toolbar. Four additional painted cases prove narrow-chat button bounds, real reaction publication/echo and progressive restoration across widths. The 28 selected browser cases and 4,421 units pass; withdrawing containment and compact padding fails four named cases. [Follow-up evidence](TEST_REPORTS/web-layout-bugs.md#qa-web-layout-001-follow-up).
+
+DM chat acceptance (kind 9/40002) asynchronously restores every other active hidden member and publishes the full NIP-DV snapshot. A bounded startup repair handles historical messages and stale snapshot retries, preserving sender and later hides. Eleven new PG tests, ten live NIP-DV cases and twenty compiling mutation failures cover the mechanisms; final full relay/DB tests and scoped standard Clippy pass. The existing broader Clippy ordering error reproduces on the parent. [Evidence](TEST_REPORTS/dm-resurface.md).
+
+
+2026-10-03 — OAuth-expired ACP batch recovery
+
+ACP retains auth-failed messages in a pubkey-keyed atomic journal, probes every 60 seconds without retry-budget cost, caps parking at six hours and posts one threaded notice per channel until success/dead-letter. Startup restores unexpired work with original receipt order and cancelled context. Queue and Drop modes share recovery; ordinary error/quota paths retain their behavior. 1,022 -> 1,032 units plus nine integrations, strict Clippy and fmt pass. Removing the new classifier arm fails the named regression; restored full suite passes. [Evidence and journal path](TEST_REPORTS/oauth-auth-parking.md).
+
+
+2026-10-03 — OAuth parking QA round 2
+
+Auth notices now persist suppression after signed HTTP publication returns `accepted:true`; failures clear the pending token and retry on a probe or journal reconstruction. The startup queue constructor and actual result-handler notice gate have named regressions. Three added tests give 1,035 units plus nine integrations; startup-load removal, handler gate bypass, early suppression, classifier-arm removal and ignoring HTTP 200 refusal each fail a named test. Strict Clippy/fmt and restored suite receipts are in [the OAuth report](TEST_REPORTS/oauth-auth-parking.md#round-2--accepted-notice-acknowledgement-and-production-wiring). A binary kill/restart fixture exceeds the bounded fixture scope; combined ACP-process restart acceptance remains unverified.
+
+
+### ACP account-aware quota routing — 2026-10-04
+
+Quota routing uses shared account reset deadlines, actual slot attribution and pre-turn rerouting. ACP verification: 1,035 → 1,043 units plus nine integrations; release build, strict Clippy and formatting pass. [Evidence](TEST_REPORTS/auth-pool-account-aware.md).

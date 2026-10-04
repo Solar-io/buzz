@@ -1907,6 +1907,68 @@ pub async fn reap_expired_ephemeral_channels(pool: &PgPool) -> Result<Vec<Reaped
         .collect()
 }
 
+/// An archived channel whose relay-signed discovery metadata needs refreshing.
+#[derive(Debug)]
+pub struct ArchivedChannelDiscovery {
+    /// Community that owns the channel.
+    pub community_id: CommunityId,
+    /// Server-resolved host for the community.
+    pub host: String,
+    /// Archived channel UUID.
+    pub channel_id: Uuid,
+}
+
+/// Page through archived, non-deleted channels whose latest relay metadata
+/// does not advertise `archived=true` (including channels with no metadata).
+/// The community/channel cursor advances past failed repairs without retrying
+/// them forever; successful repairs no longer match on the next startup.
+pub async fn archived_channels_missing_discovery(
+    pool: &PgPool,
+    relay_pubkey: &[u8],
+    after: Option<(Uuid, Uuid)>,
+    limit: i64,
+) -> Result<Vec<ArchivedChannelDiscovery>> {
+    let rows = sqlx::query(
+        r#"
+        SELECT ch.community_id, c.host, ch.id
+        FROM channels ch
+        JOIN communities c ON c.id = ch.community_id
+        LEFT JOIN LATERAL (
+            SELECT e.tags
+            FROM events e
+            WHERE e.community_id = ch.community_id
+              AND e.kind = $1 AND e.pubkey = $2 AND e.d_tag = ch.id::text
+              AND e.deleted_at IS NULL
+            ORDER BY e.created_at DESC, e.id ASC
+            LIMIT 1
+        ) latest ON true
+        WHERE ch.archived_at IS NOT NULL AND ch.deleted_at IS NULL
+          AND c.archived_at IS NULL AND community_write_allowed(ch.community_id)
+          AND NOT COALESCE(latest.tags @> '[["archived","true"]]'::jsonb, false)
+          AND ($3::uuid IS NULL OR (ch.community_id, ch.id) > ($3, $4::uuid))
+        ORDER BY ch.community_id, ch.id
+        LIMIT $5
+        "#,
+    )
+    .bind(buzz_core::kind::KIND_NIP29_GROUP_METADATA as i32)
+    .bind(relay_pubkey)
+    .bind(after.map(|cursor| cursor.0))
+    .bind(after.map(|cursor| cursor.1))
+    .bind(limit.clamp(1, 100))
+    .fetch_all(pool)
+    .await?;
+
+    rows.into_iter()
+        .map(|row| {
+            Ok(ArchivedChannelDiscovery {
+                community_id: CommunityId::from_uuid(row.try_get("community_id")?),
+                host: row.try_get("host")?,
+                channel_id: row.try_get("id")?,
+            })
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

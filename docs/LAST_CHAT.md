@@ -178,3 +178,59 @@ Identity/upload, linked Library entry, patch-only environment rows and confirmed
 2026-10-03 — W9b2 current-main composition
 
 Source `5e66e7718` composes W9b2 parent `14a53f7b1` with main parent `775f6db5f`. AgentManagementSection now uses W8a RosterTable with P0 presence controlLock; the duplicate AgentRosterList is removed and its shared working dot lives in AgentWorkingDot. All Library/create/footer/navigation/cards and both parents' Playwright registrations are preserved. 4,421 units and 50 requested browser cases pass, as do TypeScript, 39-file Biome and build. Withdrawing the composed lock fails the named row-disable case; exact restoration/rebuild passes. The first combined run had one pre-assertion navigation timeout; the unchanged named and full reruns pass. [Full receipt](TEST_REPORTS/parity-w9b2.md#w9b2-composition-with-current-main--2026-10-03).
+
+2026-10-03 — Huddle archive discovery
+
+Grace-fire archives now refresh kind:39000 and evict channel subscriptions, preserving the end outcome and normal-call silence. Startup reconciliation repairs archived, non-deleted channels using database-resolved community/host contexts, keyset pagination and 100-row batches; errors are logged and the worker never blocks startup. The fork manifest separates the upstreamable grace fix from the fork-local backfill.
+
+Library inventory: 1,115 before, 1,119 after (four added Postgres-gated tests, explicitly executed). Serial baseline and final both have 1,050 passes and the same mesh echo failure; ignored counts are 64 and 68. All 18 huddle tests and 13 binary tests pass after restoration. Removing the emit call and removing the selector archived-tag predicate each fail their named test with the full inventory unchanged at 1,119. Strict Clippy and formatting pass. Full-suite completion remains blocked by the unchanged mesh test; no gate waiver was approved. Scope excludes deployment, live-database access and canonical-checkout writes. [Commands and receipts](TEST_REPORTS/huddle-archive-discovery.md).
+
+2026-10-03 — Huddle archive runtime QA
+
+The rebuilt worktree relay returned readiness HTTP 200 with {"status":"ready"}; request-specific GET logs show status 200 and 11 ms. Agent Brave manual sign-in, private parent selection and message send rendered, and the persisted message was read back. A real audio join/disconnect triggered the 30 s grace and a valid archived=true kind:39000. The web transport room was already TTL-filtered, so live sidebar disappearance and desktop acceptance are not claimed. Optional host-stats CSP errors were observed; no page exceptions. Owned tab/process/container/database and generated key fixtures were cleaned up. [Runtime receipt](TEST_REPORTS/huddle-archive-discovery.md#isolated-runtime-qa).
+
+2026-10-03 — Web layout bugs vcrxm3xrk920 / je8htrkcvrcd
+
+Canvas width is capped against the shell row after the resizable sidebar, reserving 400px chat and the resize handle; a row below 723px uses the existing pane as an overlay. Phone sheets and explicit expansion retain their paths. Hover toolbars no longer translate above their message, protecting the preceding open thread reply box. Painted regression coverage is in web/tests/e2e/conversation-layout.spec.ts; evidence is collected under .scratch/layout-bugs/.
+
+Web layout verification: 4,421 units before/after; typecheck/build, five-file Biome and original-base file-size check pass. Full lint retains its two baseline errors. All 18 new painted regressions and six related Canvas workflows pass after three compiling mutations fail six named tests. Agent Brave captured both bugs at 1440/1280/1054/900 and proved reply input clicks, sidebar-driven overlay and explicit expansion; its owned tab and local server are closed. The runner used the supported headed fallback after Brave WebSocket canary failure. See TEST_REPORTS/web-layout-bugs.md for commits, counts, exact commands and .scratch/layout-bugs/ receipts.
+
+2026-10-03 — QA-WEB-LAYOUT-001 narrow toolbar follow-up
+
+Source `a286ae533` uses message-row container queries to drop quick reactions progressively, preserves More actions, bounds narrow toolbars and reduces padding for a 32px compact bar. Four new painted cases in conversation-layout.spec.ts cover both palettes: every visible 1054px/Canvas action lies inside chat and receives pointer input; clicking 👍 emits the correct kind-7 event and renders its echoed chip; grouped bars remain within their rows while quick reactions restore as width grows.
+
+4,421 units, typecheck, four-file Biome, file-size and build pass. The restored original E2E selection passes 28/28 in headed fallback. Reverting the containment fix fails both named 1054px cases at x=152.31 against chat x=263; restoring 3px padding fails both compact cases at height 36px against 32px. Agent Brave independently paints/clicks the built fixture UI; its owned tab and preview process are closed. All mutations match the committed source after restoration. See TEST_REPORTS/web-layout-bugs.md#qa-web-layout-001-follow-up and .scratch/layout-toolbar/ for receipts. The existing live-relay acceptance boundary remains separate from this coding follow-up.
+
+2026-10-03 — Work dock usable minimum
+
+Source 5efb88b7f shares the existing 320px Work/Canvas minimum and 723px row-query overlay. Narrow Work now overlays rather than clipping beside 400px chat. Back to chat closes Canvas, selects Work and folds the rail; both tabs stay reachable, folded reopening works, and widening restores the preferred width.
+
+Twelve painted tab/sidebar cases replace two Canvas-only cases. Baseline reproduces squeezed Work and missing Back. Three rebuilt mechanism mutations produce eight named failures with unchanged selection counts. Restored source matches the commit and 38 selected browser workflows pass. All 4,421 units, TypeScript, build, touched-file Biome and the baseline-based size gate pass. Agent Brave WebSocket canary timed out, so the documented isolated headed fallback supplied the painted runs and inspected screenshots. Receipts: .scratch/work-dock/ and logs/verification.log. Report: TEST_REPORTS/web-layout-bugs.md#work-dock-minimum-follow-up--2026-10-03.
+
+
+2026-10-03 — Item capture attachments x5fq4jncejx5
+
+Description now supports multi-file Attach, file/image paste and drop using the shared composer queue, transport and tray. Completion inserts filename markdown at the live selection; pending uploads lock create, body updates enforce 16,384 UTF-8 bytes, and removed/closed uploads cannot insert later. Expanded Notes uses the timeline signed-media/lightbox renderer; no body edit view exists. The Web chat client manifest row carries the change.
+
+4,421 -> 4,437 units, typecheck/build, eleven-file Biome and the base-relative size gate pass. Full lint retains two baseline errors. Seven unit mechanism withdrawals fail named tests at 16 cases; the create-wire body mutation fails its single browser case. Restored direct Agent Brave workflows pass at 1440/390, with six inspected screenshots. MCP sign-in actionability timeouts supply no acceptance claim; relay/media responses in the passing checks were mocked because this shell lacks an enrolled signer. See TEST_REPORTS/item-attachments.md and logs/verification.log for handoff details and raw paths.
+
+2026-10-03 — Hidden DM resurface
+
+Incoming kind-9/40002 messages restore other active hidden DM members asynchronously, with full relay-signed NIP-DV snapshots. Sender/later hides, duplicates, non-chat kinds and streams retain their state. A one-shot, tenant-resolved, 100-viewer worker repairs historical hides and retries stale snapshots; retained chat still qualifies after soft deletion. Source/test handoff: 847fada6e, 9e742679c, 0bcf72d3c, 9bd2b9200 and 1b19d1e1a. Eleven new PG tests, ten real NIP-DV cases, two built-relay startup checks and twenty compiling mutation kills pass. Final relay inventory 1,128 (1,051 pass / 77 ignored), DB 325 (113 pass / 212 ignored), test client 296 (6 pass / 290 ignored). Standard Clippy/build/fmt and just test pass; parent controls identify intermittent mesh echo 504 and the existing broader Clippy ordering error. [Handoff and rollout command](TEST_REPORTS/dm-resurface.md).
+
+
+2026-10-03 — OAuth-expired ACP batch recovery
+
+ACP retains auth-failed messages in a pubkey-keyed atomic journal, probes every 60 seconds without retry-budget cost, caps parking at six hours and posts one threaded notice per channel until success/dead-letter. Startup restores unexpired work with original receipt order and cancelled context. Queue and Drop modes share recovery; ordinary error/quota paths retain their behavior. 1,022 -> 1,032 units plus nine integrations, strict Clippy and fmt pass. Removing the new classifier arm fails the named regression; restored full suite passes. [Evidence and journal path](TEST_REPORTS/oauth-auth-parking.md).
+
+
+2026-10-03 — OAuth parking QA round 2
+
+Auth notices now persist suppression after signed HTTP publication returns `accepted:true`; failures clear the pending token and retry on a probe or journal reconstruction. The startup queue constructor and actual result-handler notice gate have named regressions. Three added tests give 1,035 units plus nine integrations; startup-load removal, handler gate bypass, early suppression, classifier-arm removal and ignoring HTTP 200 refusal each fail a named test. Strict Clippy/fmt and restored suite receipts are in [the OAuth report](TEST_REPORTS/oauth-auth-parking.md#round-2--accepted-notice-acknowledgement-and-production-wiring). A binary kill/restart fixture exceeds the bounded fixture scope; combined ACP-process restart acceptance remains unverified.
+
+
+2026-10-04 — ACP account-aware quota failover
+
+Actual slot accounts are marked out with timezone-parsed reset deadlines. Account availability lives in `.buzz/state/pool-status.json` (`BUZZ_POOL_STATUS_PATH` override), using the existing claims sidecar lock plus atomic replacement. Routing rereads shared state, prefers assigned, otherwise an available sibling, otherwise earliest reset. Repeated errors retain the earlier active deadline to prevent sliding fallback deadlines causing flip loops. Pre-turn checks preserve even Drop-mode batches and request the existing crash-free overflow respawn before any session RPC. Ledger records mark_out, flip, return_assigned and all_out with exact deadlines.
+
+1,035 → 1,043 units and nine integrations pass; final release build, strict Clippy and formatting pass. Replacing actual-slot attribution with assigned attribution fails `auth_pool::tests::incident_quota_on_a_returns_to_available_b` (FlipTo A instead of B), with one test executed and 1,042 filtered; restored full inventory remains 1,043. [Handoff and receipts](TEST_REPORTS/auth-pool-account-aware.md).

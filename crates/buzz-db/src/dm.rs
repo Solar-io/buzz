@@ -10,6 +10,7 @@ use uuid::Uuid;
 
 use crate::channel::ChannelRecord;
 use crate::error::{DbError, Result};
+use buzz_core::kind::{KIND_DM_VISIBILITY, KIND_STREAM_MESSAGE, KIND_STREAM_MESSAGE_V2};
 use buzz_core::CommunityId;
 
 // -- Public structs -----------------------------------------------------------
@@ -36,6 +37,17 @@ pub struct DmParticipant {
     pub display_name: Option<String>,
     /// Member role string (always "member" for DMs).
     pub role: String,
+}
+
+/// A viewer whose DM hide state or published snapshot needs startup repair.
+#[derive(Debug)]
+pub struct DmVisibilityRepair {
+    /// Community owning the membership and snapshot.
+    pub community_id: CommunityId,
+    /// Server-resolved host used to bind the repair's tenant.
+    pub host: String,
+    /// Viewer whose full NIP-DV snapshot must be refreshed.
+    pub pubkey: Vec<u8>,
 }
 
 // -- Pure helpers -------------------------------------------------------------
@@ -389,6 +401,126 @@ pub async fn open_dm(
 
 // -- Hide / unhide ------------------------------------------------------------
 
+/// Clear hides for other active members of a non-deleted DM after a newly
+/// accepted chat message. Return only changed viewers; preserve hides made
+/// after acceptance, including while this background operation was queued.
+pub async fn unhide_dm_recipients(
+    pool: &PgPool,
+    community_id: CommunityId,
+    channel_id: Uuid,
+    sender: &[u8],
+    accepted_at: DateTime<Utc>,
+) -> Result<Vec<Vec<u8>>> {
+    Ok(sqlx::query_scalar(
+        r#"
+        UPDATE channel_members cm SET hidden_at = NULL
+        FROM channels ch
+        WHERE cm.community_id = $1 AND cm.channel_id = $2
+          AND ch.community_id = cm.community_id AND ch.id = cm.channel_id
+          AND ch.channel_type = 'dm' AND ch.deleted_at IS NULL
+          AND cm.pubkey <> $3 AND cm.removed_at IS NULL
+          AND cm.hidden_at IS NOT NULL AND cm.hidden_at <= $4
+        RETURNING cm.pubkey
+        "#,
+    )
+    .bind(community_id.as_uuid())
+    .bind(channel_id)
+    .bind(sender)
+    .bind(accepted_at)
+    .fetch_all(pool)
+    .await?)
+}
+
+/// Clear this viewer's active DM hides when another participant's stored chat
+/// message was created strictly after the hide. Recheck the predicate at the
+/// update, so a fresh hide racing startup is preserved. Returns changed IDs.
+pub async fn unhide_dms_with_new_messages(
+    pool: &PgPool,
+    community_id: CommunityId,
+    viewer: &[u8],
+) -> Result<Vec<Uuid>> {
+    Ok(sqlx::query_scalar(
+        r#"
+        UPDATE channel_members cm SET hidden_at = NULL
+        FROM channels ch
+        WHERE cm.community_id = $1 AND cm.pubkey = $2
+          AND ch.community_id = cm.community_id AND ch.id = cm.channel_id
+          AND ch.channel_type = 'dm' AND ch.deleted_at IS NULL
+          AND cm.removed_at IS NULL AND cm.hidden_at IS NOT NULL
+          AND EXISTS (
+              SELECT 1 FROM events e
+              WHERE e.community_id = cm.community_id AND e.channel_id = cm.channel_id
+                AND e.kind = ANY($3) AND e.pubkey <> cm.pubkey
+                AND e.created_at > cm.hidden_at
+          )
+        RETURNING cm.channel_id
+        "#,
+    )
+    .bind(community_id.as_uuid())
+    .bind(viewer)
+    .bind([KIND_STREAM_MESSAGE as i32, KIND_STREAM_MESSAGE_V2 as i32].as_slice())
+    .fetch_all(pool)
+    .await?)
+}
+
+/// Page through viewers needing message-based unhide or a stale-snapshot
+/// retry. The latter keeps publication failures repairable after the hide
+/// has already been cleared. Only the latest snapshot by this relay counts;
+/// archived/write-blocked communities and removed/deleted memberships do not.
+pub async fn dm_visibility_repair_candidates(
+    pool: &PgPool,
+    relay_pubkey: &[u8],
+    after: Option<(Uuid, Vec<u8>)>,
+    limit: i64,
+) -> Result<Vec<DmVisibilityRepair>> {
+    let rows = sqlx::query(
+        r#"
+        SELECT DISTINCT cm.community_id, c.host, cm.pubkey
+        FROM channel_members cm
+        JOIN channels ch ON ch.community_id = cm.community_id AND ch.id = cm.channel_id
+        JOIN communities c ON c.id = cm.community_id
+        LEFT JOIN LATERAL (
+            SELECT e.tags FROM events e
+            WHERE e.community_id = cm.community_id AND e.kind = $1
+              AND e.pubkey = $2 AND e.d_tag = encode(cm.pubkey, 'hex')
+              AND e.deleted_at IS NULL
+            ORDER BY e.created_at DESC, e.id ASC LIMIT 1
+        ) latest ON true
+        WHERE ch.channel_type = 'dm' AND ch.deleted_at IS NULL AND cm.removed_at IS NULL
+          AND c.archived_at IS NULL AND community_write_allowed(cm.community_id)
+          AND ($3::uuid IS NULL OR (cm.community_id, cm.pubkey) > ($3, $4::bytea))
+          AND (
+              (cm.hidden_at IS NOT NULL AND EXISTS (
+                  SELECT 1 FROM events e
+                  WHERE e.community_id = cm.community_id AND e.channel_id = cm.channel_id
+                    AND e.kind = ANY($5) AND e.pubkey <> cm.pubkey
+                    AND e.created_at > cm.hidden_at
+              ))
+              OR (cm.hidden_at IS NULL AND latest.tags @>
+                  jsonb_build_array(jsonb_build_array('h', cm.channel_id::text)))
+          )
+        ORDER BY cm.community_id, cm.pubkey LIMIT $6
+        "#,
+    )
+    .bind(KIND_DM_VISIBILITY as i32)
+    .bind(relay_pubkey)
+    .bind(after.as_ref().map(|cursor| cursor.0))
+    .bind(after.as_ref().map(|cursor| cursor.1.as_slice()))
+    .bind([KIND_STREAM_MESSAGE as i32, KIND_STREAM_MESSAGE_V2 as i32].as_slice())
+    .bind(limit.clamp(1, 100))
+    .fetch_all(pool)
+    .await?;
+    rows.into_iter()
+        .map(|row| {
+            Ok(DmVisibilityRepair {
+                community_id: CommunityId::from_uuid(row.try_get("community_id")?),
+                host: row.try_get("host")?,
+                pubkey: row.try_get("pubkey")?,
+            })
+        })
+        .collect()
+}
+
 /// Hide a DM for a specific user by setting `hidden_at = NOW()`.
 ///
 /// The DM is not deleted — it can be restored by opening a new DM with the
@@ -553,5 +685,193 @@ mod tests {
         let b = [255u8; 32];
         let h = compute_participant_hash(&[&a, &b]);
         assert_eq!(h.len(), 32);
+    }
+
+    async fn test_community(pool: &PgPool) -> CommunityId {
+        crate::migration::run_migrations(pool).await.unwrap();
+        let id = Uuid::new_v4();
+        sqlx::query("INSERT INTO communities (id, host) VALUES ($1, $2)")
+            .bind(id)
+            .bind(format!("dm-db-{id}.example"))
+            .execute(pool)
+            .await
+            .unwrap();
+        CommunityId::from_uuid(id)
+    }
+
+    #[sqlx::test(migrations = false)]
+    #[ignore = "requires Postgres"]
+    async fn unhide_recipients_preserves_sender_removed_new_hides_streams_and_tenants(
+        pool: PgPool,
+    ) {
+        let community = test_community(&pool).await;
+        let sender = [1; 32];
+        let peer = [2; 32];
+        let removed = [3; 32];
+        let later_hide = [4; 32];
+        let dm = create_dm(
+            &pool,
+            community,
+            &[&sender, &peer, &removed, &later_hide],
+            &sender,
+        )
+        .await
+        .unwrap();
+        sqlx::query("UPDATE channel_members SET hidden_at = NOW() - INTERVAL '1 minute' WHERE community_id = $1 AND channel_id = $2")
+            .bind(community.as_uuid()).bind(dm.id).execute(&pool).await.unwrap();
+        sqlx::query("UPDATE channel_members SET removed_at = NOW() WHERE community_id = $1 AND channel_id = $2 AND pubkey = $3")
+            .bind(community.as_uuid()).bind(dm.id).bind(removed.as_slice()).execute(&pool).await.unwrap();
+        let accepted_at = Utc::now();
+        sqlx::query("UPDATE channel_members SET hidden_at = $4 WHERE community_id = $1 AND channel_id = $2 AND pubkey = $3")
+            .bind(community.as_uuid()).bind(dm.id).bind(later_hide.as_slice()).bind(accepted_at + chrono::Duration::seconds(1)).execute(&pool).await.unwrap();
+        assert!(unhide_dm_recipients(
+            &pool,
+            CommunityId::from_uuid(Uuid::new_v4()),
+            dm.id,
+            &sender,
+            accepted_at
+        )
+        .await
+        .unwrap()
+        .is_empty());
+        assert_eq!(
+            unhide_dm_recipients(&pool, community, dm.id, &sender, accepted_at)
+                .await
+                .unwrap(),
+            vec![peer.to_vec()]
+        );
+        let remaining: Vec<Vec<u8>> = sqlx::query_scalar("SELECT pubkey FROM channel_members WHERE community_id = $1 AND channel_id = $2 AND hidden_at IS NOT NULL ORDER BY pubkey")
+            .bind(community.as_uuid()).bind(dm.id).fetch_all(&pool).await.unwrap();
+        assert_eq!(
+            remaining,
+            vec![sender.to_vec(), removed.to_vec(), later_hide.to_vec()]
+        );
+        assert!(
+            unhide_dm_recipients(&pool, community, dm.id, &sender, accepted_at)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        // The SQL itself must defend against a stale/wrong channel type hint.
+        sqlx::query(
+            "UPDATE channels SET channel_type = 'stream' WHERE community_id = $1 AND id = $2",
+        )
+        .bind(community.as_uuid())
+        .bind(dm.id)
+        .execute(&pool)
+        .await
+        .unwrap();
+        assert!(unhide_dm_recipients(
+            &pool,
+            community,
+            dm.id,
+            &peer,
+            Utc::now() + chrono::Duration::seconds(2)
+        )
+        .await
+        .unwrap()
+        .is_empty());
+    }
+
+    #[sqlx::test(migrations = false)]
+    #[ignore = "requires Postgres"]
+    async fn backfill_only_new_peer_chat_in_active_dms_and_is_idempotent(pool: PgPool) {
+        use nostr::{EventBuilder, Keys, Kind, Timestamp};
+        let community = test_community(&pool).await;
+        let viewer = Keys::generate();
+        let viewer_pk = viewer.public_key().to_bytes();
+        let db = crate::Db::from_pool(pool.clone());
+        let hide_secs = Timestamp::now().as_secs() - 120;
+        let hidden_at = DateTime::from_timestamp(hide_secs as i64, 0).unwrap();
+        let mut expected = Vec::new();
+        let mut preserved = Vec::new();
+        for (i, kind) in [
+            9, 40002, 7, 40003, 9005, 5, 9000, 44100, 40099, 9, 9, 9, 9, 9, 9, 9,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let sender = Keys::generate();
+            let dm = create_dm(
+                &pool,
+                community,
+                &[&viewer_pk, &sender.public_key().to_bytes()],
+                &viewer_pk,
+            )
+            .await
+            .unwrap();
+            sqlx::query("UPDATE channel_members SET hidden_at = $4 WHERE community_id = $1 AND channel_id = $2 AND pubkey = $3")
+                .bind(community.as_uuid()).bind(dm.id).bind(viewer_pk.as_slice()).bind(hidden_at).execute(&pool).await.unwrap();
+            let signer = if i == 9 { &viewer } else { &sender };
+            let secs = match i {
+                10 => hide_secs - 1,
+                11 => hide_secs,
+                _ => hide_secs + 1,
+            };
+            let msg = EventBuilder::new(Kind::Custom(kind), "backfill fixture")
+                .custom_created_at(Timestamp::from(secs))
+                .sign_with_keys(signer)
+                .unwrap();
+            db.insert_event(community, &msg, Some(dm.id)).await.unwrap();
+            match i {
+                12 => {
+                    sqlx::query("UPDATE channels SET channel_type = 'stream' WHERE community_id = $1 AND id = $2").bind(community.as_uuid()).bind(dm.id).execute(&pool).await.unwrap();
+                }
+                13 => {
+                    sqlx::query("UPDATE channel_members SET removed_at = NOW() WHERE community_id = $1 AND channel_id = $2 AND pubkey = $3").bind(community.as_uuid()).bind(dm.id).bind(viewer_pk.as_slice()).execute(&pool).await.unwrap();
+                }
+                14 => {
+                    sqlx::query("UPDATE channels SET deleted_at = NOW() WHERE community_id = $1 AND id = $2").bind(community.as_uuid()).bind(dm.id).execute(&pool).await.unwrap();
+                }
+                15 => {
+                    sqlx::query(
+                        "UPDATE events SET deleted_at = NOW() WHERE community_id = $1 AND id = $2",
+                    )
+                    .bind(community.as_uuid())
+                    .bind(msg.id.as_bytes().as_slice())
+                    .execute(&pool)
+                    .await
+                    .unwrap();
+                }
+                _ => {}
+            }
+            if i < 2 || i == 15 {
+                expected.push(dm.id);
+            } else {
+                preserved.push(dm.id);
+            }
+        }
+        let relay = Keys::generate();
+        let candidates =
+            dm_visibility_repair_candidates(&pool, &relay.public_key().to_bytes(), None, 100)
+                .await
+                .unwrap();
+        assert_eq!(candidates.len(), 1, "deduplicate viewers across DMs");
+        assert_eq!(candidates[0].pubkey, viewer_pk);
+        assert_eq!(candidates[0].community_id, community);
+        let mut changed = unhide_dms_with_new_messages(&pool, community, &viewer_pk)
+            .await
+            .unwrap();
+        changed.sort();
+        expected.sort();
+        assert_eq!(
+            changed, expected,
+            "only the two chat kinds after the hide qualify"
+        );
+        for dm in preserved {
+            let hidden: bool = sqlx::query_scalar("SELECT hidden_at IS NOT NULL FROM channel_members WHERE community_id = $1 AND channel_id = $2 AND pubkey = $3")
+                .bind(community.as_uuid()).bind(dm).bind(viewer_pk.as_slice()).fetch_one(&pool).await.unwrap();
+            assert!(hidden, "excluded fixture {dm} must keep its hide");
+        }
+        assert!(unhide_dms_with_new_messages(&pool, community, &viewer_pk)
+            .await
+            .unwrap()
+            .is_empty());
+        assert!(
+            dm_visibility_repair_candidates(&pool, &relay.public_key().to_bytes(), None, 100)
+                .await
+                .unwrap()
+                .is_empty()
+        );
     }
 }

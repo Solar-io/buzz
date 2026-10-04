@@ -3748,6 +3748,10 @@ async fn ingest_event_inner(
     // attributed to its signer. Background; free for non-ephemeral channels.
     crate::audio::transcript::spawn_live_call_line(state, tenant, channel_row.as_ref(), &event);
 
+    // Only newly stored events reach this point. Best-effort background work
+    // lets an incoming chat message restore other participants' hidden DMs.
+    super::dm_visibility::spawn_dm_resurface(state, tenant, channel_row.as_ref(), &event);
+
     info!(event_id = %event_id_hex, kind = kind_u32, "Event ingested via pipeline");
 
     Ok(IngestResult {

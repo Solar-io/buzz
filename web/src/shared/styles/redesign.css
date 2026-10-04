@@ -114,3 +114,85 @@
     border-left-width: 0;
   }
 }
+
+/* Measure the space after the resizable sidebar, rather than the viewport.
+   Each dock leaves 400px for conversation and 3px for its handle, including
+   Work when the viewer switches back from Canvas (they share a stored width).
+   Work and Canvas share the 320px minimum in workPrefs.ts (WORK_WIDTH_MIN).
+   Below 400 + 320 + 3px either pane overlays the row; Back to chat folds it.
+   Below lg, the existing document sheets still take over. */
+.buzz-content-scrollbar {
+  container: shell-row / inline-size;
+}
+.buzz-overlay-back {
+  display: none;
+}
+
+/* A wide viewport can still have narrow messages beside Canvas or inside an
+   indented thread. Keep quick reactions in priority order as the row shrinks;
+   Add reaction and More actions stay reachable. rem thresholds scale with the
+   buttons. Wrapping is the last resort for exceptionally narrow rows. */
+.buzz-message-row {
+  container: message-row / inline-size;
+}
+.buzz-message-actions {
+  max-width: calc(100% - 1.25rem);
+}
+@container message-row (width < 24rem) {
+  .buzz-quick-reactions > button:nth-child(n + 5) {
+    display: none;
+  }
+}
+@container message-row (width < 22rem) {
+  .buzz-quick-reactions > button:nth-child(n + 4) {
+    display: none;
+  }
+}
+@container message-row (width < 20rem) {
+  .buzz-quick-reactions > button:nth-child(n + 3) {
+    display: none;
+  }
+}
+@container message-row (width < 18rem) {
+  .buzz-quick-reactions > button:nth-child(n + 2) {
+    display: none;
+  }
+}
+@container message-row (width < 16rem) {
+  .buzz-message-feedback-label {
+    display: none;
+  }
+}
+@container message-row (width < 14rem) {
+  .buzz-quick-reactions,
+  .buzz-quick-reactions-divider {
+    display: none;
+  }
+}
+@media (min-width: 64rem) {
+  .buzz-content-scrollbar:has(.buzz-right-dock) > main {
+    min-width: min(100%, 400px);
+  }
+  .buzz-right-dock:not([data-expanded]) {
+    max-width: calc(100% - 403px);
+  }
+  .buzz-work-canvas-dock {
+    min-width: min(100%, 320px);
+  }
+  @container shell-row (width < 723px) {
+    .buzz-work-canvas-dock:not([data-expanded]) {
+      position: absolute;
+      inset: 0;
+      z-index: 40;
+      width: auto;
+      max-width: none;
+      background: var(--color-background);
+    }
+    .buzz-side-panel-resize-handle:has(+ .buzz-work-canvas-dock) {
+      display: none;
+    }
+    .buzz-work-canvas-dock:not([data-expanded]) .buzz-overlay-back {
+      display: flex;
+    }
+  }
+}

@@ -1,0 +1,142 @@
+[
+  {
+    "mutation": "ingest-hook",
+    "test": "handlers::dm_visibility::tests::accepted_chat_resurfaces_recipient_and_preserves_sender",
+    "selected": 1,
+    "filtered": 1127,
+    "log": "logs/dm-resurface-mutation-ingest-hook.log"
+  },
+  {
+    "mutation": "live-snapshot",
+    "test": "handlers::dm_visibility::tests::accepted_chat_resurfaces_recipient_and_preserves_sender",
+    "selected": 1,
+    "filtered": 1127,
+    "log": "logs/dm-resurface-mutation-live-snapshot.log"
+  },
+  {
+    "mutation": "sender-hide",
+    "test": "handlers::dm_visibility::tests::accepted_chat_resurfaces_recipient_and_preserves_sender",
+    "selected": 1,
+    "filtered": 1127,
+    "log": "logs/dm-resurface-mutation-sender-hide.log"
+  },
+  {
+    "mutation": "non-message-kinds",
+    "test": "handlers::dm_visibility::tests::non_message_kinds_do_not_resurface",
+    "selected": 1,
+    "filtered": 1127,
+    "log": "logs/dm-resurface-mutation-non-message-kinds.log"
+  },
+  {
+    "mutation": "stream-channel",
+    "test": "handlers::dm_visibility::tests::stream_chat_does_not_resurface_or_publish",
+    "selected": 1,
+    "filtered": 1127,
+    "log": "logs/dm-resurface-mutation-stream-channel.log"
+  },
+  {
+    "mutation": "backfill-chat-kinds",
+    "test": "dm::tests::backfill_only_new_peer_chat_in_active_dms_and_is_idempotent",
+    "selected": 1,
+    "filtered": 324,
+    "log": "logs/dm-resurface-mutation-backfill-chat-kinds.log"
+  },
+  {
+    "mutation": "backfill-strict-time",
+    "test": "dm::tests::backfill_only_new_peer_chat_in_active_dms_and_is_idempotent",
+    "selected": 1,
+    "filtered": 324,
+    "log": "logs/dm-resurface-mutation-backfill-strict-time.log"
+  },
+  {
+    "mutation": "backfill-sender",
+    "test": "dm::tests::backfill_only_new_peer_chat_in_active_dms_and_is_idempotent",
+    "selected": 1,
+    "filtered": 324,
+    "log": "logs/dm-resurface-mutation-backfill-sender.log"
+  },
+  {
+    "mutation": "backfill-stream",
+    "test": "dm::tests::backfill_only_new_peer_chat_in_active_dms_and_is_idempotent",
+    "selected": 1,
+    "filtered": 324,
+    "log": "logs/dm-resurface-mutation-backfill-stream.log"
+  },
+  {
+    "mutation": "backfill-update",
+    "test": "handlers::dm_visibility::tests::backfill_resurfaces_and_is_idempotent",
+    "selected": 1,
+    "filtered": 1127,
+    "log": "logs/dm-resurface-mutation-backfill-update.log"
+  },
+  {
+    "mutation": "backfill-snapshot",
+    "test": "handlers::dm_visibility::tests::backfill_resurfaces_and_is_idempotent",
+    "selected": 1,
+    "filtered": 1127,
+    "log": "logs/dm-resurface-mutation-backfill-snapshot.log"
+  },
+  {
+    "mutation": "snapshot-retry",
+    "test": "handlers::dm_visibility::tests::backfill_retries_failed_snapshot_publication",
+    "selected": 1,
+    "filtered": 1127,
+    "log": "logs/dm-resurface-mutation-snapshot-retry.log"
+  },
+  {
+    "mutation": "removed-member",
+    "test": "dm::tests::unhide_recipients_preserves_sender_removed_new_hides_streams_and_tenants",
+    "selected": 1,
+    "filtered": 324,
+    "log": "logs/dm-resurface-mutation-removed-member.log"
+  },
+  {
+    "mutation": "later-hide",
+    "test": "dm::tests::unhide_recipients_preserves_sender_removed_new_hides_streams_and_tenants",
+    "selected": 1,
+    "filtered": 324,
+    "log": "logs/dm-resurface-mutation-later-hide.log"
+  },
+  {
+    "mutation": "duplicate-chat",
+    "test": "handlers::dm_visibility::tests::duplicate_chat_and_no_hidden_recipients_do_not_publish",
+    "selected": 1,
+    "filtered": 1127,
+    "log": "logs/dm-resurface-mutation-duplicate-chat.log"
+  },
+  {
+    "mutation": "no-hidden-recipient",
+    "test": "handlers::dm_visibility::tests::duplicate_chat_and_no_hidden_recipients_do_not_publish",
+    "selected": 1,
+    "filtered": 1127,
+    "log": "logs/dm-resurface-mutation-no-hidden-recipient.log"
+  },
+  {
+    "mutation": "backfill-idempotence",
+    "test": "handlers::dm_visibility::tests::backfill_resurfaces_and_is_idempotent",
+    "selected": 1,
+    "filtered": 1127,
+    "log": "logs/dm-resurface-mutation-backfill-idempotence.log"
+  },
+  {
+    "mutation": "async-acceptance",
+    "test": "handlers::dm_visibility::tests::blocked_resurface_does_not_delay_message_acceptance",
+    "selected": 1,
+    "filtered": 1127,
+    "log": "logs/dm-resurface-mutation-async-acceptance.log"
+  },
+  {
+    "mutation": "all-recipients",
+    "test": "handlers::dm_visibility::tests::accepted_chat_resurfaces_recipient_and_preserves_sender",
+    "selected": 1,
+    "filtered": 1127,
+    "log": "logs/dm-resurface-mutation-all-recipients.log"
+  },
+  {
+    "mutation": "retained-chat",
+    "test": "dm::tests::backfill_only_new_peer_chat_in_active_dms_and_is_idempotent",
+    "selected": 1,
+    "filtered": 324,
+    "log": "logs/dm-resurface-mutation-retained-chat.log"
+  }
+]

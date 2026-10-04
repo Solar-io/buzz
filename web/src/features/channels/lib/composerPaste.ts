@@ -13,13 +13,20 @@
 
 /** Collect image files from a paste event's clipboard data. Pure. */
 export function imageFilesFromClipboard(data: DataTransfer | null): File[] {
+  return filesFromClipboard(data).filter((file) =>
+    file.type.startsWith("image/"),
+  );
+}
+
+/** Clipboard files from both browser representations, without duplicates. */
+export function filesFromClipboard(data: DataTransfer | null): File[] {
   if (!data) {
     return [];
   }
   const seen = new Set<string>();
   const out: File[] = [];
   const take = (file: File | null) => {
-    if (!file?.type.startsWith("image/")) {
+    if (!file) {
       return;
     }
     const key = `${file.name}:${file.size}:${file.type}`;

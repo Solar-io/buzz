@@ -2153,6 +2153,17 @@ impl Db {
         channel::reap_expired_ephemeral_channels(&self.pool).await
     }
 
+    /// Page through archived channels needing a relay-signed metadata refresh.
+    #[datastore_span(name = "archived_channels_missing_discovery", system = "postgresql")]
+    pub async fn archived_channels_missing_discovery(
+        &self,
+        relay_pubkey: &[u8],
+        after: Option<(Uuid, Uuid)>,
+        limit: i64,
+    ) -> Result<Vec<channel::ArchivedChannelDiscovery>> {
+        channel::archived_channels_missing_discovery(&self.pool, relay_pubkey, after, limit).await
+    }
+
     /// Delete retained agent observer frames older than `cutoff`.
     #[datastore_span(name = "prune_expired_observer_frames", system = "postgresql")]
     pub async fn prune_expired_observer_frames(
@@ -2397,6 +2408,39 @@ impl Db {
         pubkey: &[u8],
     ) -> Result<()> {
         dm::unhide_dm(&self.pool, community_id, channel_id, pubkey).await
+    }
+
+    /// Clear hides for other active DM members and return changed viewers.
+    #[datastore_span(name = "unhide_dm_recipients", system = "postgresql")]
+    pub async fn unhide_dm_recipients(
+        &self,
+        community_id: CommunityId,
+        channel_id: Uuid,
+        sender: &[u8],
+        accepted_at: chrono::DateTime<chrono::Utc>,
+    ) -> Result<Vec<Vec<u8>>> {
+        dm::unhide_dm_recipients(&self.pool, community_id, channel_id, sender, accepted_at).await
+    }
+
+    /// Clear active DM hides with newer messages from other participants.
+    #[datastore_span(name = "unhide_dms_with_new_messages", system = "postgresql")]
+    pub async fn unhide_dms_with_new_messages(
+        &self,
+        community_id: CommunityId,
+        viewer: &[u8],
+    ) -> Result<Vec<Uuid>> {
+        dm::unhide_dms_with_new_messages(&self.pool, community_id, viewer).await
+    }
+
+    /// Page through viewers requiring DM visibility reconciliation at startup.
+    #[datastore_span(name = "dm_visibility_repair_candidates", system = "postgresql")]
+    pub async fn dm_visibility_repair_candidates(
+        &self,
+        relay_pubkey: &[u8],
+        after: Option<(Uuid, Vec<u8>)>,
+        limit: i64,
+    ) -> Result<Vec<dm::DmVisibilityRepair>> {
+        dm::dm_visibility_repair_candidates(&self.pool, relay_pubkey, after, limit).await
     }
 
     /// List the channel IDs of all DMs the given user currently has hidden.

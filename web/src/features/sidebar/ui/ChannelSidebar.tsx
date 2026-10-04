@@ -465,6 +465,7 @@ export function ChannelSidebar({
         selfPubkey={dmIdentity.selfPubkey}
         profiles={dmIdentity.profiles}
         status={dmStatuses.get(partnerPubkey) ?? null}
+        running={channelMarkers?.get(channel.id)?.running ?? 0}
         presence={channel.participantPubkeys
           .filter((pk) => pk !== dmIdentity.selfPubkey)
           .map((pk) => dmIdentity.presence.get(pk))

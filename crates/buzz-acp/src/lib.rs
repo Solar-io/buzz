@@ -1,6 +1,7 @@
 #![deny(unsafe_code)]
 
 mod acp;
+mod auth_parking;
 mod auth_pool;
 mod claims;
 mod claims_writer;
@@ -1903,6 +1904,19 @@ pub fn run() -> Result<()> {
     tokio_main()
 }
 
+fn startup_event_queue(
+    mode: DedupMode,
+    deadline: u64,
+    path: Option<std::path::PathBuf>,
+    now: u64,
+) -> EventQueue {
+    let mut queue = EventQueue::new(mode).with_in_flight_deadline(deadline);
+    if let Some(path) = path {
+        queue.load_auth_parked(path, now);
+    }
+    queue
+}
+
 #[tokio::main]
 async fn tokio_main() -> Result<()> {
     // Install the ring crypto provider for rustls (required for wss:// connections).
@@ -2195,8 +2209,12 @@ async fn tokio_main() -> Result<()> {
 
     let runtime_start_nonce = std::env::var("BUZZ_MANAGED_AGENT_START_NONCE").unwrap_or_default();
     let dedup_mode = config.dedup_mode;
-    let mut queue =
-        EventQueue::new(dedup_mode).with_in_flight_deadline(config.max_turn_duration_secs);
+    let mut queue = startup_event_queue(
+        dedup_mode,
+        config.max_turn_duration_secs,
+        auth_parking::path_for_agent(&pubkey_hex),
+        auth_parking::now_secs(),
+    );
 
     // Online means the harness can receive work, not merely that its socket is
     // connected. Publishing after channel subscriptions gives desktop callers
@@ -4548,33 +4566,16 @@ mod claim_router_tests {
     }
 }
 
-/// Returns `true` when `error` is a non-retryable authentication failure.
-///
-/// Retrying auth errors is harmful: the token won't self-repair between
-/// attempts, so each retry wastes an attempt slot, delays the visible failure,
-/// and burns the user's context window. Dead-letter immediately and surface a
-/// re-authentication hint instead.
-///
-/// # Classification rationale
-///
-/// Auth failures arrive as [`acp::AcpError::AgentError`] with a message
-/// surfaced from the upstream CLI. Two narrow patterns reliably identify
-/// non-transient auth failures observed in the field:
-///
-/// - `"Re-authenticate"` — emitted by the Claude CLI when an OAuth token has
-///   expired ("OAuth access token has expired. Re-authenticate to continue.").
-///   Specific to the auth-expiry flow; does not appear in unrelated errors.
-/// - `"API Error: 401"` — present in Claude/Codex HTTP-401 responses; 401 is
-///   the standard auth-failure status and does not arise from network blips.
-///
-/// False positives (misclassifying a transient error as non-retryable) silently
-/// drop a user message, which is worse than a false negative (extra retries on
-/// an auth error). Both patterns are therefore chosen for high precision.
+/// Narrow upstream CLI auth patterns. These failures park work without using
+/// the normal retry budget; quota and transport failures keep their own paths.
 fn is_auth_error(error: &acp::AcpError) -> bool {
     let acp::AcpError::AgentError { message, .. } = error else {
         return false;
     };
-    message.contains("Re-authenticate") || message.contains("API Error: 401")
+    message.contains("Re-authenticate")
+        || message.contains("API Error: 401")
+        || message.contains("Failed to authenticate")
+        || message.contains("OAuth session expired")
 }
 
 /// claude-agent-acp's `errorKind` values that mean "this account is out of
@@ -4701,6 +4702,22 @@ fn handle_prompt_result(
     // match arm in the death_message construction reads it.
     let mut hard_timeout_fate_suffix: Option<&'static str> = None;
 
+    if let PromptSource::Channel(ch) = result.source {
+        if matches!(result.outcome, PromptOutcome::Ok(_)) {
+            if let Some(batch) = queue.dispatched_batch(ch) {
+                queue.finish_auth(&batch);
+            }
+        } else if result.batch.is_none()
+            && matches!(&result.outcome, PromptOutcome::Error(e) if is_auth_error(e))
+        {
+            result.batch = queue.dispatched_batch(ch);
+        } else if result.batch.is_none() {
+            if let Some(batch) = queue.dispatched_batch(ch) {
+                queue.finish_auth(&batch);
+            }
+        }
+    }
+
     // Requeue BEFORE mark_complete: requeue() sets retry_after with a future
     // deadline, and mark_complete() checks for it to decide whether to preserve
     // retry_counts. If mark_complete runs first, retry_counts is cleared and
@@ -4710,7 +4727,9 @@ fn handle_prompt_result(
         // Don't requeue batches for channels the agent was removed from —
         // those events are stale and should be silently dropped.
         if !removed_channels.contains(&batch.channel_id) {
-            if matches!(
+            if matches!(result.outcome, PromptOutcome::PoolReroute) {
+                queue.requeue_preserve_timestamps(batch);
+            } else if matches!(
                 result.outcome,
                 PromptOutcome::Cancelled | PromptOutcome::CancelDrainTimeout(_)
             ) {
@@ -4746,6 +4765,7 @@ fn handle_prompt_result(
                     "⚠️ I couldn't process the last request (the turn exceeded the maximum duration ({}s)). Please re-send if it's still needed.",
                     config.max_turn_duration_secs
                 );
+                queue.finish_auth(&batch);
                 spawn_failure_notice(rest_client, &batch, content);
                 hard_timeout_fate_suffix = Some(" — dead-lettered (no recent activity)");
             } else if matches!(
@@ -4764,26 +4784,36 @@ fn handle_prompt_result(
                         "⚠️ I couldn't process the last request after multiple retries (the turn exceeded the maximum duration ({}s)). Please re-send if it's still needed.",
                         config.max_turn_duration_secs
                     );
+                    queue.finish_auth(&dead);
                     spawn_failure_notice(rest_client, &dead, content);
                     hard_timeout_fate_suffix = Some(" — dead-lettered (retry budget exhausted)");
                 } else {
                     hard_timeout_fate_suffix = Some(" — requeued for retry (recently active)");
                 }
             } else if matches!(&result.outcome, PromptOutcome::Error(e) if is_auth_error(e)) {
-                // Auth errors are non-retryable: the token won't self-repair
-                // between retries, so requeueing only wastes attempt slots and
-                // delays the visible failure. Dead-letter immediately and tell
-                // the user to re-authenticate the CLI.
-                tracing::warn!(
-                    channel_id = %batch.channel_id,
-                    events = batch.events.len(),
-                    "dead-lettering batch immediately — non-retryable auth error"
-                );
-                let content = "⚠️ I couldn't process the last request: authentication failed. \
-                    Please re-authenticate the CLI (e.g. run `claude /login` or `codex login`) \
-                    and then re-send."
-                    .to_string();
-                spawn_failure_notice(rest_client, &batch, content);
+                let notice_batch = batch.clone();
+                let (dead, notice) = queue.park_auth(batch, auth_parking::now_secs());
+                if let Some(dead) = dead {
+                    tracing::warn!(channel_id = %dead.channel_id, "auth parking cap reached; dead-lettering batch");
+                    spawn_failure_notice(rest_client, &dead,
+                        "⚠️ My Claude login has been unavailable for six hours. Please log in and re-send your request.".into());
+                } else if notice {
+                    let complete = queue.auth_notice_completion(notice_batch.channel_id);
+                    if let Some(rest) = rest_client {
+                        let rest = rest.clone();
+                        tokio::spawn(async move {
+                            let tags = notice_batch
+                                .events
+                                .last()
+                                .map(|be| queue::parse_thread_tags(&be.event))
+                                .unwrap_or_default();
+                            complete(pool::post_failure_notice(&rest, notice_batch.channel_id, &tags,
+                                "⚠️ My Claude login expired, so I can't work on this right now. I've kept your message and will pick it up automatically once login works again.").await);
+                        });
+                    } else {
+                        complete(false);
+                    }
+                }
             } else if let Some(dead) = queue.requeue(batch) {
                 let reason = match &result.outcome {
                     PromptOutcome::Timeout(TimeoutKind::Idle) => "the turn timed out".to_string(),
@@ -4797,9 +4827,11 @@ fn handle_prompt_result(
                 let content = format!(
                     "⚠️ I couldn't process the last request after multiple retries ({reason}). Please re-send if it's still needed."
                 );
+                queue.finish_auth(&dead);
                 spawn_failure_notice(rest_client, &dead, content);
             }
         } else {
+            queue.finish_auth(&batch);
             tracing::debug!(
                 channel_id = %batch.channel_id,
                 events = batch.events.len(),
@@ -4836,6 +4868,7 @@ fn handle_prompt_result(
     let outcome_label = match &result.outcome {
         PromptOutcome::Ok(_) => "ok",
         PromptOutcome::Error(_) => "error",
+        PromptOutcome::PoolReroute => "pool_reroute",
         PromptOutcome::Timeout(TimeoutKind::Idle) => "idle_timeout",
         PromptOutcome::Timeout(TimeoutKind::Hard { .. }) => "hard_timeout",
         PromptOutcome::AgentExited => "exited",
@@ -4881,6 +4914,17 @@ fn handle_prompt_result(
     };
 
     match result.outcome {
+        PromptOutcome::PoolReroute => {
+            let index = result.agent.index;
+            spawn_overflow_respawn_task(
+                result.agent,
+                config,
+                &mut crash_history[index],
+                respawn_tx,
+                respawn_tasks,
+                observer,
+            );
+        }
         // Successful prompt — return agent to pool.
         PromptOutcome::Ok(_) => {
             tracing::debug!(
@@ -5036,10 +5080,12 @@ fn handle_prompt_result(
                     return LoopAction::Exit;
                 }
             } else if is_quota_error(e) {
-                let action = config
-                    .pool_router
-                    .on_quota_error(&config.persona_env_vars, agent_index);
-                // Best-effort ledger line (flip/exhausted); never fails the turn.
+                let action = config.pool_router.on_quota_error(
+                    &config.persona_env_vars,
+                    agent_index,
+                    &e.to_string(),
+                );
+                // Record the actual account reset and the resulting route.
                 config.pool_router.record_quota_event(agent_index, &action);
                 emit_turn_error(&e.to_string(), error_code);
                 match action {
@@ -9356,6 +9402,38 @@ mod error_outcome_emission_tests {
     // ── is_auth_error classification ───────────────────────────────────────
 
     #[test]
+    fn is_auth_error_matches_production_oauth_expiry() {
+        let e = acp::AcpError::AgentError {
+            code: -32603,
+            message: "Internal error: Failed to authenticate: OAuth session expired and could not be refreshed".into(),
+            error_kind: None,
+        };
+        assert!(is_auth_error(&e));
+        for message in ["Failed to authenticate", "OAuth session expired"] {
+            assert!(is_auth_error(&acp::AcpError::AgentError {
+                code: -32603,
+                message: message.into(),
+                error_kind: None,
+            }));
+        }
+    }
+
+    #[test]
+    fn is_auth_error_rejects_quota_and_unrelated_errors() {
+        for message in [
+            "You've hit your limit · resets 6pm",
+            "Internal error: tool crashed",
+        ] {
+            let e = acp::AcpError::AgentError {
+                code: -32603,
+                message: message.into(),
+                error_kind: None,
+            };
+            assert!(!is_auth_error(&e), "{message}");
+        }
+    }
+
+    #[test]
     fn is_auth_error_matches_reauthenticate_message() {
         let e = acp::AcpError::AgentError {
             code: -32000,
@@ -9411,34 +9489,14 @@ mod error_outcome_emission_tests {
 
     // ── auth error dead-letter behavior ────────────────────────────────────
 
-    /// An auth-class `PromptOutcome::Error` must dead-letter immediately
-    /// (the batch is never requeued) so the user sees a re-auth hint at once
-    /// rather than after 10 futile retries.
-    #[tokio::test]
-    async fn auth_error_dead_letters_immediately_without_requeueing() {
-        let keys = nostr::Keys::generate();
-        let event = nostr::EventBuilder::new(nostr::Kind::Custom(9), "test")
-            .sign_with_keys(&keys)
-            .unwrap();
-        let channel_id = uuid::Uuid::new_v4();
-        let batch = FlushBatch {
-            channel_id,
-            events: vec![BatchEvent {
-                event,
-                prompt_tag: "test".into(),
-                received_at: std::time::Instant::now(),
-            }],
-            cancelled_events: vec![],
-            cancel_reason: None,
-        };
-
-        let auth_error = acp::AcpError::AgentError {
-            code: -32000,
-            message: "API Error: 401 OAuth access token has expired. Re-authenticate to continue."
-                .to_string(),
-            error_kind: None,
-        };
-
+    async fn drive_notice_failure(
+        queue: &mut EventQueue,
+        rest: &relay::RestClient,
+        batch: FlushBatch,
+    ) {
+        let channel_id = batch.channel_id;
+        let auth_error = acp::AcpError::AgentError { code: -32000,
+            message: "Internal error: Failed to authenticate: OAuth session expired and could not be refreshed".into(), error_kind: None };
         let agent = dummy_agent(0).await;
         let mut pool = AgentPool::from_slots(vec![None]);
         let task_id = pool.join_set.spawn(async {}).id();
@@ -9456,7 +9514,6 @@ mod error_outcome_emission_tests {
                 acp_session: None,
             },
         );
-        let mut queue = EventQueue::new(config::DedupMode::Queue);
         let config = test_config();
         let mut heartbeat_in_flight = false;
         let removed_channels = std::collections::HashSet::new();
@@ -9476,7 +9533,7 @@ mod error_outcome_emission_tests {
         };
         handle_prompt_result(
             &mut pool,
-            &mut queue,
+            queue,
             &config,
             result,
             &mut heartbeat_in_flight,
@@ -9486,20 +9543,377 @@ mod error_outcome_emission_tests {
             &respawn_tx,
             &mut respawn_tasks,
             None,
-            None,
+            Some(rest),
         );
+    }
 
-        // The batch must not be requeued: pending_channels returns 0.
+    fn notice_test_batch(channel_id: Uuid) -> FlushBatch {
+        FlushBatch {
+            channel_id,
+            events: vec![BatchEvent {
+                event: nostr::EventBuilder::new(nostr::Kind::Custom(9), "request")
+                    .sign_with_keys(&nostr::Keys::generate())
+                    .unwrap(),
+                prompt_tag: "test".into(),
+                received_at: std::time::Instant::now(),
+            }],
+            cancelled_events: vec![],
+            cancel_reason: None,
+        }
+    }
+
+    #[test]
+    fn startup_event_queue_replays_original_request() {
+        let path = std::env::temp_dir().join(format!("startup-{}.json", Uuid::new_v4()));
+        let batch = notice_test_batch(Uuid::new_v4());
+        let mut queue = startup_event_queue(DedupMode::Queue, 300, Some(path.clone()), 1000);
+        queue.park_auth(batch.clone(), 1000);
+        let mut restarted = startup_event_queue(DedupMode::Queue, 300, Some(path.clone()), 1001);
+        let replay = restarted.flush_next().expect("startup replay");
+        assert_eq!(replay.events[0].event.id, batch.events[0].event.id);
+        restarted.finish_auth(&replay);
         assert_eq!(
-            queue.pending_channels(),
-            0,
-            "auth error must dead-letter immediately — batch must not be requeued"
+            startup_event_queue(DedupMode::Queue, 300, Some(path.clone()), 1002).pending_channels(),
+            0
         );
+        std::fs::remove_file(path).unwrap();
+    }
+
+    async fn notice_relay(
+        fail_first: bool,
+    ) -> (
+        relay::RestClient,
+        mpsc::Receiver<nostr::Event>,
+        tokio::task::JoinHandle<()>,
+    ) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let (tx, rx) = mpsc::channel(32);
+        let task = tokio::spawn(async move {
+            let mut attempts = 0;
+            loop {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let mut bytes = Vec::new();
+                let (offset, length) = loop {
+                    let mut chunk = [0; 4096];
+                    let count = socket.read(&mut chunk).await.unwrap();
+                    assert!(count > 0);
+                    bytes.extend_from_slice(&chunk[..count]);
+                    let mut headers = [httparse::EMPTY_HEADER; 32];
+                    let mut request = httparse::Request::new(&mut headers);
+                    if let httparse::Status::Complete(offset) = request.parse(&bytes).unwrap() {
+                        assert_eq!(request.path, Some("/events"));
+                        let length: usize = request
+                            .headers
+                            .iter()
+                            .find(|h| h.name.eq_ignore_ascii_case("content-length"))
+                            .map(|h| std::str::from_utf8(h.value).unwrap().parse().unwrap())
+                            .unwrap();
+                        if bytes.len() >= offset + length {
+                            break (offset, length);
+                        }
+                    }
+                };
+                let event: nostr::Event =
+                    serde_json::from_slice(&bytes[offset..offset + length]).unwrap();
+                event.verify().unwrap();
+                let status = if attempts == 0 && fail_first {
+                    500
+                } else {
+                    200
+                };
+                let body =
+                    serde_json::json!({"accepted": !(attempts < 2 && fail_first)}).to_string();
+                attempts += 1;
+                socket.write_all(format!("HTTP/1.1 {status} Stub\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).as_bytes()).await.unwrap();
+                tx.send(event).await.unwrap();
+            }
+        });
+        (
+            relay::RestClient {
+                http: reqwest::Client::new(),
+                base_url: format!("http://{address}"),
+                keys: nostr::Keys::generate(),
+                auth_tag_json: None,
+            },
+            rx,
+            task,
+        )
+    }
+
+    async fn receive_notice(
+        notices: &mut mpsc::Receiver<nostr::Event>,
+        queue: &EventQueue,
+        channel: Uuid,
+    ) -> nostr::Event {
+        let event = tokio::time::timeout(Duration::from_secs(2), notices.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while queue.auth_notice_pending(channel) {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .unwrap();
+        event
+    }
+
+    #[tokio::test]
+    async fn real_handler_notices_once_per_channel_after_acceptance() {
+        let (rest, mut notices, task) = notice_relay(false).await;
+        let path = std::env::temp_dir().join(format!("notices-{}.json", Uuid::new_v4()));
+        let mut queue = startup_event_queue(
+            DedupMode::Queue,
+            300,
+            Some(path.clone()),
+            auth_parking::now_secs(),
+        );
+        let first = notice_test_batch(Uuid::new_v4());
+        drive_notice_failure(&mut queue, &rest, first.clone()).await;
+        assert!(receive_notice(&mut notices, &queue, first.channel_id)
+            .await
+            .content
+            .contains("login expired"));
+        for _ in 0..3 {
+            drive_notice_failure(&mut queue, &rest, first.clone()).await;
+        }
+        let second = notice_test_batch(Uuid::new_v4());
+        drive_notice_failure(&mut queue, &rest, second.clone()).await;
+        let event = receive_notice(&mut notices, &queue, second.channel_id).await;
+        assert!(event
+            .tags
+            .iter()
+            .any(|t| t.as_slice() == ["h", &second.channel_id.to_string()]));
+        drive_notice_failure(&mut queue, &rest, second).await;
+        assert!(
+            tokio::time::timeout(Duration::from_millis(100), notices.recv())
+                .await
+                .is_err()
+        );
+        let mut restarted = startup_event_queue(
+            DedupMode::Queue,
+            300,
+            Some(path.clone()),
+            auth_parking::now_secs(),
+        );
+        drive_notice_failure(&mut restarted, &rest, first).await;
+        assert!(
+            tokio::time::timeout(Duration::from_millis(100), notices.recv())
+                .await
+                .is_err()
+        );
+        task.abort();
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[tokio::test]
+    async fn failed_notice_retries_then_persists_acceptance() {
+        let (rest, mut notices, task) = notice_relay(true).await;
+        let path = std::env::temp_dir().join(format!("notice-retry-{}.json", Uuid::new_v4()));
+        let batch = notice_test_batch(Uuid::new_v4());
+        let mut queue = startup_event_queue(
+            DedupMode::Queue,
+            300,
+            Some(path.clone()),
+            auth_parking::now_secs(),
+        );
+        drive_notice_failure(&mut queue, &rest, batch.clone()).await;
+        receive_notice(&mut notices, &queue, batch.channel_id).await;
+        let value: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
         assert_eq!(
-            queue.queued_event_count(&channel_id),
-            0,
-            "auth error must dead-letter immediately — no events should be pending"
+            value["noticed_channels"],
+            serde_json::json!([]),
+            "failed POST must not persist suppression"
         );
+        // Same process retry, then restart: failures retry; accepted notices do not.
+        drive_notice_failure(&mut queue, &rest, batch.clone()).await;
+        receive_notice(&mut notices, &queue, batch.channel_id).await;
+        let value: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!(
+            value["noticed_channels"],
+            serde_json::json!([]),
+            "HTTP 200 refusal must not suppress retry"
+        );
+        let mut restarted = startup_event_queue(
+            DedupMode::Queue,
+            300,
+            Some(path.clone()),
+            auth_parking::now_secs(),
+        );
+        drive_notice_failure(&mut restarted, &rest, batch.clone()).await;
+        receive_notice(&mut notices, &restarted, batch.channel_id).await;
+        let mut accepted_restart = startup_event_queue(
+            DedupMode::Queue,
+            300,
+            Some(path.clone()),
+            auth_parking::now_secs(),
+        );
+        drive_notice_failure(&mut accepted_restart, &rest, batch).await;
+        assert!(
+            tokio::time::timeout(Duration::from_millis(100), notices.recv())
+                .await
+                .is_err()
+        );
+        task.abort();
+        std::fs::remove_file(path).unwrap();
+    }
+
+    /// Auth failures keep the batch with a fixed probe delay.
+    #[tokio::test]
+    async fn auth_error_parks_without_dead_lettering() {
+        for mode in [DedupMode::Queue, DedupMode::Drop] {
+            let keys = nostr::Keys::generate();
+            let event = nostr::EventBuilder::new(nostr::Kind::Custom(9), "test")
+                .sign_with_keys(&keys)
+                .unwrap();
+            let channel_id = uuid::Uuid::new_v4();
+            let batch = FlushBatch {
+                channel_id,
+                events: vec![BatchEvent {
+                    event,
+                    prompt_tag: "test".into(),
+                    received_at: std::time::Instant::now(),
+                }],
+                cancelled_events: vec![],
+                cancel_reason: None,
+            };
+
+            let auth_error = acp::AcpError::AgentError {
+                code: -32000,
+                message:
+                    "API Error: 401 OAuth access token has expired. Re-authenticate to continue."
+                        .to_string(),
+                error_kind: None,
+            };
+
+            let agent = dummy_agent(0).await;
+            let mut pool = AgentPool::from_slots(vec![None]);
+            let task_id = pool.join_set.spawn(async {}).id();
+            pool.task_map_mut().insert(
+                task_id,
+                crate::pool::TaskMeta {
+                    agent_index: 0,
+                    channel_id: None,
+                    turn_id: "test-turn-id".to_string(),
+                    recoverable_batch: None,
+                    control_tx: None,
+                    steer_tx: None,
+                    successful_steer_deliveries: HashSet::new(),
+                    started_at: std::time::SystemTime::now(),
+                    acp_session: None,
+                },
+            );
+            let path = std::env::temp_dir().join(format!("auth-result-{}.json", Uuid::new_v4()));
+            let mut queue = EventQueue::new(mode);
+            queue.load_auth_parked(path.clone(), auth_parking::now_secs());
+            queue.requeue_preserve_timestamps(batch.clone());
+            queue.flush_next().unwrap();
+            let original = batch.clone();
+            let config = test_config();
+            let mut heartbeat_in_flight = false;
+            let removed_channels = std::collections::HashSet::new();
+            let mut crash_history = vec![SlotCircuit {
+                crash_times: Vec::new(),
+                open_until: None,
+                respawn_in_flight: false,
+            }];
+            let (respawn_tx, _respawn_rx) = mpsc::channel(8);
+            let mut respawn_tasks = tokio::task::JoinSet::new();
+            let result = PromptResult {
+                agent,
+                source: PromptSource::Channel(channel_id),
+                turn_id: "test-turn-id".to_string(),
+                outcome: PromptOutcome::Error(auth_error),
+                batch: if matches!(mode, DedupMode::Queue) {
+                    Some(batch)
+                } else {
+                    None
+                },
+            };
+            handle_prompt_result(
+                &mut pool,
+                &mut queue,
+                &config,
+                result,
+                &mut heartbeat_in_flight,
+                &removed_channels,
+                &HashMap::new(),
+                &mut crash_history,
+                &respawn_tx,
+                &mut respawn_tasks,
+                None,
+                None,
+            );
+
+            // Auth failure keeps the request and blocks immediate retry.
+            assert_eq!(
+                queue.pending_channels(),
+                1,
+                "auth error must retain the batch"
+            );
+            assert_eq!(
+                queue.queued_event_count(&channel_id),
+                1,
+                "auth error must retain the original event"
+            );
+            // Restart and complete through the real result handler: successful
+            // results carry no batch, so completion must use dispatched identity.
+            let mut queue = EventQueue::new(mode);
+            queue.load_auth_parked(path.clone(), auth_parking::now_secs());
+            let replay = queue.flush_next().unwrap();
+            assert_eq!(replay.events[0].event.id, original.events[0].event.id);
+            let task_id = pool.join_set.spawn(async {}).id();
+            pool.task_map_mut().insert(
+                task_id,
+                crate::pool::TaskMeta {
+                    agent_index: 0,
+                    channel_id: Some(channel_id),
+                    turn_id: "replay".into(),
+                    recoverable_batch: None,
+                    control_tx: None,
+                    steer_tx: None,
+                    successful_steer_deliveries: HashSet::new(),
+                    started_at: std::time::SystemTime::now(),
+                    acp_session: None,
+                },
+            );
+            let success = PromptResult {
+                agent: dummy_agent(0).await,
+                source: PromptSource::Channel(channel_id),
+                turn_id: "replay".into(),
+                outcome: PromptOutcome::Ok(acp::StopReason::EndTurn),
+                batch: None,
+            };
+            handle_prompt_result(
+                &mut pool,
+                &mut queue,
+                &config,
+                success,
+                &mut heartbeat_in_flight,
+                &removed_channels,
+                &HashMap::new(),
+                &mut crash_history,
+                &respawn_tx,
+                &mut respawn_tasks,
+                None,
+                None,
+            );
+            assert!(
+                auth_parking::AuthParking::load(path.clone(), auth_parking::now_secs())
+                    .restored_batches(auth_parking::now_secs())
+                    .is_empty()
+            );
+            assert!(
+                queue.park_auth(original, auth_parking::now_secs()).1,
+                "successful turn resets the channel notice"
+            );
+            std::fs::remove_file(path).unwrap();
+        }
     }
 
     /// A non-auth application error (e.g. usage credits) must still follow the
@@ -9732,13 +10146,49 @@ mod error_outcome_emission_tests {
         );
         assert_eq!(pool.live_count(), 0, "agent is not returned to the pool");
         assert_eq!(
-            router
-                .overflow
-                .redirect_for("A", std::time::Instant::now())
-                .as_deref(),
+            router.decide(&[], chrono::Utc::now()).pool_id.as_deref(),
             Some("B")
         );
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[tokio::test]
+    async fn incident_quota_on_overflow_a_respawns_on_available_assigned_b() {
+        let (router, dir) = overflow_router("incident");
+        let path = router.config_path.as_ref().unwrap();
+        let text = std::fs::read_to_string(path)
+            .unwrap()
+            .replace("\"default\":\"A\"", "\"default\":\"B\"");
+        std::fs::write(path, text).unwrap();
+        router.overflow.record_slot_pool(0, Some("A"));
+        let mut config = test_config();
+        config.pool_router = router.clone();
+        let (pool, history) = run_error_outcome(
+            &config,
+            agent_err(
+                "weekly limit resets Oct 6 at 8am (America/Chicago)",
+                Some("rate_limit"),
+            ),
+        )
+        .await;
+        assert!(history[0].respawn_in_flight);
+        assert!(history[0].crash_times.is_empty());
+        assert_eq!(pool.live_count(), 0);
+        assert_eq!(
+            router.decide(&[], chrono::Utc::now()).pool_id.as_deref(),
+            Some("B")
+        );
+        let ledger = std::fs::read_to_string(router.events_path.as_ref().unwrap()).unwrap();
+        let lines: Vec<serde_json::Value> = ledger
+            .lines()
+            .map(|s| serde_json::from_str(s).unwrap())
+            .collect();
+        assert_eq!(lines.len(), 3); // mark_out, return_assigned, respawn attribution
+        assert_eq!(lines[0]["effective"], "A");
+        assert_eq!(lines[0]["out_until"], "2026-10-06T13:00:00.000Z");
+        assert_eq!(lines[1]["action"], "return_assigned");
+        assert_eq!(lines[1]["effective"], "B");
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[tokio::test]
@@ -9764,13 +10214,13 @@ mod error_outcome_emission_tests {
         assert_eq!(f["reason"], "quota_error");
         assert!(f["cooldownUntil"].is_string());
 
-        // Second quota error while on B: exhausted line.
+        // Second quota error while on B: both accounts are out.
         router.overflow.record_slot_pool(0, Some("B"));
         run_error_outcome(&config, agent_err("Internal error", Some("rate_limit"))).await;
         let text = std::fs::read_to_string(&path).unwrap();
         assert!(
-            text.lines().any(|l| l.contains("\"action\":\"exhausted\"")),
-            "exhausted line missing: {text}"
+            text.lines().any(|l| l.contains("\"action\":\"all_out\"")),
+            "all_out line missing: {text}"
         );
         std::fs::remove_dir_all(&dir).ok();
     }
@@ -9788,8 +10238,8 @@ mod error_outcome_emission_tests {
         assert!(!crash_history[0].respawn_in_flight);
         assert_eq!(pool.live_count(), 1, "agent returned to the pool as before");
         assert_eq!(
-            router.overflow.redirect_for("A", std::time::Instant::now()),
-            None
+            router.decide(&[], chrono::Utc::now()).pool_id.as_deref(),
+            Some("A")
         );
         std::fs::remove_dir_all(&dir).ok();
     }

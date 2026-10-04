@@ -242,7 +242,7 @@ export function MessageRow({
       data-testid={`message-row-${message.id}`}
       data-needs-you={needsYou ? "true" : undefined}
       className={cn(
-        "group/message relative flex transition-colors",
+        "buzz-message-row group/message relative flex transition-colors",
         thread
           ? "gap-2.25 rounded-lg px-1 py-1 hover:bg-accent"
           : "gap-3 rounded-[10px] px-2.5 hover:bg-accent",

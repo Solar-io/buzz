@@ -24,7 +24,7 @@ import { QUICK_REACTIONS } from "../lib/reactions.ts";
 
 /**
  * The floating hover toolbar for one message row (Main artboard): a small
- * elevated card that overlaps the row's top-right corner and appears on
+ * elevated card inside the row's top-right corner that appears on
  * hover OR focus-within.
  *
  * Focus-within is not decoration. Without it the bar is unreachable by
@@ -219,8 +219,10 @@ export function MessageActionBar({
           setPickerOpen(false);
         }}
         className={cn(
-          "buzz-message-actions absolute right-2.5 top-0 z-10 -translate-y-1/2",
-          "flex items-center gap-px rounded-[10px] border border-border bg-card p-[3px]",
+          // Stay inside this row: translating above it covers the preceding
+          // open thread's reply box and intercepts its pointer input.
+          "buzz-message-actions absolute right-2.5 top-0 z-10",
+          "flex flex-wrap items-center gap-px rounded-[10px] border border-border bg-card p-px",
           "shadow-[0_8px_18px_-10px_var(--elev-shadow)]",
           "transition-opacity duration-150 ease-out",
           // Hidden until the row is hovered or something inside it holds focus.
@@ -240,7 +242,7 @@ export function MessageActionBar({
       >
         {onReact && (
           <>
-            <div className="hidden items-center gap-0.5 sm:flex">
+            <div className="buzz-quick-reactions hidden items-center gap-0.5 sm:flex">
               {QUICK_REACTIONS.map((emoji) => (
                 <button
                   key={emoji}
@@ -257,7 +259,7 @@ export function MessageActionBar({
             </div>
             <span
               aria-hidden="true"
-              className="mx-0.5 hidden h-4 w-px bg-border/70 sm:block"
+              className="buzz-quick-reactions-divider mx-0.5 hidden h-4 w-px bg-border/70 sm:block"
             />
             <EmojiPicker
               label="Add reaction"
@@ -334,7 +336,7 @@ export function MessageActionBar({
           ) : (
             <Bell className="size-3.5" aria-hidden="true" />
           )}
-          <span className="hidden sm:inline">
+          <span className="buzz-message-feedback-label hidden sm:inline">
             {inFeedback ? "In Feedback" : "Feedback"}
           </span>
         </button>
