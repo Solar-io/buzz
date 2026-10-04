@@ -65,3 +65,13 @@ Web conversation layout fixes protect 400px of chat beside the dock (including a
 QA-WEB-LAYOUT-001 adds row-container queries that progressively hide quick reactions while preserving More actions, plus a bounded 32px compact toolbar. Four additional painted cases prove narrow-chat button bounds, real reaction publication/echo and progressive restoration across widths. The 28 selected browser cases and 4,421 units pass; withdrawing containment and compact padding fails four named cases. [Follow-up evidence](TEST_REPORTS/web-layout-bugs.md#qa-web-layout-001-follow-up).
 
 DM chat acceptance (kind 9/40002) asynchronously restores every other active hidden member and publishes the full NIP-DV snapshot. A bounded startup repair handles historical messages and stale snapshot retries, preserving sender and later hides. Eleven new PG tests, ten live NIP-DV cases and twenty compiling mutation failures cover the mechanisms; final full relay/DB tests and scoped standard Clippy pass. The existing broader Clippy ordering error reproduces on the parent. [Evidence](TEST_REPORTS/dm-resurface.md).
+
+
+2026-10-03 — OAuth-expired ACP batch recovery
+
+ACP retains auth-failed messages in a pubkey-keyed atomic journal, probes every 60 seconds without retry-budget cost, caps parking at six hours and posts one threaded notice per channel until success/dead-letter. Startup restores unexpired work with original receipt order and cancelled context. Queue and Drop modes share recovery; ordinary error/quota paths retain their behavior. 1,022 -> 1,032 units plus nine integrations, strict Clippy and fmt pass. Removing the new classifier arm fails the named regression; restored full suite passes. [Evidence and journal path](TEST_REPORTS/oauth-auth-parking.md).
+
+
+2026-10-03 — OAuth parking QA round 2
+
+Auth notices now persist suppression after signed HTTP publication returns `accepted:true`; failures clear the pending token and retry on a probe or journal reconstruction. The startup queue constructor and actual result-handler notice gate have named regressions. Three added tests give 1,035 units plus nine integrations; startup-load removal, handler gate bypass, early suppression, classifier-arm removal and ignoring HTTP 200 refusal each fail a named test. Strict Clippy/fmt and restored suite receipts are in [the OAuth report](TEST_REPORTS/oauth-auth-parking.md#round-2--accepted-notice-acknowledgement-and-production-wiring). A binary kill/restart fixture exceeds the bounded fixture scope; combined ACP-process restart acceptance remains unverified.
