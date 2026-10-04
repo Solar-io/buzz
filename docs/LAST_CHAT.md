@@ -227,3 +227,10 @@ ACP retains auth-failed messages in a pubkey-keyed atomic journal, probes every 
 2026-10-03 — OAuth parking QA round 2
 
 Auth notices now persist suppression after signed HTTP publication returns `accepted:true`; failures clear the pending token and retry on a probe or journal reconstruction. The startup queue constructor and actual result-handler notice gate have named regressions. Three added tests give 1,035 units plus nine integrations; startup-load removal, handler gate bypass, early suppression, classifier-arm removal and ignoring HTTP 200 refusal each fail a named test. Strict Clippy/fmt and restored suite receipts are in [the OAuth report](TEST_REPORTS/oauth-auth-parking.md#round-2--accepted-notice-acknowledgement-and-production-wiring). A binary kill/restart fixture exceeds the bounded fixture scope; combined ACP-process restart acceptance remains unverified.
+
+
+2026-10-04 — ACP account-aware quota failover
+
+Actual slot accounts are marked out with timezone-parsed reset deadlines. Account availability lives in `.buzz/state/pool-status.json` (`BUZZ_POOL_STATUS_PATH` override), using the existing claims sidecar lock plus atomic replacement. Routing rereads shared state, prefers assigned, otherwise an available sibling, otherwise earliest reset. Repeated errors retain the earlier active deadline to prevent sliding fallback deadlines causing flip loops. Pre-turn checks preserve even Drop-mode batches and request the existing crash-free overflow respawn before any session RPC. Ledger records mark_out, flip, return_assigned and all_out with exact deadlines.
+
+1,035 → 1,043 units and nine integrations pass; final release build, strict Clippy and formatting pass. Replacing actual-slot attribution with assigned attribution fails `auth_pool::tests::incident_quota_on_a_returns_to_available_b` (FlipTo A instead of B), with one test executed and 1,042 filtered; restored full inventory remains 1,043. [Handoff and receipts](TEST_REPORTS/auth-pool-account-aware.md).

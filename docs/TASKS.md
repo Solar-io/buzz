@@ -219,4 +219,4 @@ Evidence: [W9b2 current-main composition](TEST_REPORTS/parity-w9b2.md#w9b2-compo
 
 - [x] Account-scoped reset parsing, shared atomic pool-status file and routing.
 - [x] Quota and pre-turn rerouting through the existing overflow respawn path.
-- [ ] Full ACP suite, release build and incident mutation receipt.
+- [x] Full ACP suite, release build and incident mutation receipt ([report](TEST_REPORTS/auth-pool-account-aware.md)).

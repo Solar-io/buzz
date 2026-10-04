@@ -75,3 +75,8 @@ ACP retains auth-failed messages in a pubkey-keyed atomic journal, probes every 
 2026-10-03 — OAuth parking QA round 2
 
 Auth notices now persist suppression after signed HTTP publication returns `accepted:true`; failures clear the pending token and retry on a probe or journal reconstruction. The startup queue constructor and actual result-handler notice gate have named regressions. Three added tests give 1,035 units plus nine integrations; startup-load removal, handler gate bypass, early suppression, classifier-arm removal and ignoring HTTP 200 refusal each fail a named test. Strict Clippy/fmt and restored suite receipts are in [the OAuth report](TEST_REPORTS/oauth-auth-parking.md#round-2--accepted-notice-acknowledgement-and-production-wiring). A binary kill/restart fixture exceeds the bounded fixture scope; combined ACP-process restart acceptance remains unverified.
+
+
+### ACP account-aware quota routing — 2026-10-04
+
+Quota routing uses shared account reset deadlines, actual slot attribution and pre-turn rerouting. ACP verification: 1,035 → 1,043 units plus nine integrations; release build, strict Clippy and formatting pass. [Evidence](TEST_REPORTS/auth-pool-account-aware.md).
