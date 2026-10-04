@@ -16,8 +16,10 @@ interface RowSeed {
   dm?: boolean;
 }
 
-// Activity, usage and alphabetical order deliberately disagree. The fifth
-// visited row belongs AFTER the alphabetically earlier never-visited rows.
+// Activity, own-message recency and alphabetical order deliberately
+// disagree. `score` is how recently the viewer wrote there (higher = more
+// recent). The fifth such row belongs AFTER the alphabetically earlier rows
+// the viewer never wrote in.
 const CHANNELS: RowSeed[] = [
   { label: "alpha-old", score: 500, ago: 100, unread: true },
   { label: "zulu-new", score: 1, ago: 10, unread: true },
@@ -57,7 +59,6 @@ async function seedSidebar(page: Page): Promise<string[]> {
   const viewer = getPublicKey(viewerKey);
   const now = Date.now();
   const nowS = Math.floor(now / 1_000);
-  const visits: Record<string, { score: number; at: number }> = {};
   const read: Record<string, number> = {};
   const favorites: Array<{ kind: "channel"; id: string; at: number }> = [];
   const events = [
@@ -112,7 +113,20 @@ async function seedSidebar(page: Page): Promise<string[]> {
         }),
       );
       read[id] = row.unread ? nowS - 3_600 : nowS;
-      if (row.score !== undefined) visits[id] = { score: row.score, at: now };
+      if (row.score !== undefined) {
+        // The viewer's own message, older than any read marker so it never
+        // touches unread state; only its recency ranks the row.
+        events.push(
+          mockEvent({
+            id: hexId(sequence++),
+            kind: 9,
+            pubkey: viewer,
+            created_at: nowS - 7_200 + row.score,
+            tags: [["h", id]],
+            content: `Viewer wrote in ${row.label}`,
+          }),
+        );
+      }
       if (sectionIndex === 2) {
         // Pin order also disagrees with the expected ranking.
         favorites.unshift({ kind: "channel", id, at: now - index });
@@ -120,9 +134,8 @@ async function seedSidebar(page: Page): Promise<string[]> {
     }
   }
   await page.addInitScript(
-    ({ visits, read, favorites }) => {
+    ({ read, favorites }) => {
       try {
-        localStorage.setItem("buzz.sidebar-visits.v1", JSON.stringify(visits));
         localStorage.setItem("buzz.read-state.v1", JSON.stringify(read));
         localStorage.setItem(
           "buzz.channel-prefs.v1",
@@ -135,7 +148,7 @@ async function seedSidebar(page: Page): Promise<string[]> {
         // Sandboxed frames have no localStorage.
       }
     },
-    { visits, read, favorites },
+    { read, favorites },
   );
   const errors: string[] = [];
   page.on("pageerror", (error) => errors.push(error.message));
@@ -143,7 +156,7 @@ async function seedSidebar(page: Page): Promise<string[]> {
   await installHatchMock(page);
   await installMockRelay(page, events);
   // A non-conversation view avoids marking a fixture row seen or bumping
-  // its visit score merely by mounting the app.
+  // its recency merely by mounting the app.
   await signIn(page, "/repos?view=inbox", viewerKey);
   await expect(page.getByTestId("channel-sidebar")).toBeVisible();
   await page.mouse.move(1_000, 100);
@@ -197,7 +210,6 @@ test.describe("rendered sidebar order", () => {
     await testInfo.attach("sidebar-state", {
       body: JSON.stringify(
         await page.evaluate(() => ({
-          visits: localStorage.getItem("buzz.sidebar-visits.v1"),
           read: localStorage.getItem("buzz.read-state.v1"),
           favorites: localStorage.getItem("buzz.channel-prefs.v1"),
           pointerOverList: document.querySelector("nav:hover") !== null,
@@ -224,7 +236,7 @@ test.describe("rendered sidebar order", () => {
     expect(consoleErrors.get(page) ?? []).toEqual([]);
   });
 
-  test("Channels: unread by recency, exactly four most used, then case-insensitive A-Z", async ({
+  test("Channels: unread by recency, the four most recently written in, then case-insensitive A-Z", async ({
     page,
   }) => {
     const errors = await seedSidebar(page);
@@ -243,7 +255,7 @@ test.describe("rendered sidebar order", () => {
     expect(errors).toEqual([]);
   });
 
-  test("Direct messages: unread, exactly four most used, then A-Z by displayed profile name", async ({
+  test("Direct messages: unread, the four most recently written in, then A-Z by displayed profile name", async ({
     page,
   }) => {
     const errors = await seedSidebar(page);
@@ -261,7 +273,7 @@ test.describe("rendered sidebar order", () => {
     expect(errors).toEqual([]);
   });
 
-  test("Favorites: mixed channels and DMs use unread, four most used, then A-Z", async ({
+  test("Favorites: mixed channels and DMs use unread, four most recently written in, then A-Z", async ({
     page,
   }) => {
     const errors = await seedSidebar(page);

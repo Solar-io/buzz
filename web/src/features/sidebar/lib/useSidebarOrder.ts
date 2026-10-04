@@ -1,4 +1,11 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useRelaySession } from "@/shared/api/RelaySessionProvider";
+import { ownPubkey } from "@/shared/lib/nostr-signer";
+import {
+  noteOwnMessage,
+  OWN_MESSAGE_KINDS,
+  type OwnLastSent,
+} from "./ownActivity.ts";
 import type { RankFacts } from "./sectionOrder.ts";
 import {
   loadVisitScores,
@@ -99,4 +106,39 @@ export function useHeldKeys(
     return null;
   }
   return last.current;
+}
+
+/**
+ * Newest own message per conversation, live from the relay (ownActivity.ts).
+ * Author-scoped, so sends from any device land here; the subscription stays
+ * open after the backlog, so a new send re-ranks immediately.
+ */
+export function useOwnLastSent(): OwnLastSent {
+  const { session, status } = useRelaySession();
+  const [last, setLast] = useState<OwnLastSent>(() => new Map());
+  useEffect(() => {
+    if (!session || status !== "open") {
+      return;
+    }
+    let alive = true;
+    let cleanup: (() => void) | null = null;
+    void ownPubkey().then((pubkey) => {
+      if (!alive || !pubkey) {
+        return;
+      }
+      cleanup = session.subscribe(
+        { kinds: [...OWN_MESSAGE_KINDS], authors: [pubkey], limit: 500 },
+        {
+          onEvent: (event) => {
+            setLast((previous) => noteOwnMessage(previous, event));
+          },
+        },
+      );
+    });
+    return () => {
+      alive = false;
+      cleanup?.();
+    };
+  }, [session, status]);
+  return last;
 }

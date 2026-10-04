@@ -52,9 +52,8 @@ import {
   noteSidebarVisit,
   useHeldKeys,
   useOpenItemSnapshot,
-  useVisitScores,
+  useOwnLastSent,
 } from "@/features/sidebar/lib/useSidebarOrder.ts";
-import { visitScore } from "@/features/sidebar/lib/visitFrequency.ts";
 import { SidebarSection } from "@/features/sidebar/ui/SidebarSection";
 import { SidebarNavButton } from "@/features/sidebar/ui/SidebarNavButton";
 import { SidebarNavDisclosure } from "@/features/sidebar/ui/SidebarNavDisclosure";
@@ -319,22 +318,21 @@ export function ChannelSidebar({
   const shownId = webView.active === null ? selectedId : undefined;
   const channelSelected = (channel: ChannelSummary) => channel.id === shownId;
   const dmUnread = (dm: DmSummary) => dmRowUnread(dm, unreadInput);
-  // Favorites, Channels and DMs: unread by recency, then the four most
-  // used, then alphabetical (sectionOrder.ts). The open row ranks by its
+  // Favorites, Channels and DMs: unread by recency, then the four you most
+  // recently wrote in, then alphabetical (sectionOrder.ts). The open row ranks by its
   // facts at the moment it was opened, and the whole order holds while the
   // pointer is over the list, so nothing slides under a click.
-  const visits = useVisitScores();
-  const now = Date.now();
+  const ownLastSent = useOwnLastSent();
   const channelFacts = (channel: ChannelSummary): RankFacts => ({
     unread: rowUnread(channel),
-    score: visitScore(visits, channel.id, now),
+    score: ownLastSent.get(channel.id) ?? 0,
     lastActivity:
       readState.activity.get(channel.id)?.createdAt ?? channel.updatedAt,
     name: channel.name,
   });
   const dmFacts = (dm: DmSummary): RankFacts => ({
     unread: dmUnread(dm),
-    score: visitScore(visits, dm.channel.id, now),
+    score: ownLastSent.get(dm.channel.id) ?? 0,
     lastActivity: dm.lastMessage?.created_at ?? dm.channel.updatedAt,
     // The label the row shows (DmNavRow), so A–Z matches what you read.
     name: dmDisplayName(
@@ -353,7 +351,7 @@ export function ChannelSidebar({
       case "link":
         return {
           unread: false,
-          score: visitScore(visits, item.key, now),
+          score: 0,
           lastActivity: 0,
           name: item.shortcut.label,
         };

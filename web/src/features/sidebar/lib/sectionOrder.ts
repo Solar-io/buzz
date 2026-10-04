@@ -3,8 +3,10 @@
  * sections (Sam, 2026-10-03):
  *
  * 1. Unread items on top, most recent activity first.
- * 2. The next {@link FREQUENT_SLOTS} are the most frequently used of the
- *    rest (highest visit score; an item never visited does not qualify).
+ * 2. The next {@link FREQUENT_SLOTS} are the ones the viewer most recently
+ *    wrote in (Sam, 2026-10-04: "most frequently used recently" — the latest
+ *    conversation goes to the top and bumps the oldest of the four). An item
+ *    the viewer never wrote in does not qualify.
  * 3. Everything else alphabetically.
  *
  * Forums and Links keep their own orders — nothing here touches them.
@@ -16,7 +18,7 @@
  *
  * 1. The OPEN item ranks by a snapshot of its facts taken when it was
  *    opened ({@link RankOptions.frozen}). Opening an unread channel clears
- *    its unread state and bumps its visit score a moment later; without the
+ *    its unread state, and writing there bumps its recency; without the
  *    snapshot it would drop out of the unread group as soon as it was
  *    clicked. It re-ranks on its live facts once the viewer navigates away.
  * 2. While the pointer is over the list the previous order is held
@@ -29,7 +31,7 @@
 export interface RankFacts {
   /** Unread rows sort to the top. */
   unread: boolean;
-  /** Decayed visit score (visitFrequency.ts); higher first. */
+  /** When the viewer last wrote here (ownActivity.ts), unix s; 0 = never. */
   score: number;
   /** Newest activity, any monotonic unit (unix seconds here); higher first. */
   lastActivity: number;
@@ -45,7 +47,7 @@ export interface RankOptions {
 /** How many read items rank by usage before the alphabetical remainder. */
 export const FREQUENT_SLOTS = 4;
 
-/** Visit scores closer than this are treated as equal (float decay noise). */
+/** Scores closer than this are treated as equal (and 0 as never). */
 const SCORE_EPSILON = 1e-6;
 
 interface Ranked<T> {
