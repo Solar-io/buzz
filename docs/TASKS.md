@@ -213,3 +213,10 @@ Evidence: [W9b2 current-main composition](TEST_REPORTS/parity-w9b2.md#w9b2-compo
 - [x] DM resurface: bounded, tenant-scoped startup backfill for messages newer than hidden_at; idempotence and snapshot-publication retries.
 - [x] DM resurface: isolated Postgres regressions, NIP-DV relay E2E, before/after crate counts and named mutation failures.
 - [x] DM resurface: fork manifest, NIP-DV extension, committed coding handoff and exact deployment command.
+
+
+## ACP account-aware quota routing (2026-10-04)
+
+- [x] Account-scoped reset parsing, shared atomic pool-status file and routing.
+- [x] Quota and pre-turn rerouting through the existing overflow respawn path.
+- [ ] Full ACP suite, release build and incident mutation receipt.

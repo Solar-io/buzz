@@ -4727,7 +4727,9 @@ fn handle_prompt_result(
         // Don't requeue batches for channels the agent was removed from —
         // those events are stale and should be silently dropped.
         if !removed_channels.contains(&batch.channel_id) {
-            if matches!(
+            if matches!(result.outcome, PromptOutcome::PoolReroute) {
+                queue.requeue_preserve_timestamps(batch);
+            } else if matches!(
                 result.outcome,
                 PromptOutcome::Cancelled | PromptOutcome::CancelDrainTimeout(_)
             ) {
@@ -4866,6 +4868,7 @@ fn handle_prompt_result(
     let outcome_label = match &result.outcome {
         PromptOutcome::Ok(_) => "ok",
         PromptOutcome::Error(_) => "error",
+        PromptOutcome::PoolReroute => "pool_reroute",
         PromptOutcome::Timeout(TimeoutKind::Idle) => "idle_timeout",
         PromptOutcome::Timeout(TimeoutKind::Hard { .. }) => "hard_timeout",
         PromptOutcome::AgentExited => "exited",
@@ -4911,6 +4914,17 @@ fn handle_prompt_result(
     };
 
     match result.outcome {
+        PromptOutcome::PoolReroute => {
+            let index = result.agent.index;
+            spawn_overflow_respawn_task(
+                result.agent,
+                config,
+                &mut crash_history[index],
+                respawn_tx,
+                respawn_tasks,
+                observer,
+            );
+        }
         // Successful prompt — return agent to pool.
         PromptOutcome::Ok(_) => {
             tracing::debug!(
@@ -5066,10 +5080,12 @@ fn handle_prompt_result(
                     return LoopAction::Exit;
                 }
             } else if is_quota_error(e) {
-                let action = config
-                    .pool_router
-                    .on_quota_error(&config.persona_env_vars, agent_index);
-                // Best-effort ledger line (flip/exhausted); never fails the turn.
+                let action = config.pool_router.on_quota_error(
+                    &config.persona_env_vars,
+                    agent_index,
+                    &e.to_string(),
+                );
+                // Record the actual account reset and the resulting route.
                 config.pool_router.record_quota_event(agent_index, &action);
                 emit_turn_error(&e.to_string(), error_code);
                 match action {
@@ -10130,13 +10146,49 @@ mod error_outcome_emission_tests {
         );
         assert_eq!(pool.live_count(), 0, "agent is not returned to the pool");
         assert_eq!(
-            router
-                .overflow
-                .redirect_for("A", std::time::Instant::now())
-                .as_deref(),
+            router.decide(&[], chrono::Utc::now()).pool_id.as_deref(),
             Some("B")
         );
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[tokio::test]
+    async fn incident_quota_on_overflow_a_respawns_on_available_assigned_b() {
+        let (router, dir) = overflow_router("incident");
+        let path = router.config_path.as_ref().unwrap();
+        let text = std::fs::read_to_string(path)
+            .unwrap()
+            .replace("\"default\":\"A\"", "\"default\":\"B\"");
+        std::fs::write(path, text).unwrap();
+        router.overflow.record_slot_pool(0, Some("A"));
+        let mut config = test_config();
+        config.pool_router = router.clone();
+        let (pool, history) = run_error_outcome(
+            &config,
+            agent_err(
+                "weekly limit resets Oct 6 at 8am (America/Chicago)",
+                Some("rate_limit"),
+            ),
+        )
+        .await;
+        assert!(history[0].respawn_in_flight);
+        assert!(history[0].crash_times.is_empty());
+        assert_eq!(pool.live_count(), 0);
+        assert_eq!(
+            router.decide(&[], chrono::Utc::now()).pool_id.as_deref(),
+            Some("B")
+        );
+        let ledger = std::fs::read_to_string(router.events_path.as_ref().unwrap()).unwrap();
+        let lines: Vec<serde_json::Value> = ledger
+            .lines()
+            .map(|s| serde_json::from_str(s).unwrap())
+            .collect();
+        assert_eq!(lines.len(), 3); // mark_out, return_assigned, respawn attribution
+        assert_eq!(lines[0]["effective"], "A");
+        assert_eq!(lines[0]["out_until"], "2026-10-06T13:00:00.000Z");
+        assert_eq!(lines[1]["action"], "return_assigned");
+        assert_eq!(lines[1]["effective"], "B");
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[tokio::test]
@@ -10162,13 +10214,13 @@ mod error_outcome_emission_tests {
         assert_eq!(f["reason"], "quota_error");
         assert!(f["cooldownUntil"].is_string());
 
-        // Second quota error while on B: exhausted line.
+        // Second quota error while on B: both accounts are out.
         router.overflow.record_slot_pool(0, Some("B"));
         run_error_outcome(&config, agent_err("Internal error", Some("rate_limit"))).await;
         let text = std::fs::read_to_string(&path).unwrap();
         assert!(
-            text.lines().any(|l| l.contains("\"action\":\"exhausted\"")),
-            "exhausted line missing: {text}"
+            text.lines().any(|l| l.contains("\"action\":\"all_out\"")),
+            "all_out line missing: {text}"
         );
         std::fs::remove_dir_all(&dir).ok();
     }
@@ -10186,8 +10238,8 @@ mod error_outcome_emission_tests {
         assert!(!crash_history[0].respawn_in_flight);
         assert_eq!(pool.live_count(), 1, "agent returned to the pool as before");
         assert_eq!(
-            router.overflow.redirect_for("A", std::time::Instant::now()),
-            None
+            router.decide(&[], chrono::Utc::now()).pool_id.as_deref(),
+            Some("A")
         );
         std::fs::remove_dir_all(&dir).ok();
     }

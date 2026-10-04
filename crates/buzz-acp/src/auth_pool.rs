@@ -31,21 +31,16 @@
 //! none of the custom-auth vars (`GATE_ENV_VARS`) — this keeps GLM/omniroute
 //! and other proxied agents on whatever they were configured with.
 //!
-//! Overflow: on a quota/rate-limit error from a slot running on the assigned
-//! pool, the process redirects to the sibling pool for `cooldownMinutes`. If a
-//! slot already running on the sibling ALSO quota-errors while the redirect is
-//! active, both pools are marked exhausted and flipping stops until the
-//! cooldown lapses (no ping-pong).
-//!
-//! Everything here except [`PoolRouter::decide_for_slot`]'s log line is
-//! side-effect-free so it can be unit-tested without a process.
+//! Quota state is account-scoped and shared through an atomically replaced JSON
+//! file. Each routing decision reloads it; slot attribution stays process-local.
 
+use chrono::{DateTime, Datelike, TimeZone, Utc};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 /// Env var the pool selects.
 pub const CLAUDE_CONFIG_DIR: &str = "CLAUDE_CONFIG_DIR";
@@ -128,13 +123,6 @@ impl PoolsFile {
             .map(|(_, pool)| pool.clone())
             .filter(|pool| self.pools.contains_key(pool));
         Some(assigned.unwrap_or_else(|| self.default.clone()))
-    }
-
-    /// The overflow sibling of `pool`: the lexically-first other pool id.
-    pub fn sibling(&self, pool: &str) -> Option<String> {
-        let mut others: Vec<&String> = self.pools.keys().filter(|k| k.as_str() != pool).collect();
-        others.sort();
-        others.first().map(|s| (*s).clone())
     }
 
     fn cooldown(&self) -> Duration {
@@ -238,7 +226,7 @@ fn has_custom_auth(env: &[(String, String)]) -> bool {
         .any(|(k, v)| GATE_ENV_VARS.contains(&k.as_str()) && !v.trim().is_empty())
 }
 
-/// Resolve the pool for a spawn. Pure: `now` and `home` are inputs.
+/// Resolve a spawn against freshly read shared status; time and home are explicit.
 pub fn resolve(
     file: Option<&PoolsFile>,
     display_name: &str,
@@ -246,7 +234,7 @@ pub fn resolve(
     adapter_is_claude: bool,
     overflow: &OverflowState,
     home: Option<&str>,
-    now: Instant,
+    now: DateTime<Utc>,
 ) -> PoolDecision {
     if !adapter_is_claude {
         return PoolDecision::off("skipped_non_claude_adapter");
@@ -261,12 +249,7 @@ pub fn resolve(
         return PoolDecision::off("off_unknown_default");
     };
     let assigned_id = assigned.clone();
-    let (effective, reason) = match overflow.redirect_for(&assigned, now) {
-        Some(sibling) if file.overflow.enabled && file.pools.contains_key(&sibling) => {
-            (sibling, "overflow")
-        }
-        _ => (assigned, "assigned"),
-    };
+    let (effective, reason) = overflow.route(file, &assigned, now);
     let env = file
         .pools
         .get(&effective)
@@ -282,74 +265,214 @@ pub fn resolve(
 /// What a quota error should do to this slot.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum OverflowAction {
-    /// Respawn the slot on this pool (no crash recorded).
+    /// Respawn on the selected account, without recording a crash.
     FlipTo(String),
-    /// Both pools quota-errored inside the cooldown: stop flipping.
-    Exhausted,
-    /// Routing or overflow off, or no sibling: behave as before.
+    /// The current pool is already the earliest available reset.
+    Stay,
+    /// Routing or overflow disabled.
     Disabled,
+}
+
+/// Shared account availability, serialized with an explicit UTC reset time.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct PoolStatus {
+    out_until_rfc3339: DateTime<Utc>,
+    reason: String,
 }
 
 #[derive(Debug, Default)]
 struct OverflowInner {
-    /// assigned pool → (active sibling, until).
-    redirect: HashMap<String, (String, Instant)>,
-    /// assigned pool → exhausted until.
-    exhausted: HashMap<String, Instant>,
-    /// slot index → pool id the slot was last spawned on.
+    statuses: HashMap<String, PoolStatus>,
     slot_pool: HashMap<usize, String>,
 }
 
-/// Process-lived overflow state (one harness process = one agent).
-#[derive(Debug, Clone, Default)]
-pub struct OverflowState(Arc<Mutex<OverflowInner>>);
+/// Shared account status file override.
+pub const ENV_STATUS_PATH: &str = "BUZZ_POOL_STATUS_PATH";
 
-impl OverflowState {
-    fn lock(&self) -> std::sync::MutexGuard<'_, OverflowInner> {
-        self.0.lock().unwrap_or_else(|e| e.into_inner())
+/// Resolve the shared account status path.
+pub fn status_path(env_override: Option<&str>, home: Option<&str>) -> Option<PathBuf> {
+    if let Some(path) = env_override.map(str::trim).filter(|s| !s.is_empty()) {
+        return Some(PathBuf::from(path));
     }
+    Some(
+        Path::new(home.map(str::trim).filter(|s| !s.is_empty())?)
+            .join(".buzz/state/pool-status.json"),
+    )
+}
 
-    /// Active, unexpired, non-exhausted redirect for `assigned`.
-    pub fn redirect_for(&self, assigned: &str, now: Instant) -> Option<String> {
-        let inner = self.lock();
-        if inner
-            .exhausted
-            .get(assigned)
-            .is_some_and(|until| now < *until)
-        {
+/// Account availability plus process-local slot attribution.
+#[derive(Debug, Clone, Default)]
+pub struct OverflowState {
+    inner: Arc<Mutex<OverflowInner>>,
+    path: Option<PathBuf>,
+}
+
+/// Parse Claude's reset message in its stated IANA timezone, or use cooldown.
+pub fn quota_reset(message: &str, now: DateTime<Utc>, cooldown: Duration) -> DateTime<Utc> {
+    let parsed = (|| {
+        let reset = message.split_once("resets ")?.1;
+        let (date_time, zone) = reset.split_once('(')?;
+        let tz: chrono_tz::Tz = zone.split_once(')')?.0.trim().parse().ok()?;
+        let text = date_time.trim();
+        let local_now = now.with_timezone(&tz);
+        let (date, time, dated) = if let Some((date, time)) = text.split_once(" at ") {
+            let date = chrono::NaiveDate::parse_from_str(
+                &format!("{} {}", local_now.year(), date.trim()),
+                "%Y %b %e",
+            )
+            .ok()?;
+            (date, time.trim(), true)
+        } else {
+            (local_now.date_naive(), text, false)
+        };
+        let time = time.to_ascii_lowercase().replace(' ', "");
+        let (clock, pm) = if let Some(clock) = time.strip_suffix("am") {
+            (clock, false)
+        } else {
+            (time.strip_suffix("pm")?, true)
+        };
+        let (hour, minute) = clock.split_once(':').unwrap_or((clock, "0"));
+        let hour: u32 = hour.parse().ok()?;
+        if !(1..=12).contains(&hour) {
             return None;
         }
-        inner
-            .redirect
-            .get(assigned)
-            .filter(|(_, until)| now < *until)
-            .map(|(pool, _)| pool.clone())
+        let time = chrono::NaiveTime::from_hms_opt(
+            hour % 12 + if pm { 12 } else { 0 },
+            minute.parse().ok()?,
+            0,
+        )?;
+        let mut date = date;
+        for _ in 0..3 {
+            // On an ambiguous DST boundary choose the later occurrence. A
+            // nonexistent local time has no reliable reset: use the fallback.
+            let candidate = tz
+                .from_local_datetime(&date.and_time(time))
+                .latest()?
+                .with_timezone(&Utc);
+            if candidate > now {
+                return Some(candidate);
+            }
+            date = if dated {
+                date.with_year(date.year() + 1)?
+            } else {
+                date.succ_opt()?
+            };
+        }
+        None
+    })();
+    parsed.unwrap_or_else(|| now + chrono::Duration::from_std(cooldown).unwrap_or_default())
+}
+
+impl OverflowState {
+    /// Use a shared file; `None` provides isolated in-memory state for fixtures.
+    pub fn with_path(path: Option<PathBuf>) -> Self {
+        Self {
+            path,
+            ..Self::default()
+        }
     }
 
-    #[cfg(test)]
-    pub fn is_exhausted(&self, assigned: &str, now: Instant) -> bool {
-        self.lock()
-            .exhausted
-            .get(assigned)
-            .is_some_and(|until| now < *until)
+    fn lock(&self) -> std::sync::MutexGuard<'_, OverflowInner> {
+        self.inner.lock().unwrap_or_else(|e| e.into_inner())
     }
 
-    /// Pool the slot was last spawned on (after overflow), if routing was
-    /// active for that spawn.
+    fn statuses(&self) -> HashMap<String, PoolStatus> {
+        match &self.path {
+            Some(path) => std::fs::read(path)
+                .ok()
+                .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+                .unwrap_or_default(),
+            None => self.lock().statuses.clone(),
+        }
+    }
+
+    fn mark_out(&self, pool: &str, status: PoolStatus, now: DateTime<Utc>) {
+        let Some(path) = &self.path else {
+            let mut inner = self.lock();
+            let entry = inner
+                .statuses
+                .entry(pool.to_string())
+                .or_insert_with(|| status.clone());
+            if entry.out_until_rfc3339 <= now || status.out_until_rfc3339 < entry.out_until_rfc3339
+            {
+                *entry = status;
+            }
+            return;
+        };
+        let write = || -> std::io::Result<()> {
+            if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
+                std::fs::create_dir_all(parent)?;
+            }
+            // Reuse the fleet claims-file lock protocol: lock a stable sidecar,
+            // reload under lock, then replace atomically. Concurrent accounts
+            // cannot overwrite each other's updates.
+            crate::claims_writer::with_claims_lock(path, |raw| {
+                let mut statuses: HashMap<String, PoolStatus> = raw
+                    .and_then(|text| serde_json::from_str(&text).ok())
+                    .unwrap_or_default();
+                let entry = statuses
+                    .entry(pool.to_string())
+                    .or_insert_with(|| status.clone());
+                if entry.out_until_rfc3339 <= now
+                    || status.out_until_rfc3339 < entry.out_until_rfc3339
+                {
+                    *entry = status;
+                }
+                let tmp = path.with_extension(format!("{}.tmp", uuid::Uuid::new_v4()));
+                let result = (|| {
+                    std::fs::write(&tmp, serde_json::to_vec(&statuses)?)?;
+                    std::fs::rename(&tmp, path)
+                })();
+                if result.is_err() {
+                    let _ = std::fs::remove_file(tmp);
+                }
+                result
+            })
+        };
+        if let Err(error) = write() {
+            tracing::warn!(%error, path = %path.display(), "auth_pool status write failed");
+        }
+    }
+
+    /// Choose assigned, an available sibling, or the earliest reset.
+    pub fn route(
+        &self,
+        file: &PoolsFile,
+        assigned: &str,
+        now: DateTime<Utc>,
+    ) -> (String, &'static str) {
+        if !file.overflow.enabled {
+            return (assigned.to_string(), "assigned");
+        }
+        let statuses = self.statuses();
+        let until = |id: &str| {
+            statuses
+                .get(id)
+                .map(|s| s.out_until_rfc3339)
+                .filter(|t| *t > now)
+        };
+        if until(assigned).is_none() {
+            return (assigned.to_string(), "assigned");
+        }
+        let mut ids: Vec<_> = file.pools.keys().collect();
+        ids.sort();
+        if let Some(id) = ids.iter().find(|id| until(id).is_none()) {
+            return ((*id).clone(), "overflow");
+        }
+        let earliest = ids.into_iter().min_by_key(|id| (until(id), *id));
+        (
+            earliest.cloned().unwrap_or_else(|| assigned.to_string()),
+            "all_out",
+        )
+    }
+
+    /// Pool this slot actually runs on.
     pub fn slot_pool(&self, slot: usize) -> Option<String> {
         self.lock().slot_pool.get(&slot).cloned()
     }
 
-    /// Time left on the active exhaustion (or redirect) for `assigned`.
-    fn cooldown_remaining(&self, assigned: &str, now: Instant) -> Option<Duration> {
-        let inner = self.lock();
-        let until = inner
-            .exhausted
-            .get(assigned)
-            .copied()
-            .filter(|until| now < *until)
-            .or_else(|| inner.redirect.get(assigned).map(|(_, until)| *until))?;
-        until.checked_duration_since(now)
+    fn out_until(&self, pool: &str) -> Option<DateTime<Utc>> {
+        Some(self.statuses().get(pool)?.out_until_rfc3339)
     }
 
     pub fn record_slot_pool(&self, slot: usize, pool: Option<&str>) {
@@ -364,50 +487,33 @@ impl OverflowState {
         }
     }
 
-    /// Register a quota error from `slot` and decide what to do.
+    /// Mark the actual account out, then select a route using shared status.
     pub fn on_quota_error(
         &self,
         file: &PoolsFile,
         assigned: &str,
         slot: usize,
-        now: Instant,
+        now: DateTime<Utc>,
+        message: &str,
     ) -> OverflowAction {
         if !file.overflow.enabled {
             return OverflowAction::Disabled;
         }
-        let Some(sibling) = file.sibling(assigned) else {
-            return OverflowAction::Disabled;
-        };
-        let cooldown = file.cooldown();
-        let mut inner = self.lock();
-        if inner
-            .exhausted
-            .get(assigned)
-            .is_some_and(|until| now < *until)
-        {
-            return OverflowAction::Exhausted;
+        let running = self.slot_pool(slot).unwrap_or_else(|| assigned.to_string());
+        self.mark_out(
+            &running,
+            PoolStatus {
+                out_until_rfc3339: quota_reset(message, now, file.cooldown()),
+                reason: "quota_error".into(),
+            },
+            now,
+        );
+        let (target, _) = self.route(file, assigned, now);
+        if target != running {
+            OverflowAction::FlipTo(target)
+        } else {
+            OverflowAction::Stay
         }
-        let slot_on = inner
-            .slot_pool
-            .get(&slot)
-            .cloned()
-            .unwrap_or_else(|| assigned.to_string());
-        let redirect_active = inner
-            .redirect
-            .get(assigned)
-            .is_some_and(|(_, until)| now < *until);
-        if slot_on != assigned && redirect_active {
-            // The sibling itself is out too — stop flipping.
-            inner.exhausted.insert(assigned.to_string(), now + cooldown);
-            inner.redirect.remove(assigned);
-            return OverflowAction::Exhausted;
-        }
-        if !redirect_active {
-            inner
-                .redirect
-                .insert(assigned.to_string(), (sibling.clone(), now + cooldown));
-        }
-        OverflowAction::FlipTo(sibling)
     }
 }
 
@@ -432,7 +538,7 @@ struct PoolEvent<'a> {
     assigned: Option<&'a str>,
     effective: Option<&'a str>,
     reason: &'static str,
-    cooldown: Option<Duration>,
+    cooldown: Option<DateTime<Utc>>,
 }
 
 fn append_line(path: &Path, line: &str) -> std::io::Result<()> {
@@ -480,7 +586,7 @@ impl PoolRouter {
             .iter()
             .filter_map(|k| std::env::var(k).ok().map(|v| (k.to_string(), v)))
             .collect();
-        let events_path = events_path(
+        let ledger_path = events_path(
             std::env::var(ENV_EVENTS_PATH).ok().as_deref(),
             home.as_deref(),
         );
@@ -488,10 +594,13 @@ impl PoolRouter {
             enabled_for_claude: adapter_is_claude,
             display_name: std::env::var(ENV_AGENT_NAME).unwrap_or_default(),
             config_path: path,
-            home,
+            home: home.clone(),
             parent_gate_env,
-            overflow: OverflowState::default(),
-            events_path,
+            overflow: OverflowState::with_path(status_path(
+                std::env::var(ENV_STATUS_PATH).ok().as_deref(),
+                home.as_deref(),
+            )),
+            events_path: ledger_path,
         }
     }
 
@@ -501,7 +610,7 @@ impl PoolRouter {
 
     /// Resolve against the effective child env (parent gate vars + the
     /// persona env about to be injected).
-    pub fn decide(&self, persona_env: &[(String, String)], now: Instant) -> PoolDecision {
+    pub fn decide(&self, persona_env: &[(String, String)], now: DateTime<Utc>) -> PoolDecision {
         let mut env = self.parent_gate_env.clone();
         env.extend(persona_env.iter().cloned());
         resolve(
@@ -517,21 +626,31 @@ impl PoolRouter {
 
     /// Decide for `slot`, remember the slot's pool, log once.
     pub fn decide_for_slot(&self, persona_env: &[(String, String)], slot: usize) -> PoolDecision {
-        let decision = self.decide(persona_env, Instant::now());
+        let previous = self.overflow.slot_pool(slot);
+        let decision = self.decide(persona_env, Utc::now());
         self.overflow
             .record_slot_pool(slot, decision.pool_id.as_deref());
         if let Some(effective) = decision.pool_id.as_deref() {
-            let cooldown = if decision.reason == "overflow" {
+            let cooldown = if decision.reason == "overflow" || decision.reason == "all_out" {
                 decision
                     .assigned
                     .as_deref()
-                    .and_then(|a| self.overflow.cooldown_remaining(a, Instant::now()))
+                    .and_then(|a| self.overflow.out_until(a))
             } else {
                 None
             };
             self.append_event(PoolEvent {
                 slot,
-                action: "spawn",
+                action: if decision.reason == "all_out" {
+                    "all_out"
+                } else if previous.is_some()
+                    && previous != decision.pool_id
+                    && decision.pool_id == decision.assigned
+                {
+                    "return_assigned"
+                } else {
+                    "spawn"
+                },
                 assigned: decision.assigned.as_deref(),
                 effective: Some(effective),
                 reason: decision.reason,
@@ -568,28 +687,58 @@ impl PoolRouter {
     /// Record the outcome of a quota error on `slot` in the pool-event
     /// ledger. `Disabled` records nothing (routing was not in play).
     pub fn record_quota_event(&self, slot: usize, action: &OverflowAction) {
-        let (kind, flipped_to) = match action {
-            OverflowAction::FlipTo(pool) => ("flip", Some(pool.clone())),
-            OverflowAction::Exhausted => ("exhausted", None),
-            OverflowAction::Disabled => return,
-        };
+        if *action == OverflowAction::Disabled {
+            return;
+        }
         let assigned = self
             .load_file()
             .and_then(|f| f.assigned_pool(&self.display_name));
-        let cooldown = assigned
-            .as_deref()
-            .and_then(|a| self.overflow.cooldown_remaining(a, Instant::now()));
-        // Flip: the pool the slot is about to run on. Exhausted: the pool it
-        // was running on when the second quota error landed.
-        let effective = flipped_to.or_else(|| self.overflow.slot_pool(slot));
+        let running = self.overflow.slot_pool(slot).or_else(|| assigned.clone());
+        let cooldown = running.as_deref().and_then(|p| self.overflow.out_until(p));
+        self.append_event(PoolEvent {
+            slot,
+            action: "mark_out",
+            assigned: assigned.as_deref(),
+            effective: running.as_deref(),
+            reason: "quota_error",
+            cooldown,
+        });
+        let all_out = self
+            .load_file()
+            .zip(assigned.as_deref())
+            .is_some_and(|(f, a)| self.overflow.route(&f, a, Utc::now()).1 == "all_out");
+        let (kind, effective) = match action {
+            OverflowAction::FlipTo(p) => (
+                if all_out {
+                    "all_out"
+                } else if Some(p) == assigned.as_ref() {
+                    "return_assigned"
+                } else {
+                    "flip"
+                },
+                Some(p.as_str()),
+            ),
+            _ => ("all_out", running.as_deref()),
+        };
+        let cooldown = effective
+            .and_then(|p| self.overflow.out_until(p))
+            .or(cooldown);
         self.append_event(PoolEvent {
             slot,
             action: kind,
             assigned: assigned.as_deref(),
-            effective: effective.as_deref(),
+            effective,
             reason: "quota_error",
             cooldown,
         });
+    }
+
+    /// Whether a turn must respawn before sending to its current account.
+    pub fn needs_reroute(&self, persona_env: &[(String, String)], slot: usize) -> bool {
+        let decision = self.decide(persona_env, Utc::now());
+        decision.pool_id.is_some()
+            && self.overflow.slot_pool(slot).is_some()
+            && decision.pool_id != self.overflow.slot_pool(slot)
     }
 
     /// Best-effort JSONL append. Never fails or panics the caller.
@@ -600,8 +749,7 @@ impl PoolRouter {
         let now = chrono::Utc::now();
         let cooldown_until = ev
             .cooldown
-            .and_then(|d| chrono::Duration::from_std(d).ok())
-            .map(|d| (now + d).to_rfc3339_opts(chrono::SecondsFormat::Millis, true));
+            .map(|t| t.to_rfc3339_opts(chrono::SecondsFormat::Millis, true));
         let line = serde_json::json!({
             "ts": now.to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
             "agent": self.display_name,
@@ -611,6 +759,7 @@ impl PoolRouter {
             "effective": ev.effective,
             "reason": ev.reason,
             "cooldownUntil": cooldown_until,
+            "out_until": cooldown_until,
         });
         if let Err(e) = append_line(path, &line.to_string()) {
             tracing::debug!(path = %path.display(), error = %e, "auth_pool: pool-event append failed (ignored)");
@@ -619,8 +768,13 @@ impl PoolRouter {
 
     /// Handle a quota error from `slot`. `Disabled` when routing is not
     /// active for this agent.
-    pub fn on_quota_error(&self, persona_env: &[(String, String)], slot: usize) -> OverflowAction {
-        let now = Instant::now();
+    pub fn on_quota_error(
+        &self,
+        persona_env: &[(String, String)],
+        slot: usize,
+        message: &str,
+    ) -> OverflowAction {
+        let now = Utc::now();
         let Some(file) = self.load_file() else {
             return OverflowAction::Disabled;
         };
@@ -632,7 +786,8 @@ impl PoolRouter {
         let Some(assigned) = file.assigned_pool(&self.display_name) else {
             return OverflowAction::Disabled;
         };
-        self.overflow.on_quota_error(&file, &assigned, slot, now)
+        self.overflow
+            .on_quota_error(&file, &assigned, slot, now, message)
     }
 }
 
@@ -669,7 +824,7 @@ mod tests {
             claude,
             &OverflowState::default(),
             Some(HOME),
-            Instant::now(),
+            Utc::now(),
         )
     }
 
@@ -812,10 +967,10 @@ mod tests {
     fn quota_error_flips_a_to_b() {
         let f = standard();
         let st = OverflowState::default();
-        let now = Instant::now();
+        let now = Utc::now();
         st.record_slot_pool(0, Some("A"));
         assert_eq!(
-            st.on_quota_error(&f, "A", 0, now),
+            st.on_quota_error(&f, "A", 0, now, "garbage"),
             OverflowAction::FlipTo("B".into())
         );
         let d = resolve(Some(&f), "Nikon", &[], true, &st, Some(HOME), now);
@@ -828,9 +983,9 @@ mod tests {
     fn overflow_returns_to_assigned_after_cooldown() {
         let f = standard();
         let st = OverflowState::default();
-        let now = Instant::now();
-        st.on_quota_error(&f, "A", 0, now);
-        let later = now + Duration::from_secs(61 * 60);
+        let now = Utc::now();
+        st.on_quota_error(&f, "A", 0, now, "garbage");
+        let later = now + chrono::Duration::minutes(61);
         let d = resolve(Some(&f), "Nikon", &[], true, &st, Some(HOME), later);
         assert_eq!(d.pool_id.as_deref(), Some("A"));
         assert_eq!(d.env, None);
@@ -838,28 +993,149 @@ mod tests {
     }
 
     #[test]
-    fn sibling_also_failing_marks_exhausted_and_stops_flipping() {
+    fn both_out_routes_earliest_then_returns_assigned() {
         let f = standard();
         let st = OverflowState::default();
-        let now = Instant::now();
+        let now = DateTime::parse_from_rfc3339("2026-10-04T04:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
         st.record_slot_pool(0, Some("A"));
-        assert_eq!(
-            st.on_quota_error(&f, "A", 0, now),
-            OverflowAction::FlipTo("B".into())
-        );
+        st.on_quota_error(&f, "A", 0, now, "resets 3pm (America/Chicago)");
         st.record_slot_pool(0, Some("B"));
         assert_eq!(
-            st.on_quota_error(&f, "A", 0, now),
-            OverflowAction::Exhausted
+            st.on_quota_error(&f, "A", 0, now, "resets 8am (America/Chicago)"),
+            OverflowAction::Stay
         );
-        assert!(st.is_exhausted("A", now));
-        // No further flips while exhausted, and spawns resolve to assigned.
+        assert_eq!(st.route(&f, "A", now), ("B".into(), "all_out"));
         assert_eq!(
-            st.on_quota_error(&f, "A", 0, now),
-            OverflowAction::Exhausted
+            st.on_quota_error(&f, "A", 0, now + chrono::Duration::hours(8), "garbage"),
+            OverflowAction::Stay
         );
-        let d = resolve(Some(&f), "Nikon", &[], true, &st, Some(HOME), now);
-        assert_eq!(d.pool_id.as_deref(), Some("A"));
+        assert_eq!(
+            st.route(&f, "A", now + chrono::Duration::hours(8)),
+            ("B".into(), "all_out")
+        );
+        assert_eq!(
+            st.route(&f, "A", now + chrono::Duration::hours(17)),
+            ("A".into(), "assigned")
+        );
+        let st = OverflowState::default();
+        st.record_slot_pool(0, Some("A"));
+        st.on_quota_error(&f, "A", 0, now, "resets 8am (America/Chicago)");
+        st.record_slot_pool(0, Some("B"));
+        assert_eq!(
+            st.on_quota_error(&f, "A", 0, now, "resets 3pm (America/Chicago)"),
+            OverflowAction::FlipTo("A".into())
+        );
+        assert_eq!(st.route(&f, "A", now), ("A".into(), "all_out"));
+    }
+
+    #[test]
+    fn incident_quota_on_a_returns_to_available_b() {
+        let f = standard();
+        let st = OverflowState::default();
+        st.record_slot_pool(0, Some("A"));
+        assert_eq!(
+            st.on_quota_error(&f, "B", 0, Utc::now(), "garbage"),
+            OverflowAction::FlipTo("B".into())
+        );
+        assert!(st.statuses().contains_key("A"));
+        assert!(!st.statuses().contains_key("B"));
+    }
+
+    #[test]
+    fn quota_on_b_marks_b_and_routes_a() {
+        let f = standard();
+        let st = OverflowState::default();
+        st.record_slot_pool(0, Some("B"));
+        assert_eq!(
+            st.on_quota_error(&f, "B", 0, Utc::now(), "garbage"),
+            OverflowAction::FlipTo("A".into())
+        );
+        assert!(st.statuses().contains_key("B"));
+    }
+
+    #[test]
+    fn parses_reset_and_fallback() {
+        let now = DateTime::parse_from_rfc3339("2026-10-04T04:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        for (text, expected) in [
+            (
+                "weekly limit resets Oct 6 at 8am (America/Chicago)",
+                "2026-10-06T13:00:00+00:00",
+            ),
+            ("resets 3pm (America/Chicago)", "2026-10-04T20:00:00+00:00"),
+            ("resets 8pm (America/Chicago)", "2026-10-05T01:00:00+00:00"),
+            ("garbage", "2026-10-04T05:00:00+00:00"),
+        ] {
+            assert_eq!(
+                quota_reset(text, now, Duration::from_secs(3600)).to_rfc3339(),
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn shared_file_is_reloaded_and_corruption_fails_open() {
+        let dir = std::env::temp_dir().join(format!("pool-shared-{}", uuid::Uuid::new_v4()));
+        let path = dir.join("status.json");
+        let first = OverflowState::with_path(Some(path.clone()));
+        let second = OverflowState::with_path(Some(path.clone()));
+        let f = standard();
+        assert_eq!(second.route(&f, "A", Utc::now()).0, "A");
+        first.on_quota_error(&f, "A", 0, Utc::now(), "garbage");
+        assert_eq!(second.route(&f, "A", Utc::now()).0, "B");
+        second.record_slot_pool(0, Some("B"));
+        second.on_quota_error(&f, "A", 0, Utc::now(), "garbage");
+        assert_eq!(first.statuses().len(), 2);
+        std::fs::write(path, "corrupt").unwrap();
+        assert_eq!(second.route(&f, "A", Utc::now()).0, "A");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn concurrent_shared_writers_preserve_both_accounts() {
+        let dir = std::env::temp_dir().join(format!("pool-concurrent-{}", uuid::Uuid::new_v4()));
+        let path = dir.join("status.json");
+        let barrier = Arc::new(std::sync::Barrier::new(2));
+        let writers: Vec<_> = ["A", "B"]
+            .into_iter()
+            .map(|pool| {
+                let state = OverflowState::with_path(Some(path.clone()));
+                let barrier = barrier.clone();
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    state.record_slot_pool(0, Some(pool));
+                    state.on_quota_error(&standard(), "A", 0, Utc::now(), "garbage");
+                })
+            })
+            .collect();
+        for writer in writers {
+            writer.join().unwrap();
+        }
+        let state = OverflowState::with_path(Some(path));
+        assert_eq!(state.statuses().len(), 2);
+        assert!(state.statuses().contains_key("A"));
+        assert!(state.statuses().contains_key("B"));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn status_path_default_and_override() {
+        assert_eq!(
+            status_path(None, Some("/Users/x")),
+            Some(PathBuf::from("/Users/x/.buzz/state/pool-status.json"))
+        );
+        assert_eq!(
+            status_path(Some(" /tmp/status.json "), None),
+            Some(PathBuf::from("/tmp/status.json"))
+        );
+        assert_eq!(
+            status_path(Some(" "), Some("/Users/x")),
+            Some(PathBuf::from("/Users/x/.buzz/state/pool-status.json"))
+        );
+        assert_eq!(status_path(None, None), None);
     }
 
     #[test]
@@ -870,7 +1146,7 @@ mod tests {
         );
         let st = OverflowState::default();
         assert_eq!(
-            st.on_quota_error(&f, "A", 0, Instant::now()),
+            st.on_quota_error(&f, "A", 0, Utc::now(), "garbage"),
             OverflowAction::Disabled
         );
     }
@@ -878,8 +1154,11 @@ mod tests {
     #[test]
     fn router_is_disabled_without_claude_or_file() {
         let r = PoolRouter::disabled();
-        assert_eq!(r.on_quota_error(&[], 0), OverflowAction::Disabled);
-        assert_eq!(r.decide(&[], Instant::now()).env, None);
+        assert_eq!(
+            r.on_quota_error(&[], 0, "garbage"),
+            OverflowAction::Disabled
+        );
+        assert_eq!(r.decide(&[], Utc::now()).env, None);
     }
 
     #[test]
@@ -910,7 +1189,7 @@ mod tests {
         assert_eq!(d.pool_id, None);
         assert_eq!(d.reason, "skipped:custom-auth");
         // Same agent without the persona var WOULD be routed to B.
-        assert_eq!(r.decide(&[], Instant::now()).env, cc2());
+        assert_eq!(r.decide(&[], Utc::now()).env, cc2());
         std::fs::remove_dir_all(&dir).ok();
     }
 
@@ -939,11 +1218,17 @@ mod tests {
             "ANTHROPIC_BASE_URL".to_string(),
             "http://omniroute".to_string(),
         )];
-        assert_eq!(r.decide(&glm, Instant::now()).env, None);
-        assert_eq!(r.on_quota_error(&glm, 0), OverflowAction::Disabled);
+        assert_eq!(r.decide(&glm, Utc::now()).env, None);
+        assert_eq!(
+            r.on_quota_error(&glm, 0, "garbage"),
+            OverflowAction::Disabled
+        );
         // Gilfoyle is assigned B; quota on B flips to A (inherit).
-        assert_eq!(r.on_quota_error(&[], 0), OverflowAction::FlipTo("A".into()));
-        assert_eq!(r.decide(&[], Instant::now()).env, None);
+        assert_eq!(
+            r.on_quota_error(&[], 0, "garbage"),
+            OverflowAction::FlipTo("A".into())
+        );
+        assert_eq!(r.decide(&[], Utc::now()).env, None);
         std::fs::remove_dir_all(&dir).ok();
     }
 
@@ -997,7 +1282,10 @@ mod tests {
         assert!(ev[0]["ts"].as_str().is_some_and(|t| t.ends_with('Z')));
 
         // After a flip the next spawn is on B, with the redirect's expiry.
-        assert_eq!(r.on_quota_error(&[], 2), OverflowAction::FlipTo("B".into()));
+        assert_eq!(
+            r.on_quota_error(&[], 2, "garbage"),
+            OverflowAction::FlipTo("B".into())
+        );
         r.decide_for_slot(&[], 2);
         let ev = read_events(&path);
         assert_eq!(ev.len(), 2);
@@ -1036,7 +1324,7 @@ mod tests {
         assert_eq!(r.pool_for_slot(0), None, "never spawned: no stamp");
         r.decide_for_slot(&[], 0);
         assert_eq!(r.pool_for_slot(0), Some(("A".into(), "main".into())));
-        r.on_quota_error(&[], 0);
+        r.on_quota_error(&[], 0, "garbage");
         r.decide_for_slot(&[], 0);
         assert_eq!(r.pool_for_slot(0), Some(("B".into(), "second".into())));
         let mut off = r.clone();

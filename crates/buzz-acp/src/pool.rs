@@ -718,6 +718,8 @@ pub enum TimeoutKind {
 pub enum PromptOutcome {
     Ok(StopReason),
     Error(AcpError),
+    /// Shared account availability changed before this turn began.
+    PoolReroute,
     AgentExited,
     Timeout(TimeoutKind),
     /// Intentional cancel via `!cancel` command or interrupt mode.
@@ -2428,7 +2430,9 @@ fn task_state_for_outcome(outcome: &PromptOutcome) -> buzz_core::task_status::Ta
         ) => TaskState::Done,
         // An intentional cancel whose cleanup overran its grace is still a
         // cancel from the reader's point of view.
-        PromptOutcome::Cancelled | PromptOutcome::CancelDrainTimeout(_) => TaskState::Cancelled,
+        PromptOutcome::Cancelled
+        | PromptOutcome::CancelDrainTimeout(_)
+        | PromptOutcome::PoolReroute => TaskState::Cancelled,
         PromptOutcome::Error(_) | PromptOutcome::AgentExited | PromptOutcome::Timeout(_) => {
             TaskState::Error
         }
@@ -2502,6 +2506,19 @@ pub async fn run_prompt_task(
         PromptSource::Channel(channel_id) => Some(*channel_id),
         PromptSource::Heartbeat => None,
     };
+    // Read shared account status before any session RPC or prompt. Return the
+    // untouched batch so the main loop can use its normal overflow respawn.
+    if ctx.pool_router.needs_reroute(&[], agent.index) {
+        agent.acp.clear_steer_rx();
+        let _ = result_tx.send(PromptResult {
+            agent,
+            source,
+            turn_id,
+            outcome: PromptOutcome::PoolReroute,
+            batch,
+        });
+        return;
+    }
     let turn_started_at = chrono::Utc::now().to_rfc3339();
     agent.acp.set_observer_context(observer::context_for_turn(
         observer_channel_id,
@@ -8559,6 +8576,7 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
             PromptOutcome::Timeout(TimeoutKind::Hard { .. }) => "Timeout(Hard)",
             PromptOutcome::CancelDrainTimeout(_) => "CancelDrainTimeout",
             PromptOutcome::Error(_) => "Error",
+            PromptOutcome::PoolReroute => "PoolReroute",
             PromptOutcome::Cancelled => "Cancelled",
             PromptOutcome::Ok(_) => "Ok",
         };
@@ -9031,6 +9049,64 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
     /// the returned agent's `steer_rx` is `None` and a subsequent
     /// `install_steer_rx` does not panic.
     #[tokio::test]
+    async fn shared_pool_reroute_precedes_session_rpc_and_preserves_drop_batch() {
+        let dir = std::env::temp_dir().join(format!("pool-preturn-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let cfg = dir.join("pools.json");
+        std::fs::write(
+            &cfg,
+            r#"{"default":"A","pools":{"A":{},"B":{}},"overflow":{"enabled":true}}"#,
+        )
+        .unwrap();
+        let router = crate::auth_pool::PoolRouter {
+            enabled_for_claude: true,
+            config_path: Some(cfg),
+            ..Default::default()
+        };
+        router.decide_for_slot(&[], 0);
+        router.on_quota_error(&[], 0, "garbage");
+        let mut ctx = make_prompt_context_no_owner();
+        ctx.pool_router = router;
+        ctx.dedup_mode = DedupMode::Drop;
+        let agent = OwnedAgent {
+            index: 0,
+            acp: AcpClient::spawn("cat", &[], &[], false).await.unwrap(),
+            state: Default::default(),
+            model_capabilities: None,
+            desired_model: None,
+            model_overridden: false,
+            desired_model_request_id: None,
+            desired_model_pending_ack: false,
+            startup_effort: None,
+            agent_name: "test".into(),
+            goose_system_prompt_supported: None,
+            protocol_version: 1,
+        };
+        let batch = one_event_batch(Uuid::new_v4());
+        let expected_id = batch.events[0].event.id;
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        tokio::time::timeout(
+            Duration::from_secs(2),
+            run_prompt_task(
+                agent,
+                Some(batch),
+                None,
+                Arc::new(ctx),
+                tx,
+                None,
+                "pre-turn".into(),
+            ),
+        )
+        .await
+        .unwrap();
+        let mut result = rx.recv().await.unwrap();
+        assert!(matches!(result.outcome, PromptOutcome::PoolReroute));
+        assert_eq!(result.batch.unwrap().events[0].event.id, expected_id);
+        result.agent.acp.shutdown().await;
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[tokio::test]
     async fn test_send_prompt_result_clears_steer_rx_on_early_return() {
         let acp = AcpClient::spawn(
             "bash",
@@ -9332,7 +9408,7 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
         let r = &ctx.pool_router;
         r.decide_for_slot(&[], 1); // spawned on A
         assert_eq!(
-            r.on_quota_error(&[], 1),
+            r.on_quota_error(&[], 1, "garbage"),
             crate::auth_pool::OverflowAction::FlipTo("B".into())
         );
         r.decide_for_slot(&[], 1); // respawned on B (overflow)
