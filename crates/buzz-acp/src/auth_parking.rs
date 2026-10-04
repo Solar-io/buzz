@@ -113,8 +113,20 @@ impl AuthParking {
     }
 
     pub(crate) fn restored_batches(&self, now: u64) -> Vec<FlushBatch> {
-        self.batches
-            .iter()
+        let mut batches: Vec<_> = self.batches.iter().collect();
+        // A repeated probe updates its journal entry after newer batches. That
+        // write order must never become delivery order on restart.
+        batches.sort_by_key(|batch| {
+            batch
+                .events
+                .iter()
+                .chain(&batch.cancelled_events)
+                .map(|e| e.received_at_ms)
+                .min()
+                .unwrap_or(u64::MAX)
+        });
+        batches
+            .into_iter()
             .map(|batch| FlushBatch {
                 channel_id: batch.channel_id,
                 events: batch.events.iter().map(|e| e.restore(now)).collect(),

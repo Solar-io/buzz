@@ -6180,6 +6180,29 @@ mod auth_parking_tests {
     }
 
     #[test]
+    fn auth_restart_orders_batches_by_original_receipt_not_last_probe() {
+        let path = path();
+        let ch = Uuid::new_v4();
+        let mut queue = EventQueue::new(DedupMode::Queue);
+        queue.load_auth_parked(path.clone(), 1000);
+        let mut older = batch(ch, "older");
+        older.events[0].received_at = Instant::now() - Duration::from_secs(200);
+        let newer = batch(ch, "newer");
+        queue.park_auth(older.clone(), 1000);
+        queue.park_auth(newer.clone(), 1000);
+        // Move the older journal record to the end without changing receipt time.
+        queue.auth_parking.park(&older, 1000);
+        let mut restarted = EventQueue::new(DedupMode::Queue);
+        restarted.load_auth_parked(path.clone(), 1001);
+        let replay = restarted.flush_next().unwrap();
+        assert_eq!(
+            replay.events.iter().map(|e| e.event.id).collect::<Vec<_>>(),
+            vec![older.events[0].event.id, newer.events[0].event.id]
+        );
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
     fn auth_cancelled_batch_cannot_bypass_probe_delay() {
         let mut queue = EventQueue::new(DedupMode::Queue);
         let ch = Uuid::new_v4();
