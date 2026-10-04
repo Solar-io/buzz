@@ -9602,9 +9602,15 @@ mod error_outcome_emission_tests {
                 let event: nostr::Event =
                     serde_json::from_slice(&bytes[offset..offset + length]).unwrap();
                 event.verify().unwrap();
-                let status = if attempts < 2 && fail_first { 500 } else { 200 };
+                let status = if attempts == 0 && fail_first {
+                    500
+                } else {
+                    200
+                };
+                let body =
+                    serde_json::json!({"accepted": !(attempts < 2 && fail_first)}).to_string();
                 attempts += 1;
-                socket.write_all(format!("HTTP/1.1 {status} Stub\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{{}}").as_bytes()).await.unwrap();
+                socket.write_all(format!("HTTP/1.1 {status} Stub\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).as_bytes()).await.unwrap();
                 tx.send(event).await.unwrap();
             }
         });
@@ -9710,6 +9716,13 @@ mod error_outcome_emission_tests {
         // Same process retry, then restart: failures retry; accepted notices do not.
         drive_notice_failure(&mut queue, &rest, batch.clone()).await;
         receive_notice(&mut notices, &queue, batch.channel_id).await;
+        let value: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!(
+            value["noticed_channels"],
+            serde_json::json!([]),
+            "HTTP 200 refusal must not suppress retry"
+        );
         let mut restarted = startup_event_queue(
             DedupMode::Queue,
             300,

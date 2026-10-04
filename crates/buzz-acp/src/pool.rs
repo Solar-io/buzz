@@ -5601,7 +5601,18 @@ pub(crate) async fn post_failure_notice(
         }
     };
     match tokio::time::timeout(Duration::from_secs(5), rest.submit_event(&event)).await {
-        Ok(Ok(_)) => true,
+        Ok(Ok(response))
+            if response
+                .get("accepted")
+                .and_then(serde_json::Value::as_bool)
+                == Some(true) =>
+        {
+            true
+        }
+        Ok(Ok(response)) => {
+            tracing::warn!(channel = %channel_id, "failure notice refused: {response}");
+            false
+        }
         Ok(Err(e)) => {
             tracing::warn!(channel = %channel_id, "failure notice failed: {e}");
             false
