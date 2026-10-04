@@ -3,6 +3,7 @@ import {
   codexCost,
   codexCredits,
   codexNumber,
+  codexOutlook,
   codexReset,
   codexTokens,
   type CodexUsageBucket,
@@ -36,6 +37,7 @@ function CodexBar({ used }: { used: number }) {
 export function CodexRow({ data }: { data: CodexVitals | null }) {
   const weekly = data?.weekly;
   const fraction = weekly?.usedFraction ?? null;
+  const outlook = codexOutlook(weekly);
   return (
     <span
       data-testid="vitals-codex-row"
@@ -55,8 +57,12 @@ export function CodexRow({ data }: { data: CodexVitals | null }) {
             </span>
           </span>
           <span className="mt-1 block text-muted-foreground">
-            {percent(1 - fraction)}% free · resets{" "}
-            {codexReset(weekly?.resetsAt ?? null)}
+            {percent(1 - fraction)}% free ·{" "}
+            {outlook ? (
+              <b className="font-semibold text-foreground">{outlook}</b>
+            ) : (
+              <>resets {codexReset(weekly?.resetsAt ?? null)}</>
+            )}
           </span>
         </>
       )}
@@ -68,6 +74,7 @@ export function CodexRow({ data }: { data: CodexVitals | null }) {
 export function CodexStrip({ data }: { data: CodexVitals | null }) {
   const weekly = data?.weekly;
   const fraction = weekly?.usedFraction ?? null;
+  const outlook = codexOutlook(weekly);
   return (
     <span
       data-testid="vitals-codex-strip"
@@ -83,6 +90,7 @@ export function CodexStrip({ data }: { data: CodexVitals | null }) {
               {percent(1 - fraction)}% free
             </b>
             {weekly?.stale ? " · stale" : ""}
+            {outlook ? ` · ${outlook}` : ""}
           </span>
         </span>
       )}
@@ -116,7 +124,18 @@ function WindowRow({
       )}
       <p className="mt-1 font-mono text-2xs text-muted-foreground">
         resets {codexReset(window?.resetsAt ?? null)}
+        {codexOutlook(window) ? ` · ${codexOutlook(window)}` : ""}
       </p>
+      {window?.runway?.burnPerHour != null && !window.stale && (
+        <p className="mt-0.5 font-mono text-2xs text-muted-foreground">
+          72h average, weekends ×1.5:{" "}
+          {(window.runway.burnPerHour * 100).toFixed(1)}%/h
+          {window.runway.historyHours !== null &&
+          window.runway.historyHours < 72
+            ? ` (${Math.round(window.runway.historyHours)}h of history)`
+            : ""}
+        </p>
+      )}
     </div>
   );
 }
