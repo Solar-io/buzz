@@ -1,6 +1,7 @@
 #![deny(unsafe_code)]
 
 mod acp;
+mod auth_parking;
 mod auth_pool;
 mod claims;
 mod claims_writer;
@@ -2197,6 +2198,9 @@ async fn tokio_main() -> Result<()> {
     let dedup_mode = config.dedup_mode;
     let mut queue =
         EventQueue::new(dedup_mode).with_in_flight_deadline(config.max_turn_duration_secs);
+    if let Some(path) = auth_parking::path_for_agent(&pubkey_hex) {
+        queue.load_auth_parked(path, auth_parking::now_secs());
+    }
 
     // Online means the harness can receive work, not merely that its socket is
     // connected. Publishing after channel subscriptions gives desktop callers
@@ -4548,33 +4552,16 @@ mod claim_router_tests {
     }
 }
 
-/// Returns `true` when `error` is a non-retryable authentication failure.
-///
-/// Retrying auth errors is harmful: the token won't self-repair between
-/// attempts, so each retry wastes an attempt slot, delays the visible failure,
-/// and burns the user's context window. Dead-letter immediately and surface a
-/// re-authentication hint instead.
-///
-/// # Classification rationale
-///
-/// Auth failures arrive as [`acp::AcpError::AgentError`] with a message
-/// surfaced from the upstream CLI. Two narrow patterns reliably identify
-/// non-transient auth failures observed in the field:
-///
-/// - `"Re-authenticate"` — emitted by the Claude CLI when an OAuth token has
-///   expired ("OAuth access token has expired. Re-authenticate to continue.").
-///   Specific to the auth-expiry flow; does not appear in unrelated errors.
-/// - `"API Error: 401"` — present in Claude/Codex HTTP-401 responses; 401 is
-///   the standard auth-failure status and does not arise from network blips.
-///
-/// False positives (misclassifying a transient error as non-retryable) silently
-/// drop a user message, which is worse than a false negative (extra retries on
-/// an auth error). Both patterns are therefore chosen for high precision.
+/// Narrow upstream CLI auth patterns. These failures park work without using
+/// the normal retry budget; quota and transport failures keep their own paths.
 fn is_auth_error(error: &acp::AcpError) -> bool {
     let acp::AcpError::AgentError { message, .. } = error else {
         return false;
     };
-    message.contains("Re-authenticate") || message.contains("API Error: 401")
+    message.contains("Re-authenticate")
+        || message.contains("API Error: 401")
+        || message.contains("Failed to authenticate")
+        || message.contains("OAuth session expired")
 }
 
 /// claude-agent-acp's `errorKind` values that mean "this account is out of
@@ -4701,6 +4688,22 @@ fn handle_prompt_result(
     // match arm in the death_message construction reads it.
     let mut hard_timeout_fate_suffix: Option<&'static str> = None;
 
+    if let PromptSource::Channel(ch) = result.source {
+        if matches!(result.outcome, PromptOutcome::Ok(_)) {
+            if let Some(batch) = queue.dispatched_batch(ch) {
+                queue.finish_auth(&batch);
+            }
+        } else if result.batch.is_none()
+            && matches!(&result.outcome, PromptOutcome::Error(e) if is_auth_error(e))
+        {
+            result.batch = queue.dispatched_batch(ch);
+        } else if result.batch.is_none() {
+            if let Some(batch) = queue.dispatched_batch(ch) {
+                queue.finish_auth(&batch);
+            }
+        }
+    }
+
     // Requeue BEFORE mark_complete: requeue() sets retry_after with a future
     // deadline, and mark_complete() checks for it to decide whether to preserve
     // retry_counts. If mark_complete runs first, retry_counts is cleared and
@@ -4746,6 +4749,7 @@ fn handle_prompt_result(
                     "⚠️ I couldn't process the last request (the turn exceeded the maximum duration ({}s)). Please re-send if it's still needed.",
                     config.max_turn_duration_secs
                 );
+                queue.finish_auth(&batch);
                 spawn_failure_notice(rest_client, &batch, content);
                 hard_timeout_fate_suffix = Some(" — dead-lettered (no recent activity)");
             } else if matches!(
@@ -4764,26 +4768,23 @@ fn handle_prompt_result(
                         "⚠️ I couldn't process the last request after multiple retries (the turn exceeded the maximum duration ({}s)). Please re-send if it's still needed.",
                         config.max_turn_duration_secs
                     );
+                    queue.finish_auth(&dead);
                     spawn_failure_notice(rest_client, &dead, content);
                     hard_timeout_fate_suffix = Some(" — dead-lettered (retry budget exhausted)");
                 } else {
                     hard_timeout_fate_suffix = Some(" — requeued for retry (recently active)");
                 }
             } else if matches!(&result.outcome, PromptOutcome::Error(e) if is_auth_error(e)) {
-                // Auth errors are non-retryable: the token won't self-repair
-                // between retries, so requeueing only wastes attempt slots and
-                // delays the visible failure. Dead-letter immediately and tell
-                // the user to re-authenticate the CLI.
-                tracing::warn!(
-                    channel_id = %batch.channel_id,
-                    events = batch.events.len(),
-                    "dead-lettering batch immediately — non-retryable auth error"
-                );
-                let content = "⚠️ I couldn't process the last request: authentication failed. \
-                    Please re-authenticate the CLI (e.g. run `claude /login` or `codex login`) \
-                    and then re-send."
-                    .to_string();
-                spawn_failure_notice(rest_client, &batch, content);
+                let notice_batch = batch.clone();
+                let (dead, notice) = queue.park_auth(batch, auth_parking::now_secs());
+                if let Some(dead) = dead {
+                    tracing::warn!(channel_id = %dead.channel_id, "auth parking cap reached; dead-lettering batch");
+                    spawn_failure_notice(rest_client, &dead,
+                        "⚠️ My Claude login has been unavailable for six hours. Please log in and re-send your request.".into());
+                } else if notice {
+                    spawn_failure_notice(rest_client, &notice_batch,
+                        "⚠️ My Claude login expired, so I can't work on this right now. I've kept your message and will pick it up automatically once login works again.".into());
+                }
             } else if let Some(dead) = queue.requeue(batch) {
                 let reason = match &result.outcome {
                     PromptOutcome::Timeout(TimeoutKind::Idle) => "the turn timed out".to_string(),
@@ -4797,9 +4798,11 @@ fn handle_prompt_result(
                 let content = format!(
                     "⚠️ I couldn't process the last request after multiple retries ({reason}). Please re-send if it's still needed."
                 );
+                queue.finish_auth(&dead);
                 spawn_failure_notice(rest_client, &dead, content);
             }
         } else {
+            queue.finish_auth(&batch);
             tracing::debug!(
                 channel_id = %batch.channel_id,
                 events = batch.events.len(),
@@ -9356,6 +9359,38 @@ mod error_outcome_emission_tests {
     // ── is_auth_error classification ───────────────────────────────────────
 
     #[test]
+    fn is_auth_error_matches_production_oauth_expiry() {
+        let e = acp::AcpError::AgentError {
+            code: -32603,
+            message: "Internal error: Failed to authenticate: OAuth session expired and could not be refreshed".into(),
+            error_kind: None,
+        };
+        assert!(is_auth_error(&e));
+        for message in ["Failed to authenticate", "OAuth session expired"] {
+            assert!(is_auth_error(&acp::AcpError::AgentError {
+                code: -32603,
+                message: message.into(),
+                error_kind: None,
+            }));
+        }
+    }
+
+    #[test]
+    fn is_auth_error_rejects_quota_and_unrelated_errors() {
+        for message in [
+            "You've hit your limit · resets 6pm",
+            "Internal error: tool crashed",
+        ] {
+            let e = acp::AcpError::AgentError {
+                code: -32603,
+                message: message.into(),
+                error_kind: None,
+            };
+            assert!(!is_auth_error(&e), "{message}");
+        }
+    }
+
+    #[test]
     fn is_auth_error_matches_reauthenticate_message() {
         let e = acp::AcpError::AgentError {
             code: -32000,
@@ -9411,95 +9446,156 @@ mod error_outcome_emission_tests {
 
     // ── auth error dead-letter behavior ────────────────────────────────────
 
-    /// An auth-class `PromptOutcome::Error` must dead-letter immediately
-    /// (the batch is never requeued) so the user sees a re-auth hint at once
-    /// rather than after 10 futile retries.
+    /// Auth failures keep the batch with a fixed probe delay.
     #[tokio::test]
-    async fn auth_error_dead_letters_immediately_without_requeueing() {
-        let keys = nostr::Keys::generate();
-        let event = nostr::EventBuilder::new(nostr::Kind::Custom(9), "test")
-            .sign_with_keys(&keys)
-            .unwrap();
-        let channel_id = uuid::Uuid::new_v4();
-        let batch = FlushBatch {
-            channel_id,
-            events: vec![BatchEvent {
-                event,
-                prompt_tag: "test".into(),
-                received_at: std::time::Instant::now(),
-            }],
-            cancelled_events: vec![],
-            cancel_reason: None,
-        };
+    async fn auth_error_parks_without_dead_lettering() {
+        for mode in [DedupMode::Queue, DedupMode::Drop] {
+            let keys = nostr::Keys::generate();
+            let event = nostr::EventBuilder::new(nostr::Kind::Custom(9), "test")
+                .sign_with_keys(&keys)
+                .unwrap();
+            let channel_id = uuid::Uuid::new_v4();
+            let batch = FlushBatch {
+                channel_id,
+                events: vec![BatchEvent {
+                    event,
+                    prompt_tag: "test".into(),
+                    received_at: std::time::Instant::now(),
+                }],
+                cancelled_events: vec![],
+                cancel_reason: None,
+            };
 
-        let auth_error = acp::AcpError::AgentError {
-            code: -32000,
-            message: "API Error: 401 OAuth access token has expired. Re-authenticate to continue."
-                .to_string(),
-            error_kind: None,
-        };
+            let auth_error = acp::AcpError::AgentError {
+                code: -32000,
+                message:
+                    "API Error: 401 OAuth access token has expired. Re-authenticate to continue."
+                        .to_string(),
+                error_kind: None,
+            };
 
-        let agent = dummy_agent(0).await;
-        let mut pool = AgentPool::from_slots(vec![None]);
-        let task_id = pool.join_set.spawn(async {}).id();
-        pool.task_map_mut().insert(
-            task_id,
-            crate::pool::TaskMeta {
-                agent_index: 0,
-                channel_id: None,
+            let agent = dummy_agent(0).await;
+            let mut pool = AgentPool::from_slots(vec![None]);
+            let task_id = pool.join_set.spawn(async {}).id();
+            pool.task_map_mut().insert(
+                task_id,
+                crate::pool::TaskMeta {
+                    agent_index: 0,
+                    channel_id: None,
+                    turn_id: "test-turn-id".to_string(),
+                    recoverable_batch: None,
+                    control_tx: None,
+                    steer_tx: None,
+                    successful_steer_deliveries: HashSet::new(),
+                    started_at: std::time::SystemTime::now(),
+                    acp_session: None,
+                },
+            );
+            let path = std::env::temp_dir().join(format!("auth-result-{}.json", Uuid::new_v4()));
+            let mut queue = EventQueue::new(mode);
+            queue.load_auth_parked(path.clone(), auth_parking::now_secs());
+            queue.requeue_preserve_timestamps(batch.clone());
+            queue.flush_next().unwrap();
+            let original = batch.clone();
+            let config = test_config();
+            let mut heartbeat_in_flight = false;
+            let removed_channels = std::collections::HashSet::new();
+            let mut crash_history = vec![SlotCircuit {
+                crash_times: Vec::new(),
+                open_until: None,
+                respawn_in_flight: false,
+            }];
+            let (respawn_tx, _respawn_rx) = mpsc::channel(8);
+            let mut respawn_tasks = tokio::task::JoinSet::new();
+            let result = PromptResult {
+                agent,
+                source: PromptSource::Channel(channel_id),
                 turn_id: "test-turn-id".to_string(),
-                recoverable_batch: None,
-                control_tx: None,
-                steer_tx: None,
-                successful_steer_deliveries: HashSet::new(),
-                started_at: std::time::SystemTime::now(),
-                acp_session: None,
-            },
-        );
-        let mut queue = EventQueue::new(config::DedupMode::Queue);
-        let config = test_config();
-        let mut heartbeat_in_flight = false;
-        let removed_channels = std::collections::HashSet::new();
-        let mut crash_history = vec![SlotCircuit {
-            crash_times: Vec::new(),
-            open_until: None,
-            respawn_in_flight: false,
-        }];
-        let (respawn_tx, _respawn_rx) = mpsc::channel(8);
-        let mut respawn_tasks = tokio::task::JoinSet::new();
-        let result = PromptResult {
-            agent,
-            source: PromptSource::Channel(channel_id),
-            turn_id: "test-turn-id".to_string(),
-            outcome: PromptOutcome::Error(auth_error),
-            batch: Some(batch),
-        };
-        handle_prompt_result(
-            &mut pool,
-            &mut queue,
-            &config,
-            result,
-            &mut heartbeat_in_flight,
-            &removed_channels,
-            &HashMap::new(),
-            &mut crash_history,
-            &respawn_tx,
-            &mut respawn_tasks,
-            None,
-            None,
-        );
+                outcome: PromptOutcome::Error(auth_error),
+                batch: if matches!(mode, DedupMode::Queue) {
+                    Some(batch)
+                } else {
+                    None
+                },
+            };
+            handle_prompt_result(
+                &mut pool,
+                &mut queue,
+                &config,
+                result,
+                &mut heartbeat_in_flight,
+                &removed_channels,
+                &HashMap::new(),
+                &mut crash_history,
+                &respawn_tx,
+                &mut respawn_tasks,
+                None,
+                None,
+            );
 
-        // The batch must not be requeued: pending_channels returns 0.
-        assert_eq!(
-            queue.pending_channels(),
-            0,
-            "auth error must dead-letter immediately — batch must not be requeued"
-        );
-        assert_eq!(
-            queue.queued_event_count(&channel_id),
-            0,
-            "auth error must dead-letter immediately — no events should be pending"
-        );
+            // Auth failure keeps the request and blocks immediate retry.
+            assert_eq!(
+                queue.pending_channels(),
+                1,
+                "auth error must retain the batch"
+            );
+            assert_eq!(
+                queue.queued_event_count(&channel_id),
+                1,
+                "auth error must retain the original event"
+            );
+            // Restart and complete through the real result handler: successful
+            // results carry no batch, so completion must use dispatched identity.
+            queue.load_auth_parked(path.clone(), auth_parking::now_secs());
+            let replay = queue.flush_next().unwrap();
+            assert_eq!(replay.events[0].event.id, original.events[0].event.id);
+            let task_id = pool.join_set.spawn(async {}).id();
+            pool.task_map_mut().insert(
+                task_id,
+                crate::pool::TaskMeta {
+                    agent_index: 0,
+                    channel_id: Some(channel_id),
+                    turn_id: "replay".into(),
+                    recoverable_batch: None,
+                    control_tx: None,
+                    steer_tx: None,
+                    successful_steer_deliveries: HashSet::new(),
+                    started_at: std::time::SystemTime::now(),
+                    acp_session: None,
+                },
+            );
+            let success = PromptResult {
+                agent: dummy_agent(0).await,
+                source: PromptSource::Channel(channel_id),
+                turn_id: "replay".into(),
+                outcome: PromptOutcome::Ok(acp::StopReason::EndTurn),
+                batch: None,
+            };
+            handle_prompt_result(
+                &mut pool,
+                &mut queue,
+                &config,
+                success,
+                &mut heartbeat_in_flight,
+                &removed_channels,
+                &HashMap::new(),
+                &mut crash_history,
+                &respawn_tx,
+                &mut respawn_tasks,
+                None,
+                None,
+            );
+            assert!(
+                auth_parking::AuthParking::load(path.clone(), auth_parking::now_secs())
+                    .restored_batches(auth_parking::now_secs())
+                    .is_empty()
+            );
+            assert!(
+                queue.park_auth(original, auth_parking::now_secs()).1,
+                "successful turn resets the channel notice"
+            );
+            std::fs::remove_file(path).unwrap();
+        }
     }
 
     /// A non-auth application error (e.g. usage credits) must still follow the

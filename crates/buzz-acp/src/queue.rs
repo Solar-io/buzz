@@ -62,7 +62,7 @@ pub struct BatchEvent {
 
 /// Why a batch's prior turn was cancelled — controls how `format_prompt`
 /// frames the merged re-prompt.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum CancelReason {
     /// A new request should **supersede** the interrupted work
     /// (`MultipleEventHandling::Interrupt`).
@@ -137,6 +137,8 @@ pub struct FlushBatch {
 /// ```
 pub struct EventQueue {
     queues: HashMap<Uuid, VecDeque<QueuedEvent>>,
+    auth_parking: crate::auth_parking::AuthParking,
+    dispatched_batches: HashMap<Uuid, FlushBatch>,
     in_flight_channels: HashSet<Uuid>,
     /// Per-channel deadline for auto-expiring stuck in-flight entries.
     in_flight_deadlines: HashMap<Uuid, Instant>,
@@ -172,6 +174,50 @@ pub struct EventQueue {
 }
 
 impl EventQueue {
+    pub(crate) fn load_auth_parked(&mut self, path: std::path::PathBuf, now: u64) {
+        self.auth_parking = crate::auth_parking::AuthParking::load(path, now);
+        // Requeue pushes to the front; reverse journal order to preserve it.
+        for batch in self.auth_parking.restored_batches(now).into_iter().rev() {
+            self.restore_auth_batch(batch);
+        }
+    }
+
+    fn restore_auth_batch(&mut self, batch: FlushBatch) {
+        if !batch.cancelled_events.is_empty() {
+            self.cancelled_batches
+                .entry(batch.channel_id)
+                .or_default()
+                .extend(batch.cancelled_events.clone());
+            if let Some(reason) = batch.cancel_reason {
+                self.cancel_reasons.insert(batch.channel_id, reason);
+            }
+        }
+        self.requeue_preserve_timestamps(batch);
+    }
+
+    pub(crate) fn park_auth(&mut self, batch: FlushBatch, now: u64) -> (Option<FlushBatch>, bool) {
+        let (expired, notice) = self.auth_parking.park(&batch, now);
+        if expired {
+            return (Some(batch), false);
+        }
+        let ch = batch.channel_id;
+        tracing::warn!(channel_id = %ch, events = batch.events.len(),
+            delay_secs = crate::auth_parking::AUTH_PROBE_DELAY.as_secs(),
+            "parking auth-failed batch without consuming retry budget");
+        self.restore_auth_batch(batch);
+        self.retry_after
+            .insert(ch, Instant::now() + crate::auth_parking::AUTH_PROBE_DELAY);
+        (None, notice)
+    }
+
+    pub(crate) fn dispatched_batch(&self, ch: Uuid) -> Option<FlushBatch> {
+        self.dispatched_batches.get(&ch).cloned()
+    }
+
+    pub(crate) fn finish_auth(&mut self, batch: &FlushBatch) {
+        self.auth_parking.finish(batch);
+    }
+
     /// Create a new empty event queue with the given dedup mode.
     ///
     /// Uses [`DEFAULT_IN_FLIGHT_DEADLINE_SECS`] for the in-flight backstop.
@@ -180,6 +226,8 @@ impl EventQueue {
     pub fn new(dedup_mode: DedupMode) -> Self {
         Self {
             queues: HashMap::new(),
+            auth_parking: Default::default(),
+            dispatched_batches: HashMap::new(),
             in_flight_channels: HashSet::new(),
             in_flight_deadlines: HashMap::new(),
             in_flight_batch_sizes: HashMap::new(),
@@ -241,7 +289,15 @@ impl EventQueue {
         let queue = self.queues.entry(event.channel_id).or_default();
         // Enforce per-channel depth cap: drop oldest to make room.
         if queue.len() >= MAX_PENDING_PER_CHANNEL {
-            queue.pop_front();
+            // Parked auth requests have a durable promise of replay. Keep them
+            // when fresh traffic reaches the ordinary queue depth limit.
+            let Some(index) = queue
+                .iter()
+                .position(|e| !self.auth_parking.contains(e.event.id))
+            else {
+                return false;
+            };
+            queue.remove(index);
             tracing::warn!(
                 channel_id = %event.channel_id,
                 limit = MAX_PENDING_PER_CHANNEL,
@@ -259,6 +315,13 @@ impl EventQueue {
     /// across channels), drains ALL events for that channel into a single batch,
     /// inserts into `in_flight_channels`, and returns the batch.
     pub fn flush_next(&mut self) -> Option<FlushBatch> {
+        let batch = self.flush_next_inner()?;
+        self.dispatched_batches
+            .insert(batch.channel_id, batch.clone());
+        Some(batch)
+    }
+
+    fn flush_next_inner(&mut self) -> Option<FlushBatch> {
         let now = Instant::now();
 
         // Auto-expire any stuck in-flight entries that missed mark_complete.
@@ -309,7 +372,10 @@ impl EventQueue {
                 let cancelled_id = self
                     .cancelled_batches
                     .keys()
-                    .find(|id| !self.in_flight_channels.contains(id))
+                    .find(|id| {
+                        !self.in_flight_channels.contains(id)
+                            && self.retry_after.get(id).is_none_or(|&t| t <= now)
+                    })
                     .copied();
                 match cancelled_id {
                     Some(id) => {
@@ -391,6 +457,7 @@ impl EventQueue {
     ///
     /// Also cleans up any already-expired `retry_after` entry.
     pub fn mark_complete(&mut self, channel_id: Uuid) {
+        self.dispatched_batches.remove(&channel_id);
         self.in_flight_channels.remove(&channel_id);
         self.in_flight_deadlines.remove(&channel_id);
         self.in_flight_batch_sizes.remove(&channel_id);
@@ -487,7 +554,13 @@ impl EventQueue {
         // the queue over the limit. Without this, repeated requeue+push cycles
         // can grow the queue unboundedly.
         while queue.len() > MAX_PENDING_PER_CHANNEL {
-            queue.pop_back();
+            let Some(index) = queue
+                .iter()
+                .rposition(|e| !self.auth_parking.contains(e.event.id))
+            else {
+                break;
+            };
+            queue.remove(index);
             tracing::warn!(
                 channel_id = %channel_id,
                 limit = MAX_PENDING_PER_CHANNEL,
@@ -520,7 +593,13 @@ impl EventQueue {
         }
         // Enforce per-channel cap: trim newest (back) events if over limit.
         while queue.len() > MAX_PENDING_PER_CHANNEL {
-            queue.pop_back();
+            let Some(index) = queue
+                .iter()
+                .rposition(|e| !self.auth_parking.contains(e.event.id))
+            else {
+                break;
+            };
+            queue.remove(index);
             tracing::warn!(
                 channel_id = %channel_id,
                 limit = MAX_PENDING_PER_CHANNEL,
@@ -585,10 +664,10 @@ impl EventQueue {
             !q.is_empty()
                 && !self.in_flight_channels.contains(id)
                 && self.retry_after.get(id).is_none_or(|&t| t <= now)
-        }) || self
-            .cancelled_batches
-            .keys()
-            .any(|id| !self.in_flight_channels.contains(id))
+        }) || self.cancelled_batches.keys().any(|id| {
+            !self.in_flight_channels.contains(id)
+                && self.retry_after.get(id).is_none_or(|&t| t <= now)
+        })
     }
 
     /// Returns `true` if any undispatched work remains for a channel that is
@@ -759,7 +838,13 @@ impl EventQueue {
         let queue = self.queues.entry(channel_id).or_default();
         queue.push_front(qe);
         while queue.len() > MAX_PENDING_PER_CHANNEL {
-            queue.pop_back();
+            let Some(index) = queue
+                .iter()
+                .rposition(|e| !self.auth_parking.contains(e.event.id))
+            else {
+                break;
+            };
+            queue.remove(index);
             tracing::warn!(
                 channel_id = %channel_id,
                 limit = MAX_PENDING_PER_CHANNEL,
@@ -812,7 +897,13 @@ impl EventQueue {
             queue.push_front(qe);
         }
         while queue.len() > MAX_PENDING_PER_CHANNEL {
-            queue.pop_back();
+            let Some(index) = queue
+                .iter()
+                .rposition(|e| !self.auth_parking.contains(e.event.id))
+            else {
+                break;
+            };
+            queue.remove(index);
             tracing::warn!(
                 channel_id = %channel_id,
                 limit = MAX_PENDING_PER_CHANNEL,
@@ -5961,5 +6052,208 @@ mod tests {
             !prompt.contains("Description:"),
             "unresolved metadata must not render a Description field; got: {prompt}"
         );
+    }
+}
+
+#[cfg(test)]
+mod auth_parking_tests {
+    use super::*;
+
+    fn batch(ch: Uuid, content: &str) -> FlushBatch {
+        FlushBatch {
+            channel_id: ch,
+            events: vec![BatchEvent {
+                event: nostr::EventBuilder::new(nostr::Kind::Custom(9), content)
+                    .sign_with_keys(&nostr::Keys::generate())
+                    .unwrap(),
+                prompt_tag: "auth-test".into(),
+                received_at: Instant::now() - Duration::from_secs(100),
+            }],
+            cancelled_events: vec![],
+            cancel_reason: None,
+        }
+    }
+
+    fn path() -> std::path::PathBuf {
+        std::env::temp_dir().join(format!("auth-parking-{}.json", Uuid::new_v4()))
+    }
+
+    #[test]
+    fn auth_probes_exceed_ten_without_spending_retries_then_expire() {
+        let mut queue = EventQueue::new(DedupMode::Queue);
+        let ch = Uuid::new_v4();
+        let original = batch(ch, "retained");
+        queue.retry_counts.insert(ch, 9);
+        for attempt in 0..12 {
+            let (dead, notice) = queue.park_auth(original.clone(), 1000 + attempt * 60);
+            assert!(dead.is_none());
+            assert_eq!(notice, attempt == 0);
+            queue.mark_complete(ch);
+            assert_eq!(queue.retry_counts[&ch], 9);
+            assert!(
+                queue.flush_next().is_none(),
+                "fixed probe throttle must apply"
+            );
+            let delay = queue.retry_after[&ch].saturating_duration_since(Instant::now());
+            assert!(delay > Duration::from_secs(59) && delay <= Duration::from_secs(60));
+            queue.retry_after.remove(&ch);
+            let replay = queue.flush_next().unwrap();
+            assert_eq!(replay.events[0].event.id, original.events[0].event.id);
+            assert_eq!(replay.events[0].received_at, original.events[0].received_at);
+        }
+        let (dead, notice) = queue.park_auth(original, 1000 + 21600);
+        assert!(dead.is_some());
+        assert!(!notice);
+        assert!(queue.auth_parking.restored_batches(22600).is_empty());
+    }
+
+    #[test]
+    fn auth_notice_is_per_channel_and_resets_after_success_or_dead_letter() {
+        let mut queue = EventQueue::new(DedupMode::Queue);
+        let ch = Uuid::new_v4();
+        let first = batch(ch, "one");
+        assert!(queue.park_auth(first.clone(), 100).1);
+        assert!(!queue.park_auth(first.clone(), 160).1);
+        assert!(
+            queue
+                .park_auth(batch(Uuid::new_v4(), "other channel"), 160)
+                .1
+        );
+        queue.finish_auth(&first);
+        assert!(queue.park_auth(first.clone(), 200).1);
+        assert!(queue.park_auth(first.clone(), 21800).0.is_some());
+        assert!(queue.park_auth(first, 21801).1);
+    }
+
+    #[test]
+    fn auth_journal_restart_enqueues_original_events_and_success_removes_only_delivered() {
+        let path = path();
+        let ch = Uuid::new_v4();
+        let mut queue = EventQueue::new(DedupMode::Queue);
+        queue.load_auth_parked(path.clone(), 1000);
+        let mut original = batch(ch, "saved");
+        original.cancelled_events = batch(ch, "cancelled").events;
+        original.cancel_reason = Some(CancelReason::Interrupt);
+        queue.park_auth(original.clone(), 1000);
+        let other = batch(ch, "next batch");
+        queue.park_auth(other.clone(), 1001);
+        let saved: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!(saved["batches"].as_array().unwrap().len(), 2);
+        assert_eq!(
+            saved["batches"][0]["events"][0]["event"]["id"],
+            original.events[0].event.id.to_hex()
+        );
+        let mut restarted = EventQueue::new(DedupMode::Queue);
+        restarted.load_auth_parked(path.clone(), 1002);
+        assert_eq!(restarted.queued_event_count(&ch), 2);
+        let replay = restarted.flush_next().unwrap();
+        assert_eq!(
+            replay.events.iter().map(|e| e.event.id).collect::<Vec<_>>(),
+            vec![original.events[0].event.id, other.events[0].event.id]
+        );
+        assert_eq!(
+            replay.events[0].event.created_at,
+            original.events[0].event.created_at
+        );
+        assert!(replay.events[0].received_at.elapsed() >= Duration::from_secs(101));
+        assert_eq!(
+            replay.cancelled_events[0].event.id,
+            original.cancelled_events[0].event.id
+        );
+        assert_eq!(replay.cancel_reason, Some(CancelReason::Interrupt));
+        assert!(
+            !restarted.park_auth(replay.clone(), 1003).1,
+            "restart retains notice suppression"
+        );
+        restarted.finish_auth(&original);
+        assert_eq!(
+            restarted.auth_parking.restored_batches(1003)[0].events[0]
+                .event
+                .id,
+            other.events[0].event.id
+        );
+        restarted.finish_auth(&other);
+        let empty = crate::auth_parking::AuthParking::load(path.clone(), 1004);
+        assert!(empty.restored_batches(1004).is_empty());
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn auth_cancelled_batch_cannot_bypass_probe_delay() {
+        let mut queue = EventQueue::new(DedupMode::Queue);
+        let ch = Uuid::new_v4();
+        let mut original = batch(ch, "retry with cancelled context");
+        original.cancelled_events = batch(ch, "previous request").events;
+        original.cancel_reason = Some(CancelReason::Steer);
+        queue.park_auth(original, 100);
+        queue.mark_complete(ch);
+        assert!(!queue.has_flushable_work());
+        assert!(queue.flush_next().is_none());
+        queue.retry_after.remove(&ch);
+        let replay = queue.flush_next().unwrap();
+        assert_eq!(replay.events.len(), 1);
+        assert_eq!(replay.cancelled_events.len(), 1);
+    }
+
+    #[test]
+    fn auth_journal_load_discards_expired_entries_but_keeps_fresh() {
+        let path = path();
+        let ch = Uuid::new_v4();
+        let mut queue = EventQueue::new(DedupMode::Queue);
+        queue.load_auth_parked(path.clone(), 1000);
+        queue.park_auth(batch(ch, "expired"), 1000);
+        let fresh = batch(Uuid::new_v4(), "fresh");
+        queue.park_auth(fresh.clone(), 2000);
+        let mut restarted = EventQueue::new(DedupMode::Queue);
+        restarted.load_auth_parked(path.clone(), 22600);
+        assert_eq!(restarted.queued_event_count(&ch), 0);
+        assert_eq!(
+            restarted.flush_next().unwrap().events[0].event.id,
+            fresh.events[0].event.id
+        );
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn auth_journal_missing_corrupt_and_unwritable_paths_are_tolerated() {
+        let path = path();
+        let mut queue = EventQueue::new(DedupMode::Queue);
+        queue.load_auth_parked(path.clone(), 1);
+        assert_eq!(queue.pending_channels(), 0);
+        std::fs::write(&path, "{bad json").unwrap();
+        queue.load_auth_parked(path.clone(), 1);
+        assert_eq!(queue.pending_channels(), 0);
+        // A file cannot serve as a parent directory; a real write failure.
+        queue.load_auth_parked(path.join("child"), 1);
+        assert!(queue
+            .park_auth(batch(Uuid::new_v4(), "memory fallback"), 1)
+            .0
+            .is_none());
+        assert_eq!(queue.pending_channels(), 1);
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn auth_parked_events_survive_queue_depth_pressure() {
+        let ch = Uuid::new_v4();
+        let mut queue = EventQueue::new(DedupMode::Queue);
+        let original = batch(ch, "promised replay");
+        queue.park_auth(original.clone(), 100);
+        for _ in 0..510 {
+            let event = batch(ch, "fresh").events.remove(0);
+            queue.push(QueuedEvent {
+                channel_id: ch,
+                event: event.event,
+                prompt_tag: event.prompt_tag,
+                received_at: event.received_at,
+            });
+        }
+        queue.retry_after.remove(&ch);
+        let replay = queue.flush_next().unwrap();
+        assert!(replay
+            .events
+            .iter()
+            .any(|e| e.event.id == original.events[0].event.id));
     }
 }
