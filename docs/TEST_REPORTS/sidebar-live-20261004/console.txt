@@ -1,0 +1,21 @@
+Total messages: 20 (Errors: 18, Warnings: 0)
+Returning 18 messages for level "error"
+
+[ERROR] Failed to load resource: the server responded with a status of 401 () @ https://crichton.tailb3d4b8.ts.net:6881/api/host-stats:0
+[ERROR] Failed to load resource: the server responded with a status of 401 () @ https://crichton.tailb3d4b8.ts.net:6881/api/host-stats:0
+[ERROR] Failed to load resource: the server responded with a status of 401 () @ https://crichton.tailb3d4b8.ts.net:6881/api/host-stats:0
+[ERROR] Failed to load resource: the server responded with a status of 401 () @ https://crichton.tailb3d4b8.ts.net:6881/api/host-stats:0
+[ERROR] Failed to load resource: the server responded with a status of 401 () @ https://crichton.tailb3d4b8.ts.net:6881/api/host-stats:0
+[ERROR] Failed to load resource: the server responded with a status of 401 () @ https://crichton.tailb3d4b8.ts.net:6881/api/host-stats:0
+[ERROR] Failed to load resource: the server responded with a status of 401 () @ https://crichton.tailb3d4b8.ts.net:6881/api/host-stats:0
+[ERROR] Failed to load resource: the server responded with a status of 401 () @ https://crichton.tailb3d4b8.ts.net:6881/api/host-stats:0
+[ERROR] Failed to load resource: the server responded with a status of 401 () @ https://crichton.tailb3d4b8.ts.net:6881/api/host-stats:0
+[ERROR] Failed to load resource: the server responded with a status of 401 () @ https://crichton.tailb3d4b8.ts.net:6881/api/host-stats:0
+[ERROR] Failed to load resource: the server responded with a status of 401 () @ https://crichton.tailb3d4b8.ts.net:6881/api/host-stats:0
+[ERROR] Failed to load resource: the server responded with a status of 401 () @ https://crichton.tailb3d4b8.ts.net:6881/api/host-stats:0
+[ERROR] Failed to load resource: the server responded with a status of 401 () @ https://crichton.tailb3d4b8.ts.net:6881/api/host-stats:0
+[ERROR] Failed to load resource: the server responded with a status of 401 () @ https://crichton.tailb3d4b8.ts.net:6881/api/host-stats:0
+[ERROR] Failed to load resource: the server responded with a status of 401 () @ https://crichton.tailb3d4b8.ts.net:6881/api/host-stats:0
+[ERROR] Failed to load resource: the server responded with a status of 401 () @ https://crichton.tailb3d4b8.ts.net:6881/api/host-stats:0
+[ERROR] Failed to load resource: the server responded with a status of 401 () @ https://crichton.tailb3d4b8.ts.net:6881/api/host-stats:0
+[ERROR] Failed to load resource: the server responded with a status of 401 () @ https://crichton.tailb3d4b8.ts.net:6881/api/host-stats:0
