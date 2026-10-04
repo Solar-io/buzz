@@ -58,7 +58,7 @@ export interface SidebarNavButtonProps {
 }
 
 /** The row's work marker, or nothing. Needs outrank running. */
-function StatusMarker({
+export function StatusMarker({
   status,
 }: {
   status: { needs: number; running: number };

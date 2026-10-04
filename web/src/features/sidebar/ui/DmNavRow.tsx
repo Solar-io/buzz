@@ -18,6 +18,7 @@ import { DmTimerPill } from "@/features/sidebar/ui/DmTimerPill";
 import { GroupAvatar } from "@/features/sidebar/ui/GroupAvatar";
 import { useDrawerClose } from "@/shared/layout/AppShell";
 import type { SidebarMenuItem } from "@/features/sidebar/lib/sidebarMenuItem";
+import { StatusMarker } from "@/features/sidebar/ui/SidebarNavButton";
 import {
   ContextMenu,
   ContextMenuContent,
@@ -45,6 +46,12 @@ export interface DmNavRowProps {
   status?: UserStatus | null;
   /** Latest presence entry for the row's avatar pubkey, when subscribed. */
   presence?: PresenceEntry;
+  /**
+   * Work running in this DM from the Everywhere feed (channel markers):
+   * background jobs such as Codex runs keep going after the agent's own turn
+   * ends, so the agent pulse alone would leave the row dark (Sam, 2026-10-03).
+   */
+  running?: number;
   onSelect: () => void;
   /** Right-click menu items (remove from list), when provided. */
   menuItems?: SidebarMenuItem[];
@@ -64,6 +71,7 @@ export function DmNavRow({
   profiles,
   status,
   presence,
+  running = 0,
   onSelect,
   menuItems,
 }: DmNavRowProps) {
@@ -175,8 +183,11 @@ export function DmNavRow({
           </span>
         )}
       </span>
-      {(active || unread) && (
+      {(active || unread || running > 0) && (
         <span className="flex shrink-0 items-center gap-2.5">
+          {!active && running > 0 && (
+            <StatusMarker status={{ needs: 0, running }} />
+          )}
           {active && (
             <DmTimerPill
               startedAt={
