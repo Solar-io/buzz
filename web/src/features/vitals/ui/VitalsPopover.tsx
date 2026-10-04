@@ -21,8 +21,12 @@ import {
 import type { VitalsSnapshot } from "../useVitals.ts";
 import { CodexPanel } from "./CodexVitals";
 
-/** "4:58 PM" today; "Tue 8:00 AM" on another day (weekly windows). */
-export function clock(iso: string | null): string {
+/**
+ * "4:58 PM" today; "Tue 8:00 AM" within the week; "Next Sun 6:54 PM" a week
+ * or more out, so it never reads as today's weekday (Sam, 2026-10-04);
+ * "Oct 18 6:54 PM" two weeks or more out.
+ */
+export function clock(iso: string | null, now: Date = new Date()): string {
   if (!iso) {
     return "";
   }
@@ -35,9 +39,17 @@ export function clock(iso: string | null): string {
     hour: "numeric",
     minute: "2-digit",
   });
-  return date.toDateString() === new Date().toDateString()
-    ? time
-    : `${date.toLocaleDateString([], { weekday: "short" })} ${time}`;
+  const midnight = (d: Date) =>
+    new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+  const days = Math.round((midnight(date) - midnight(now)) / 86_400_000);
+  if (days === 0) {
+    return time;
+  }
+  const weekday = date.toLocaleDateString([], { weekday: "short" });
+  if (days >= 14) {
+    return `${date.toLocaleDateString([], { month: "short", day: "numeric" })} ${time}`;
+  }
+  return days >= 7 ? `Next ${weekday} ${time}` : `${weekday} ${time}`;
 }
 
 /** Why an account has no number — never "0%". */

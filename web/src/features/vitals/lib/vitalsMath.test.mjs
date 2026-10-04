@@ -4,6 +4,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import {
   accountLines,
+  clock,
   combinedOutlook,
   VitalsPanel,
 } from "../ui/VitalsPopover.tsx";
@@ -682,4 +683,21 @@ test("row text: a red row says its reset and, below, when it runs dry; the defau
     runway,
   );
   assert.equal(accountRowText(stale, fmt, "stale"), "stale");
+});
+
+test("clock: a week or more out never reads as today's weekday", () => {
+  // Sun 2026-10-04 07:22 local, Sam's screenshot moment.
+  const now = new Date(2026, 9, 4, 7, 22);
+  const at = (day, h, m) => new Date(2026, 9, day, h, m).toISOString();
+  const time = (day, h, m) =>
+    new Date(2026, 9, day, h, m).toLocaleTimeString([], {
+      hour: "numeric",
+      minute: "2-digit",
+    });
+  assert.equal(clock(at(4, 18, 54), now), time(4, 18, 54), "today: time only");
+  assert.equal(clock(at(6, 7, 59), now), `Tue ${time(6, 7, 59)}`);
+  assert.equal(clock(at(10, 9, 0), now), `Sat ${time(10, 9, 0)}`);
+  assert.equal(clock(at(11, 18, 54), now), `Next Sun ${time(11, 18, 54)}`);
+  assert.equal(clock(at(17, 9, 0), now), `Next Sat ${time(17, 9, 0)}`);
+  assert.equal(clock(at(18, 18, 54), now), `Oct 18 ${time(18, 18, 54)}`);
 });
