@@ -2,6 +2,7 @@ import { expect, type Locator, type Page } from "@playwright/test";
 import { generateSecretKey, getPublicKey } from "nostr-tools/pure";
 
 import { test } from "./helpers/agentBraveTest";
+import { installHatchMock } from "./helpers/hatchMock";
 import { hexId, installMockRelay, mockEvent } from "./helpers/mockRelay";
 import { shot } from "./helpers/shellPage";
 import { signIn } from "./helpers/signIn";
@@ -139,6 +140,7 @@ async function seedSidebar(page: Page): Promise<string[]> {
   const errors: string[] = [];
   page.on("pageerror", (error) => errors.push(error.message));
   await routeUsageHub(page);
+  await installHatchMock(page);
   await installMockRelay(page, events);
   // A non-conversation view avoids marking a fixture row seen or bumping
   // its visit score merely by mounting the app.
@@ -219,6 +221,7 @@ test.describe("rendered sidebar order", () => {
       ),
       contentType: "application/json",
     });
+    expect(consoleErrors.get(page) ?? []).toEqual([]);
   });
 
   test("Channels: unread by recency, exactly four most used, then case-insensitive A-Z", async ({

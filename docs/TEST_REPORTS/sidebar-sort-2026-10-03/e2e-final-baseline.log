@@ -1,0 +1,12 @@
+
+Running 3 tests using 1 worker
+
+(node:94001) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:94001) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+  ✓  1 [smoke] › tests/e2e/sidebar-order.spec.ts:227:3 › rendered sidebar order › Channels: unread by recency, exactly four most used, then case-insensitive A-Z (6.2s)
+  ✓  2 [smoke] › tests/e2e/sidebar-order.spec.ts:246:3 › rendered sidebar order › Direct messages: unread, exactly four most used, then A-Z by displayed profile name (5.4s)
+  ✓  3 [smoke] › tests/e2e/sidebar-order.spec.ts:264:3 › rendered sidebar order › Favorites: mixed channels and DMs use unread, four most used, then A-Z (5.4s)
+
+  3 passed (17.7s)

@@ -1,0 +1,2085 @@
+{
+  "fileId": "b257641d761884acee19",
+  "fileName": "sidebar-order.spec.ts",
+  "tests": [
+    {
+      "testId": "b257641d761884acee19-6fdf550b8738a5e053f3",
+      "title": "Channels: unread by recency, exactly four most used, then case-insensitive A-Z",
+      "projectName": "smoke",
+      "location": {
+        "file": "sidebar-order.spec.ts",
+        "line": 224,
+        "column": 3
+      },
+      "duration": 11326,
+      "annotations": [],
+      "tags": [],
+      "outcome": "unexpected",
+      "path": [
+        "rendered sidebar order"
+      ],
+      "results": [
+        {
+          "duration": 11326,
+          "startTime": "2026-10-03T16:59:08.264Z",
+          "retry": 0,
+          "steps": [
+            {
+              "title": "Before Hooks",
+              "startTime": "2026-10-03T16:59:08.271Z",
+              "duration": 504,
+              "steps": [
+                {
+                  "title": "beforeEach hook",
+                  "startTime": "2026-10-03T16:59:08.271Z",
+                  "duration": 504,
+                  "steps": [
+                    {
+                      "title": "Fixture \"browser\"",
+                      "startTime": "2026-10-03T16:59:08.274Z",
+                      "duration": 258,
+                      "steps": [
+                        {
+                          "title": "Launch browser",
+                          "startTime": "2026-10-03T16:59:08.275Z",
+                          "duration": 256,
+                          "steps": [],
+                          "attachments": [],
+                          "count": 1,
+                          "skipped": false
+                        }
+                      ],
+                      "attachments": [],
+                      "count": 1,
+                      "skipped": false
+                    },
+                    {
+                      "title": "Fixture \"context\"",
+                      "startTime": "2026-10-03T16:59:08.533Z",
+                      "duration": 6,
+                      "steps": [
+                        {
+                          "title": "Create context",
+                          "startTime": "2026-10-03T16:59:08.535Z",
+                          "duration": 4,
+                          "steps": [],
+                          "attachments": [],
+                          "count": 1,
+                          "skipped": false
+                        }
+                      ],
+                      "attachments": [],
+                      "count": 1,
+                      "skipped": false
+                    },
+                    {
+                      "title": "Fixture \"page\"",
+                      "startTime": "2026-10-03T16:59:08.539Z",
+                      "duration": 236,
+                      "steps": [
+                        {
+                          "title": "Create page",
+                          "startTime": "2026-10-03T16:59:08.540Z",
+                          "duration": 235,
+                          "steps": [],
+                          "attachments": [],
+                          "count": 1,
+                          "skipped": false
+                        }
+                      ],
+                      "attachments": [],
+                      "count": 1,
+                      "skipped": false
+                    }
+                  ],
+                  "attachments": [],
+                  "location": {
+                    "file": "sidebar-order.spec.ts",
+                    "line": 181,
+                    "column": 6
+                  },
+                  "count": 1,
+                  "skipped": false,
+                  "snippet": "  180 |\n  181 | test.beforeEach(async ({ page }) => {\n      |      ^\n  182 |   const errors: string[] = [];"
+                }
+              ],
+              "attachments": [],
+              "count": 1,
+              "skipped": false
+            },
+            {
+              "title": "Navigate to \"/repos?view=inbox\"",
+              "startTime": "2026-10-03T16:59:08.812Z",
+              "duration": 147,
+              "steps": [],
+              "attachments": [],
+              "location": {
+                "file": "helpers/signIn.ts",
+                "line": 35,
+                "column": 14
+              },
+              "count": 1,
+              "skipped": false,
+              "snippet": "  34 | ): Promise<void> {\n  35 |   await page.goto(path);\n     |              ^\n  36 |   await page.getByRole(\"button\", { name: \"Enter key manually\" }).click();"
+            },
+            {
+              "title": "Click getByRole('button', { name: 'Enter key manually' })",
+              "startTime": "2026-10-03T16:59:08.961Z",
+              "duration": 670,
+              "steps": [],
+              "attachments": [],
+              "location": {
+                "file": "helpers/signIn.ts",
+                "line": 36,
+                "column": 66
+              },
+              "count": 1,
+              "skipped": false,
+              "snippet": "  35 |   await page.goto(path);\n  36 |   await page.getByRole(\"button\", { name: \"Enter key manually\" }).click();\n     |                                                                  ^\n  37 |   await page"
+            },
+            {
+              "title": "Fill \"nsec1twla6jhpuyk4ac7gcyqe6tu0ty0jz0u6k0l27mtq4at74lvure2sceak05\" getByPlaceholder('nsec1\u2026')",
+              "startTime": "2026-10-03T16:59:09.632Z",
+              "duration": 5,
+              "steps": [],
+              "attachments": [],
+              "location": {
+                "file": "helpers/signIn.ts",
+                "line": 39,
+                "column": 6
+              },
+              "count": 1,
+              "skipped": false,
+              "snippet": "  38 |     .getByPlaceholder(\"nsec1\u2026\")\n  39 |     .fill(nsecEncode(secretKey ?? generateSecretKey()));\n     |      ^\n  40 |   await page.getByRole(\"button\", { name: \"Continue\" }).click();"
+            },
+            {
+              "title": "Click getByRole('button', { name: 'Continue' })",
+              "startTime": "2026-10-03T16:59:09.638Z",
+              "duration": 39,
+              "steps": [],
+              "attachments": [],
+              "location": {
+                "file": "helpers/signIn.ts",
+                "line": 40,
+                "column": 56
+              },
+              "count": 1,
+              "skipped": false,
+              "snippet": "  39 |     .fill(nsecEncode(secretKey ?? generateSecretKey()));\n  40 |   await page.getByRole(\"button\", { name: \"Continue\" }).click();\n     |                                                        ^\n  41 |   await page.getByPlaceholder(\"New passphrase\").fill(\"e2e-passphrase\");"
+            },
+            {
+              "title": "Fill \"e2e-passphrase\" getByPlaceholder('New passphrase')",
+              "startTime": "2026-10-03T16:59:09.677Z",
+              "duration": 3,
+              "steps": [],
+              "attachments": [],
+              "location": {
+                "file": "helpers/signIn.ts",
+                "line": 41,
+                "column": 49
+              },
+              "count": 1,
+              "skipped": false,
+              "snippet": "  40 |   await page.getByRole(\"button\", { name: \"Continue\" }).click();\n  41 |   await page.getByPlaceholder(\"New passphrase\").fill(\"e2e-passphrase\");\n     |                                                 ^\n  42 |   await page.getByPlaceholder(\"Confirm passphrase\").fill(\"e2e-passphrase\");"
+            },
+            {
+              "title": "Fill \"e2e-passphrase\" getByPlaceholder('Confirm passphrase')",
+              "startTime": "2026-10-03T16:59:09.680Z",
+              "duration": 3,
+              "steps": [],
+              "attachments": [],
+              "location": {
+                "file": "helpers/signIn.ts",
+                "line": 42,
+                "column": 53
+              },
+              "count": 1,
+              "skipped": false,
+              "snippet": "  41 |   await page.getByPlaceholder(\"New passphrase\").fill(\"e2e-passphrase\");\n  42 |   await page.getByPlaceholder(\"Confirm passphrase\").fill(\"e2e-passphrase\");\n     |                                                     ^\n  43 |   if (authTag) {"
+            },
+            {
+              "title": "Click getByRole('button', { name: 'Finish' })",
+              "startTime": "2026-10-03T16:59:09.683Z",
+              "duration": 27,
+              "steps": [],
+              "attachments": [],
+              "location": {
+                "file": "helpers/signIn.ts",
+                "line": 49,
+                "column": 54
+              },
+              "count": 1,
+              "skipped": false,
+              "snippet": "  48 |   }\n  49 |   await page.getByRole(\"button\", { name: \"Finish\" }).click();\n     |                                                      ^\n  50 |   await expect("
+            },
+            {
+              "title": "Expect \"toBeHidden\" getByRole('button', { name: 'Enter key manually' })",
+              "startTime": "2026-10-03T16:59:09.713Z",
+              "duration": 3,
+              "steps": [],
+              "attachments": [],
+              "location": {
+                "file": "helpers/signIn.ts",
+                "line": 52,
+                "column": 5
+              },
+              "count": 1,
+              "skipped": false,
+              "snippet": "  51 |     page.getByRole(\"button\", { name: \"Enter key manually\" }),\n  52 |   ).toBeHidden();\n     |     ^\n  53 | }"
+            },
+            {
+              "title": "Expect \"toBeVisible\" getByTestId('channel-sidebar')",
+              "startTime": "2026-10-03T16:59:09.717Z",
+              "duration": 81,
+              "steps": [],
+              "attachments": [],
+              "location": {
+                "file": "sidebar-order.spec.ts",
+                "line": 146,
+                "column": 53
+              },
+              "count": 1,
+              "skipped": false,
+              "snippet": "  145 |   await signIn(page, \"/repos?view=inbox\", viewerKey);\n  146 |   await expect(page.getByTestId(\"channel-sidebar\")).toBeVisible();\n      |                                                     ^\n  147 |   await page.mouse.move(1_000, 100);"
+            },
+            {
+              "title": "Mouse move",
+              "startTime": "2026-10-03T16:59:09.798Z",
+              "duration": 4,
+              "steps": [],
+              "attachments": [],
+              "location": {
+                "file": "sidebar-order.spec.ts",
+                "line": 147,
+                "column": 20
+              },
+              "count": 1,
+              "skipped": false,
+              "snippet": "  146 |   await expect(page.getByTestId(\"channel-sidebar\")).toBeVisible();\n  147 |   await page.mouse.move(1_000, 100);\n      |                    ^\n  148 |   return errors;"
+            },
+            {
+              "title": "Expect \"toBeVisible\" getByTestId('channel-sidebar').locator('section[aria-label=\"Channels\"]')",
+              "startTime": "2026-10-03T16:59:09.803Z",
+              "duration": 2,
+              "steps": [],
+              "attachments": [],
+              "location": {
+                "file": "sidebar-order.spec.ts",
+                "line": 159,
+                "column": 25
+              },
+              "count": 1,
+              "skipped": false,
+              "snippet": "  158 |     .locator(`section[aria-label=\"${label}\"]`);\n  159 |   await expect(section).toBeVisible();\n      |                         ^\n  160 |   await expect(section.getByTestId(\"section-more\")).toBeVisible();"
+            },
+            {
+              "title": "Expect \"toBeVisible\" getByTestId('channel-sidebar').locator('section[aria-label=\"Channels\"]').getByTestId('section-more')",
+              "startTime": "2026-10-03T16:59:09.805Z",
+              "duration": 1293,
+              "steps": [],
+              "attachments": [],
+              "location": {
+                "file": "sidebar-order.spec.ts",
+                "line": 160,
+                "column": 53
+              },
+              "count": 1,
+              "skipped": false,
+              "snippet": "  159 |   await expect(section).toBeVisible();\n  160 |   await expect(section.getByTestId(\"section-more\")).toBeVisible();\n      |                                                     ^\n  161 |   await shot(page, `${screenshotName}-truncated`);"
+            },
+            {
+              "title": "Expect \"toHaveCount\" locator('[data-sonner-toast]')",
+              "startTime": "2026-10-03T16:59:11.100Z",
+              "duration": 3300,
+              "steps": [],
+              "attachments": [],
+              "location": {
+                "file": "helpers/shellPage.ts",
+                "line": 39,
+                "column": 55
+              },
+              "count": 1,
+              "skipped": false,
+              "snippet": "   38 |     // would sit over the top-right of every frame: let them run out first.\n   39 |     await expect(page.locator(\"[data-sonner-toast]\")).toHaveCount(0, {\n      |                                                       ^\n   40 |       timeout: 12_000,"
+            },
+            {
+              "title": "Mouse move",
+              "startTime": "2026-10-03T16:59:14.401Z",
+              "duration": 1,
+              "steps": [],
+              "attachments": [],
+              "location": {
+                "file": "helpers/shellPage.ts",
+                "line": 45,
+                "column": 20
+              },
+              "count": 1,
+              "skipped": false,
+              "snippet": "   44 |   // bar in the frame: park it in the corner.\n   45 |   await page.mouse.move(1, 1);\n      |                    ^\n   46 |   // Let entrance animations settle so two themes capture the same frame."
+            },
+            {
+              "title": "Evaluate",
+              "startTime": "2026-10-03T16:59:14.403Z",
+              "duration": 2,
+              "steps": [],
+              "attachments": [],
+              "location": {
+                "file": "helpers/shellPage.ts",
+                "line": 49,
+                "column": 6
+              },
+              "count": 1,
+              "skipped": false,
+              "snippet": "   48 |   await page\n   49 |     .evaluate(() =>\n      |      ^\n   50 |       Promise.all("
+            },
+            {
+              "title": "Screenshot",
+              "startTime": "2026-10-03T16:59:14.405Z",
+              "duration": 58,
+              "steps": [],
+              "attachments": [],
+              "location": {
+                "file": "helpers/shellPage.ts",
+                "line": 61,
+                "column": 14
+              },
+              "count": 1,
+              "skipped": false,
+              "snippet": "   60 |     .catch(() => {});\n   61 |   await page.screenshot({ path: path.join(SHOTS_DIR, `${name}.png`) });\n      |              ^\n   62 | }"
+            },
+            {
+              "title": "Click getByTestId('channel-sidebar').locator('section[aria-label=\"Channels\"]').getByTestId('section-more')",
+              "startTime": "2026-10-03T16:59:14.465Z",
+              "duration": 26,
+              "steps": [],
+              "attachments": [],
+              "location": {
+                "file": "sidebar-order.spec.ts",
+                "line": 162,
+                "column": 45
+              },
+              "count": 1,
+              "skipped": false,
+              "snippet": "  161 |   await shot(page, `${screenshotName}-truncated`);\n  162 |   await section.getByTestId(\"section-more\").click();\n      |                                             ^\n  163 |   // Clicking \"N more\" leaves the pointer over the held list. Move it out"
+            },
+            {
+              "title": "Mouse move",
+              "startTime": "2026-10-03T16:59:14.492Z",
+              "duration": 11,
+              "steps": [],
+              "attachments": [],
+              "location": {
+                "file": "sidebar-order.spec.ts",
+                "line": 165,
+                "column": 20
+              },
+              "count": 1,
+              "skipped": false,
+              "snippet": "  164 |   // before reading order so pending activity/profile updates can re-rank.\n  165 |   await page.mouse.move(1_000, 100);\n      |                    ^\n  166 |   await expect(section.getByTestId(\"section-more\")).toHaveText(\"Show less\");"
+            },
+            {
+              "title": "Expect \"toHaveText\" getByTestId('channel-sidebar').locator('section[aria-label=\"Channels\"]').getByTestId('section-more')",
+              "startTime": "2026-10-03T16:59:14.504Z",
+              "duration": 4,
+              "steps": [],
+              "attachments": [],
+              "location": {
+                "file": "sidebar-order.spec.ts",
+                "line": 166,
+                "column": 53
+              },
+              "count": 1,
+              "skipped": false,
+              "snippet": "  165 |   await page.mouse.move(1_000, 100);\n  166 |   await expect(section.getByTestId(\"section-more\")).toHaveText(\"Show less\");\n      |                                                     ^\n  167 |   await section.scrollIntoViewIfNeeded();"
+            },
+            {
+              "title": "Scroll into view getByTestId('channel-sidebar').locator('section[aria-label=\"Channels\"]')",
+              "startTime": "2026-10-03T16:59:14.509Z",
+              "duration": 44,
+              "steps": [],
+              "attachments": [],
+              "location": {
+                "file": "sidebar-order.spec.ts",
+                "line": 167,
+                "column": 17
+              },
+              "count": 1,
+              "skipped": false,
+              "snippet": "  166 |   await expect(section.getByTestId(\"section-more\")).toHaveText(\"Show less\");\n  167 |   await section.scrollIntoViewIfNeeded();\n      |                 ^\n  168 |   await page.mouse.move(1_000, 100);"
+            },
+            {
+              "title": "Mouse move",
+              "startTime": "2026-10-03T16:59:14.554Z",
+              "duration": 16,
+              "steps": [],
+              "attachments": [],
+              "location": {
+                "file": "sidebar-order.spec.ts",
+                "line": 168,
+                "column": 20
+              },
+              "count": 1,
+              "skipped": false,
+              "snippet": "  167 |   await section.scrollIntoViewIfNeeded();\n  168 |   await page.mouse.move(1_000, 100);\n      |                    ^\n  169 |   await shot(page, `${screenshotName}-expanded`);"
+            },
+            {
+              "title": "Expect \"toHaveCount\" locator('[data-sonner-toast]')",
+              "startTime": "2026-10-03T16:59:14.570Z",
+              "duration": 1,
+              "steps": [],
+              "attachments": [],
+              "location": {
+                "file": "helpers/shellPage.ts",
+                "line": 39,
+                "column": 55
+              },
+              "count": 1,
+              "skipped": false,
+              "snippet": "   38 |     // would sit over the top-right of every frame: let them run out first.\n   39 |     await expect(page.locator(\"[data-sonner-toast]\")).toHaveCount(0, {\n      |                                                       ^\n   40 |       timeout: 12_000,"
+            },
+            {
+              "title": "Mouse move",
+              "startTime": "2026-10-03T16:59:14.571Z",
+              "duration": 15,
+              "steps": [],
+              "attachments": [],
+              "location": {
+                "file": "helpers/shellPage.ts",
+                "line": 45,
+                "column": 20
+              },
+              "count": 1,
+              "skipped": false,
+              "snippet": "   44 |   // bar in the frame: park it in the corner.\n   45 |   await page.mouse.move(1, 1);\n      |                    ^\n   46 |   // Let entrance animations settle so two themes capture the same frame."
+            },
+            {
+              "title": "Evaluate",
+              "startTime": "2026-10-03T16:59:14.587Z",
+              "duration": 0,
+              "steps": [],
+              "attachments": [],
+              "location": {
+                "file": "helpers/shellPage.ts",
+                "line": 49,
+                "column": 6
+              },
+              "count": 1,
+              "skipped": false,
+              "snippet": "   48 |   await page\n   49 |     .evaluate(() =>\n      |      ^\n   50 |       Promise.all("
+            },
+            {
+              "title": "Screenshot",
+              "startTime": "2026-10-03T16:59:14.588Z",
+              "duration": 57,
+              "steps": [],
+              "attachments": [],
+              "location": {
+                "file": "helpers/shellPage.ts",
+                "line": 61,
+                "column": 14
+              },
+              "count": 1,
+              "skipped": false,
+              "snippet": "   60 |     .catch(() => {});\n   61 |   await page.screenshot({ path: path.join(SHOTS_DIR, `${name}.png`) });\n      |              ^\n   62 | }"
+            },
+            {
+              "title": "Expect \"toHaveText\" getByTestId('channel-sidebar').locator('section[aria-label=\"Channels\"]').locator('ul > li > button[data-active] span.truncate')",
+              "startTime": "2026-10-03T16:59:14.646Z",
+              "duration": 5007,
+              "steps": [],
+              "attachments": [],
+              "location": {
+                "file": "sidebar-order.spec.ts",
+                "line": 229,
+                "column": 24
+              },
+              "error": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mlocator\u001b[39m\u001b[2m).\u001b[22mtoHaveText\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m)\u001b[22m failed\n\nLocator: getByTestId('channel-sidebar').locator('section[aria-label=\"Channels\"]').locator('ul > li > button[data-active] span.truncate')\nTimeout: 5000ms\n\u001b[32m- Expected  - 1\u001b[39m\n\u001b[31m+ Received  + 1\u001b[39m\n\n\u001b[33m@@ -3,9 +3,9 @@\u001b[39m\n\u001b[2m    \"alpha-old\",\u001b[22m\n\u001b[2m    \"Violet\",\u001b[22m\n\u001b[2m    \"tango\",\u001b[22m\n\u001b[2m    \"Sierra\",\u001b[22m\n\u001b[2m    \"romeo\",\u001b[22m\n\u001b[31m+   \"zebra\",\u001b[39m\n\u001b[2m    \"aardvark\",\u001b[22m\n\u001b[2m    \"Bravo\",\u001b[22m\n\u001b[32m-   \"zebra\",\u001b[39m\n\u001b[2m  ]\u001b[22m\n\nCall log:\n\u001b[2m  - Expect \"toHaveText\" with timeout 5000ms\u001b[22m\n\u001b[2m  - waiting for getByTestId('channel-sidebar').locator('section[aria-label=\"Channels\"]').locator('ul > li > button[data-active] span.truncate')\u001b[22m\n\u001b[2m    14 \u00d7 locator resolved to 9 elements\u001b[22m\n",
+              "count": 1,
+              "skipped": false,
+              "snippet": "  228 |     const rows = await sectionRows(page, \"Channels\", \"channels\");\n  229 |     await expect(rows).toHaveText([\n      |                        ^\n  230 |       \"zulu-new\","
+            },
+            {
+              "title": "After Hooks",
+              "startTime": "2026-10-03T16:59:19.653Z",
+              "duration": 210,
+              "steps": [
+                {
+                  "title": "afterEach hook",
+                  "startTime": "2026-10-03T16:59:19.713Z",
+                  "duration": 2,
+                  "steps": [
+                    {
+                      "title": "Attach \"console-errors\"",
+                      "startTime": "2026-10-03T16:59:19.713Z",
+                      "duration": 0,
+                      "steps": [],
+                      "attachments": [
+                        1
+                      ],
+                      "location": {
+                        "file": "sidebar-order.spec.ts",
+                        "line": 191,
+                        "column": 20
+                      },
+                      "count": 1,
+                      "skipped": false,
+                      "snippet": "  190 |   test.afterEach(async ({ page }, testInfo) => {\n  191 |     await testInfo.attach(\"console-errors\", {\n      |                    ^\n  192 |       body: JSON.stringify(consoleErrors.get(page) ?? [], null, 2),"
+                    },
+                    {
+                      "title": "Evaluate",
+                      "startTime": "2026-10-03T16:59:19.714Z",
+                      "duration": 1,
+                      "steps": [],
+                      "attachments": [],
+                      "location": {
+                        "file": "sidebar-order.spec.ts",
+                        "line": 197,
+                        "column": 20
+                      },
+                      "count": 1,
+                      "skipped": false,
+                      "snippet": "  196 |       body: JSON.stringify(\n  197 |         await page.evaluate(() => ({\n      |                    ^\n  198 |           visits: localStorage.getItem(\"buzz.sidebar-visits.v1\"),"
+                    },
+                    {
+                      "title": "Attach \"sidebar-state\"",
+                      "startTime": "2026-10-03T16:59:19.715Z",
+                      "duration": 0,
+                      "steps": [],
+                      "attachments": [
+                        2
+                      ],
+                      "location": {
+                        "file": "sidebar-order.spec.ts",
+                        "line": 195,
+                        "column": 20
+                      },
+                      "count": 1,
+                      "skipped": false,
+                      "snippet": "  194 |     });\n  195 |     await testInfo.attach(\"sidebar-state\", {\n      |                    ^\n  196 |       body: JSON.stringify("
+                    }
+                  ],
+                  "attachments": [],
+                  "location": {
+                    "file": "sidebar-order.spec.ts",
+                    "line": 190,
+                    "column": 8
+                  },
+                  "count": 1,
+                  "skipped": false,
+                  "snippet": "  189 | test.describe(\"rendered sidebar order\", () => {\n  190 |   test.afterEach(async ({ page }, testInfo) => {\n      |        ^\n  191 |     await testInfo.attach(\"console-errors\", {"
+                },
+                {
+                  "title": "Fixture \"page\"",
+                  "startTime": "2026-10-03T16:59:19.715Z",
+                  "duration": 0,
+                  "steps": [],
+                  "attachments": [],
+                  "count": 1,
+                  "skipped": false
+                },
+                {
+                  "title": "Fixture \"context\"",
+                  "startTime": "2026-10-03T16:59:19.715Z",
+                  "duration": 146,
+                  "steps": [
+                    {
+                      "title": "Close context",
+                      "startTime": "2026-10-03T16:59:19.726Z",
+                      "duration": 133,
+                      "steps": [],
+                      "attachments": [],
+                      "count": 1,
+                      "skipped": false
+                    }
+                  ],
+                  "attachments": [
+                    3
+                  ],
+                  "count": 1,
+                  "skipped": false
+                },
+                {
+                  "title": "Fixture \"viewport\"",
+                  "startTime": "2026-10-03T16:59:19.863Z",
+                  "duration": 0,
+                  "steps": [],
+                  "attachments": [],
+                  "location": {
+                    "file": "sidebar-order.spec.ts",
+                    "line": 174,
+                    "column": 6
+                  },
+                  "count": 1,
+                  "skipped": false,
+                  "snippet": "  173 | // Local fallback is headed; CI retains its normal isolated browser.\n  174 | test.use({\n      |      ^\n  175 |   viewport: { width: 1_440, height: 1_200 },"
+                }
+              ],
+              "attachments": [
+                0
+              ],
+              "count": 1,
+              "skipped": false
+            },
+            {
+              "title": "Worker Cleanup",
+              "startTime": "2026-10-03T16:59:19.864Z",
+              "duration": 92,
+              "steps": [
+                {
+                  "title": "Fixture \"browser\"",
+                  "startTime": "2026-10-03T16:59:19.864Z",
+                  "duration": 91,
+                  "steps": [],
+                  "attachments": [],
+                  "count": 1,
+                  "skipped": false
+                },
+                {
+                  "title": "Fixture \"headless\"",
+                  "startTime": "2026-10-03T16:59:19.956Z",
+                  "duration": 0,
+                  "steps": [],
+                  "attachments": [],
+                  "location": {
+                    "file": "sidebar-order.spec.ts",
+                    "line": 174,
+                    "column": 6
+                  },
+                  "count": 1,
+                  "skipped": false,
+                  "snippet": "  173 | // Local fallback is headed; CI retains its normal isolated browser.\n  174 | test.use({\n      |      ^\n  175 |   viewport: { width: 1_440, height: 1_200 },"
+                }
+              ],
+              "attachments": [],
+              "count": 1,
+              "skipped": false
+            }
+          ],
+          "errors": [
+            {
+              "message": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mlocator\u001b[39m\u001b[2m).\u001b[22mtoHaveText\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m)\u001b[22m failed\n\nLocator: getByTestId('channel-sidebar').locator('section[aria-label=\"Channels\"]').locator('ul > li > button[data-active] span.truncate')\nTimeout: 5000ms\n\u001b[32m- Expected  - 1\u001b[39m\n\u001b[31m+ Received  + 1\u001b[39m\n\n\u001b[33m@@ -3,9 +3,9 @@\u001b[39m\n\u001b[2m    \"alpha-old\",\u001b[22m\n\u001b[2m    \"Violet\",\u001b[22m\n\u001b[2m    \"tango\",\u001b[22m\n\u001b[2m    \"Sierra\",\u001b[22m\n\u001b[2m    \"romeo\",\u001b[22m\n\u001b[31m+   \"zebra\",\u001b[39m\n\u001b[2m    \"aardvark\",\u001b[22m\n\u001b[2m    \"Bravo\",\u001b[22m\n\u001b[32m-   \"zebra\",\u001b[39m\n\u001b[2m  ]\u001b[22m\n\nCall log:\n\u001b[2m  - Expect \"toHaveText\" with timeout 5000ms\u001b[22m\n\u001b[2m  - waiting for getByTestId('channel-sidebar').locator('section[aria-label=\"Channels\"]').locator('ul > li > button[data-active] span.truncate')\u001b[22m\n\u001b[2m    14 \u00d7 locator resolved to 9 elements\u001b[22m\n\n\n  227 |     const errors = await seedSidebar(page);\n  228 |     const rows = await sectionRows(page, \"Channels\", \"channels\");\n> 229 |     await expect(rows).toHaveText([\n      |                        ^\n  230 |       \"zulu-new\",\n  231 |       \"alpha-old\",\n  232 |       \"Violet\",\n\u001b[2m    at /Users/sgallant/software_development/.evie-worktrees/buzz-sidebar-sort/web/tests/e2e/sidebar-order.spec.ts:229:24\u001b[22m",
+              "codeframe": "  129 |         );\n  130 |         localStorage.setItem(\"buzz.collapsed-sections.v1\", \"[]\");\n  131 |         localStorage.setItem(\"buzz-theme\", \"buzz\");\n  132 |         localStorage.setItem(\"buzz-follow-system\", \"false\");\n  133 |       } catch {\n  134 |         // Sandboxed frames have no localStorage.\n  135 |       }\n  136 |     },\n  137 |     { visits, read, favorites },\n  138 |   );\n  139 |   const errors: string[] = [];\n  140 |   page.on(\"pageerror\", (error) => errors.push(error.message));\n  141 |   await routeUsageHub(page);\n  142 |   await installMockRelay(page, events);\n  143 |   // A non-conversation view avoids marking a fixture row seen or bumping\n  144 |   // its visit score merely by mounting the app.\n  145 |   await signIn(page, \"/repos?view=inbox\", viewerKey);\n  146 |   await expect(page.getByTestId(\"channel-sidebar\")).toBeVisible();\n  147 |   await page.mouse.move(1_000, 100);\n  148 |   return errors;\n  149 | }\n  150 |\n  151 | async function sectionRows(\n  152 |   page: Page,\n  153 |   label: string,\n  154 |   screenshotName: string,\n  155 | ): Promise<Locator> {\n  156 |   const section = page\n  157 |     .getByTestId(\"channel-sidebar\")\n  158 |     .locator(`section[aria-label=\"${label}\"]`);\n  159 |   await expect(section).toBeVisible();\n  160 |   await expect(section.getByTestId(\"section-more\")).toBeVisible();\n  161 |   await shot(page, `${screenshotName}-truncated`);\n  162 |   await section.getByTestId(\"section-more\").click();\n  163 |   // Clicking \"N more\" leaves the pointer over the held list. Move it out\n  164 |   // before reading order so pending activity/profile updates can re-rank.\n  165 |   await page.mouse.move(1_000, 100);\n  166 |   await expect(section.getByTestId(\"section-more\")).toHaveText(\"Show less\");\n  167 |   await section.scrollIntoViewIfNeeded();\n  168 |   await page.mouse.move(1_000, 100);\n  169 |   await shot(page, `${screenshotName}-expanded`);\n  170 |   return section.locator(\"ul > li > button[data-active] span.truncate\");\n  171 | }\n  172 |\n  173 | // Local fallback is headed; CI retains its normal isolated browser.\n  174 | test.use({\n  175 |   viewport: { width: 1_440, height: 1_200 },\n  176 |   headless: !!process.env.CI,\n  177 | });\n  178 |\n  179 | const consoleErrors = new WeakMap<Page, string[]>();\n  180 |\n  181 | test.beforeEach(async ({ page }) => {\n  182 |   const errors: string[] = [];\n  183 |   consoleErrors.set(page, errors);\n  184 |   page.on(\"console\", (message) => {\n  185 |     if (message.type() === \"error\") errors.push(message.text());\n  186 |   });\n  187 | });\n  188 |\n  189 | test.describe(\"rendered sidebar order\", () => {\n  190 |   test.afterEach(async ({ page }, testInfo) => {\n  191 |     await testInfo.attach(\"console-errors\", {\n  192 |       body: JSON.stringify(consoleErrors.get(page) ?? [], null, 2),\n  193 |       contentType: \"application/json\",\n  194 |     });\n  195 |     await testInfo.attach(\"sidebar-state\", {\n  196 |       body: JSON.stringify(\n  197 |         await page.evaluate(() => ({\n  198 |           visits: localStorage.getItem(\"buzz.sidebar-visits.v1\"),\n  199 |           read: localStorage.getItem(\"buzz.read-state.v1\"),\n  200 |           favorites: localStorage.getItem(\"buzz.channel-prefs.v1\"),\n  201 |           pointerOverList: document.querySelector(\"nav:hover\") !== null,\n  202 |           sections: Array.from(\n  203 |             document.querySelectorAll(\n  204 |               '[data-testid=\"channel-sidebar\"] section',\n  205 |             ),\n  206 |             (section) => ({\n  207 |               name: section.getAttribute(\"aria-label\"),\n  208 |               labels: Array.from(\n  209 |                 section.querySelectorAll(\n  210 |                   \"ul > li > button[data-active] span.truncate\",\n  211 |                 ),\n  212 |                 (label) => label.textContent,\n  213 |               ),\n  214 |             }),\n  215 |           ),\n  216 |         })),\n  217 |         null,\n  218 |         2,\n  219 |       ),\n  220 |       contentType: \"application/json\",\n  221 |     });\n  222 |   });\n  223 |\n  224 |   test(\"Channels: unread by recency, exactly four most used, then case-insensitive A-Z\", async ({\n  225 |     page,\n  226 |   }) => {\n  227 |     const errors = await seedSidebar(page);\n  228 |     const rows = await sectionRows(page, \"Channels\", \"channels\");\n> 229 |     await expect(rows).toHaveText([\n      |                        ^ Error: expect(locator).toHaveText(expected) failed\n  230 |       \"zulu-new\",\n  231 |       \"alpha-old\",\n  232 |       \"Violet\",\n  233 |       \"tango\",\n  234 |       \"Sierra\",\n  235 |       \"romeo\",\n  236 |       \"aardvark\",\n  237 |       \"Bravo\",\n  238 |       \"zebra\",\n  239 |     ]);\n  240 |     expect(errors).toEqual([]);\n  241 |   });\n  242 |\n  243 |   test(\"Direct messages: unread, exactly four most used, then A-Z by displayed profile name\", async ({\n  244 |     page,\n  245 |   }) => {\n  246 |     const errors = await seedSidebar(page);\n  247 |     const rows = await sectionRows(page, \"Direct messages\", \"dms\");\n  248 |     await expect(rows).toHaveText([\n  249 |       \"Unread Quinn\",\n  250 |       \"Vera\",\n  251 |       \"Uma\",\n  252 |       \"Theo\",\n  253 |       \"Sam\",\n  254 |       \"aaron\",\n  255 |       \"Bella\",\n  256 |       \"Zoe\",\n  257 |     ]);\n  258 |     expect(errors).toEqual([]);\n  259 |   });\n  260 |\n  261 |   test(\"Favorites: mixed channels and DMs use unread, four most used, then A-Z\", async ({\n  262 |     page,\n  263 |   }) => {\n  264 |     const errors = await seedSidebar(page);\n  265 |     const rows = await sectionRows(page, \"Favorites\", \"favorites\");\n  266 |     await expect(rows).toHaveText([\n  267 |       \"urgent-favorite\",\n  268 |       \"Vera favorite\",\n  269 |       \"Tango favorite\",\n  270 |       \"Sierra favorite\",\n  271 |       \"Romeo favorite\",\n  272 |       \"aardvark favorite\",\n  273 |       \"Bravo favorite\",\n  274 |       \"zebra favorite\",\n  275 |     ]);\n  276 |     expect(errors).toEqual([]);\n  277 |   });\n  278 | });\n  279 |\n  280 | //"
+            }
+          ],
+          "status": "failed",
+          "annotations": [],
+          "attachments": [
+            {
+              "name": "screenshot",
+              "contentType": "image/png",
+              "path": "data/c274adc6f4410fd7308f197456cbfb1a67421836.png"
+            },
+            {
+              "name": "console-errors",
+              "contentType": "application/json",
+              "body": "[\n  \"Access to fetch at 'https://crichton.tailb3d4b8.ts.net:6881/api/host-stats' from origin 'http://127.0.0.1:4173' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.\",\n  \"Failed to load resource: net::ERR_FAILED\"\n]"
+            },
+            {
+              "name": "sidebar-state",
+              "contentType": "application/json",
+              "body": "{\n  \"visits\": \"{\\\"10000000-0000-4000-8000-000000000001\\\":{\\\"score\\\":500,\\\"at\\\":1791046748788},\\\"10000000-0000-4000-8000-000000000002\\\":{\\\"score\\\":1,\\\"at\\\":1791046748788},\\\"10000000-0000-4000-8000-000000000003\\\":{\\\"score\\\":50,\\\"at\\\":1791046748788},\\\"10000000-0000-4000-8000-000000000004\\\":{\\\"score\\\":40,\\\"at\\\":1791046748788},\\\"10000000-0000-4000-8000-000000000005\\\":{\\\"score\\\":30,\\\"at\\\":1791046748788},\\\"10000000-0000-4000-8000-000000000006\\\":{\\\"score\\\":20,\\\"at\\\":1791046748788},\\\"10000000-0000-4000-8000-000000000007\\\":{\\\"score\\\":10,\\\"at\\\":1791046748788},\\\"20000000-0000-4000-8000-000000000001\\\":{\\\"score\\\":1,\\\"at\\\":1791046748788},\\\"20000000-0000-4000-8000-000000000002\\\":{\\\"score\\\":50,\\\"at\\\":1791046748788},\\\"20000000-0000-4000-8000-000000000003\\\":{\\\"score\\\":40,\\\"at\\\":1791046748788},\\\"20000000-0000-4000-8000-000000000004\\\":{\\\"score\\\":30,\\\"at\\\":1791046748788},\\\"20000000-0000-4000-8000-000000000005\\\":{\\\"score\\\":20,\\\"at\\\":1791046748788},\\\"20000000-0000-4000-8000-000000000006\\\":{\\\"score\\\":10,\\\"at\\\":1791046748788},\\\"30000000-0000-4000-8000-000000000001\\\":{\\\"score\\\":1,\\\"at\\\":1791046748788},\\\"30000000-0000-4000-8000-000000000002\\\":{\\\"score\\\":50,\\\"at\\\":1791046748788},\\\"30000000-0000-4000-8000-000000000003\\\":{\\\"score\\\":40,\\\"at\\\":1791046748788},\\\"30000000-0000-4000-8000-000000000004\\\":{\\\"score\\\":30,\\\"at\\\":1791046748788},\\\"30000000-0000-4000-8000-000000000005\\\":{\\\"score\\\":20,\\\"at\\\":1791046748788},\\\"30000000-0000-4000-8000-000000000006\\\":{\\\"score\\\":10,\\\"at\\\":1791046748788}}\",\n  \"read\": \"{\\\"10000000-0000-4000-8000-000000000001\\\":1791043148,\\\"10000000-0000-4000-8000-000000000002\\\":1791043148,\\\"10000000-0000-4000-8000-000000000003\\\":1791046748,\\\"10000000-0000-4000-8000-000000000004\\\":1791046748,\\\"10000000-0000-4000-8000-000000000005\\\":1791046748,\\\"10000000-0000-4000-8000-000000000006\\\":1791046748,\\\"10000000-0000-4000-8000-000000000007\\\":1791046748,\\\"10000000-0000-4000-8000-000000000008\\\":1791046748,\\\"10000000-0000-4000-8000-000000000009\\\":1791046748,\\\"20000000-0000-4000-8000-000000000001\\\":1791043148,\\\"20000000-0000-4000-8000-000000000002\\\":1791046748,\\\"20000000-0000-4000-8000-000000000003\\\":1791046748,\\\"20000000-0000-4000-8000-000000000004\\\":1791046748,\\\"20000000-0000-4000-8000-000000000005\\\":1791046748,\\\"20000000-0000-4000-8000-000000000006\\\":1791046748,\\\"20000000-0000-4000-8000-000000000007\\\":1791046748,\\\"20000000-0000-4000-8000-000000000008\\\":1791046748,\\\"30000000-0000-4000-8000-000000000001\\\":1791043148,\\\"30000000-0000-4000-8000-000000000002\\\":1791046748,\\\"30000000-0000-4000-8000-000000000003\\\":1791046748,\\\"30000000-0000-4000-8000-000000000004\\\":1791046748,\\\"30000000-0000-4000-8000-000000000005\\\":1791046748,\\\"30000000-0000-4000-8000-000000000006\\\":1791046748,\\\"30000000-0000-4000-8000-000000000007\\\":1791046748,\\\"30000000-0000-4000-8000-000000000008\\\":1791046748}\",\n  \"favorites\": \"{\\\"favorites\\\":[{\\\"kind\\\":\\\"channel\\\",\\\"id\\\":\\\"30000000-0000-4000-8000-000000000008\\\",\\\"at\\\":1791046748781},{\\\"kind\\\":\\\"channel\\\",\\\"id\\\":\\\"30000000-0000-4000-8000-000000000007\\\",\\\"at\\\":1791046748782},{\\\"kind\\\":\\\"channel\\\",\\\"id\\\":\\\"30000000-0000-4000-8000-000000000006\\\",\\\"at\\\":1791046748783},{\\\"kind\\\":\\\"channel\\\",\\\"id\\\":\\\"30000000-0000-4000-8000-000000000005\\\",\\\"at\\\":1791046748784},{\\\"kind\\\":\\\"channel\\\",\\\"id\\\":\\\"30000000-0000-4000-8000-000000000004\\\",\\\"at\\\":1791046748785},{\\\"kind\\\":\\\"channel\\\",\\\"id\\\":\\\"30000000-0000-4000-8000-000000000003\\\",\\\"at\\\":1791046748786},{\\\"kind\\\":\\\"channel\\\",\\\"id\\\":\\\"30000000-0000-4000-8000-000000000002\\\",\\\"at\\\":1791046748787},{\\\"kind\\\":\\\"channel\\\",\\\"id\\\":\\\"30000000-0000-4000-8000-000000000001\\\",\\\"at\\\":1791046748788}],\\\"muted\\\":[]}\",\n  \"pointerOverList\": false,\n  \"sections\": [\n    {\n      \"name\": \"Favorites\",\n      \"labels\": [\n        \"urgent-favorite\",\n        \"Vera favorite\",\n        \"Tango favorite\",\n        \"Sierra favorite\",\n        \"Romeo favorite\",\n        \"zebra favorite\"\n      ]\n    },\n    {\n      \"name\": \"Channels\",\n      \"labels\": [\n        \"zulu-new\",\n        \"alpha-old\",\n        \"Violet\",\n        \"tango\",\n        \"Sierra\",\n        \"romeo\",\n        \"zebra\",\n        \"aardvark\",\n        \"Bravo\"\n      ]\n    },\n    {\n      \"name\": \"Direct messages\",\n      \"labels\": [\n        \"Unread Quinn\",\n        \"Vera\",\n        \"Uma\",\n        \"Theo\",\n        \"Sam\",\n        \"Zoe\"\n      ]\n    }\n  ]\n}"
+            },
+            {
+              "name": "video",
+              "contentType": "video/webm",
+              "path": "data/ace92dbd21cff0670fd942c5ec2439ea0e56a764.webm"
+            },
+            {
+              "name": "error-context",
+              "contentType": "text/markdown",
+              "path": "data/d0f3b75429fb31f0bcc89641c8b80fd4a6088fd1.md"
+            }
+          ],
+          "workerIndex": 0
+        }
+      ],
+      "ok": false
+    },
+    {
+      "testId": "b257641d761884acee19-b6a99d5807dbcf46f57b",
+      "title": "Direct messages: unread, exactly four most used, then A-Z by displayed profile name",
+      "projectName": "smoke",
+      "location": {
+        "file": "sidebar-order.spec.ts",
+        "line": 243,
+        "column": 3
+      },
+      "duration": 11310,
+      "annotations": [],
+      "tags": [],
+      "outcome": "unexpected",
+      "path": [
+        "rendered sidebar order"
+      ],
+      "results": [
+        {
+          "duration": 11310,
+          "startTime": "2026-10-03T16:59:20.208Z",
+          "retry": 0,
+          "steps": [
+            {
+              "title": "Before Hooks",
+              "startTime": "2026-10-03T16:59:20.215Z",
+              "duration": 477,
+              "steps": [
+                {
+                  "title": "beforeEach hook",
+                  "startTime": "2026-10-03T16:59:20.215Z",
+                  "duration": 477,
+                  "steps": [
+                    {
+                      "title": "Fixture \"browser\"",
+                      "startTime": "2026-10-03T16:59:20.218Z",
+                      "duration": 238,
+                      "steps": [
+                        {
+                          "title": "Launch browser",
+                          "startTime": "2026-10-03T16:59:20.220Z",
+                          "duration": 236,
+                          "steps": [],
+                          "attachments": [],
+                          "count": 1,
+                          "skipped": false
+                        }
+                      ],
+                      "attachments": [],
+                      "count": 1,
+                      "skipped": false
+                    },
+                    {
+                      "title": "Fixture \"context\"",
+                      "startTime": "2026-10-03T16:59:20.458Z",
+                      "duration": 7,
+                      "steps": [
+                        {
+                          "title": "Create context",
+                          "startTime": "2026-10-03T16:59:20.459Z",
+                          "duration": 5,
+                          "steps": [],
+                          "attachments": [],
+                          "count": 1,
+                          "skipped": false
+                        }
+                      ],
+                      "attachments": [],
+                      "count": 1,
+                      "skipped": false
+                    },
+                    {
+                      "title": "Fixture \"page\"",
+                      "startTime": "2026-10-03T16:59:20.465Z",
+                      "duration": 227,
+                      "steps": [
+                        {
+                          "title": "Create page",
+                          "startTime": "2026-10-03T16:59:20.465Z",
+                          "duration": 227,
+                          "steps": [],
+                          "attachments": [],
+                          "count": 1,
+                          "skipped": false
+                        }
+                      ],
+                      "attachments": [],
+                      "count": 1,
+                      "skipped": false
+                    }
+                  ],
+                  "attachments": [],
+                  "location": {
+                    "file": "sidebar-order.spec.ts",
+                    "line": 181,
+                    "column": 6
+                  },
+                  "count": 1,
+                  "skipped": false,
+                  "snippet": "  180 |\n  181 | test.beforeEach(async ({ page }) => {\n      |      ^\n  182 |   const errors: string[] = [];"
+                }
+              ],
+              "attachments": [],
+              "count": 1,
+              "skipped": false
+            },
+            {
+              "title": "Navigate to \"/repos?view=inbox\"",
+              "startTime": "2026-10-03T16:59:20.724Z",
+              "duration": 139,
+              "steps": [],
+              "attachments": [],
+              "location": {
+                "file": "helpers/signIn.ts",
+                "line": 35,
+                "column": 14
+              },
+              "count": 1,
+              "skipped": false,
+              "snippet": "  34 | ): Promise<void> {\n  35 |   await page.goto(path);\n     |              ^\n  36 |   await page.getByRole(\"button\", { name: \"Enter key manually\" }).click();"
+            },
+            {
+              "title": "Click getByRole('button', { name: 'Enter key manually' })",
+              "startTime": "2026-10-03T16:59:20.865Z",
+              "duration": 691,
+              "steps": [],
+              "attachments": [],
+              "location": {
+                "file": "helpers/signIn.ts",
+                "line": 36,
+                "column": 66
+              },
+              "count": 1,
+              "skipped": false,
+              "snippet": "  35 |   await page.goto(path);\n  36 |   await page.getByRole(\"button\", { name: \"Enter key manually\" }).click();\n     |                                                                  ^\n  37 |   await page"
+            },
+            {
+              "title": "Fill \"nsec1l3q9c80e4726ngc5f9cjz3tgfth5s639xcrc0pzqak6zmhl2k0us7ggtjr\" getByPlaceholder('nsec1\u2026')",
+              "startTime": "2026-10-03T16:59:21.558Z",
+              "duration": 5,
+              "steps": [],
+              "attachments": [],
+              "location": {
+                "file": "helpers/signIn.ts",
+                "line": 39,
+                "column": 6
+              },
+              "count": 1,
+              "skipped": false,
+              "snippet": "  38 |     .getByPlaceholder(\"nsec1\u2026\")\n  39 |     .fill(nsecEncode(secretKey ?? generateSecretKey()));\n     |      ^\n  40 |   await page.getByRole(\"button\", { name: \"Continue\" }).click();"
+            },
+            {
+              "title": "Click getByRole('button', { name: 'Continue' })",
+              "startTime": "2026-10-03T16:59:21.564Z",
+              "duration": 29,
+              "steps": [],
+              "attachments": [],
+              "location": {
+                "file": "helpers/signIn.ts",
+                "line": 40,
+                "column": 56
+              },
+              "count": 1,
+              "skipped": false,
+              "snippet": "  39 |     .fill(nsecEncode(secretKey ?? generateSecretKey()));\n  40 |   await page.getByRole(\"button\", { name: \"Continue\" }).click();\n     |                                                        ^\n  41 |   await page.getByPlaceholder(\"New passphrase\").fill(\"e2e-passphrase\");"
+            },
+            {
+              "title": "Fill \"e2e-passphrase\" getByPlaceholder('New passphrase')",
+              "startTime": "2026-10-03T16:59:21.593Z",
+              "duration": 4,
+              "steps": [],
+              "attachments": [],
+              "location": {
+                "file": "helpers/signIn.ts",
+                "line": 41,
+                "column": 49
+              },
+              "count": 1,
+              "skipped": false,
+              "snippet": "  40 |   await page.getByRole(\"button\", { name: \"Continue\" }).click();\n  41 |   await page.getByPlaceholder(\"New passphrase\").fill(\"e2e-passphrase\");\n     |                                                 ^\n  42 |   await page.getByPlaceholder(\"Confirm passphrase\").fill(\"e2e-passphrase\");"
+            },
+            {
+              "title": "Fill \"e2e-passphrase\" getByPlaceholder('Confirm passphrase')",
+              "startTime": "2026-10-03T16:59:21.598Z",
+              "duration": 3,
+              "steps": [],
+              "attachments": [],
+              "location": {
+                "file": "helpers/signIn.ts",
+                "line": 42,
+                "column": 53
+              },
+              "count": 1,
+              "skipped": false,
+              "snippet": "  41 |   await page.getByPlaceholder(\"New passphrase\").fill(\"e2e-passphrase\");\n  42 |   await page.getByPlaceholder(\"Confirm passphrase\").fill(\"e2e-passphrase\");\n     |                                                     ^\n  43 |   if (authTag) {"
+            },
+            {
+              "title": "Click getByRole('button', { name: 'Finish' })",
+              "startTime": "2026-10-03T16:59:21.601Z",
+              "duration": 40,
+              "steps": [],
+              "attachments": [],
+              "location": {
+                "file": "helpers/signIn.ts",
+                "line": 49,
+                "column": 54
+              },
+              "count": 1,
+              "skipped": false,
+              "snippet": "  48 |   }\n  49 |   await page.getByRole(\"button\", { name: \"Finish\" }).click();\n     |                                                      ^\n  50 |   await expect("
+            },
+            {
+              "title": "Expect \"toBeHidden\" getByRole('button', { name: 'Enter key manually' })",
+              "startTime": "2026-10-03T16:59:21.643Z",
+              "duration": 4,
+              "steps": [],
+              "attachments": [],
+              "location": {
+                "file": "helpers/signIn.ts",
+                "line": 52,
+                "column": 5
+              },
+              "count": 1,
+              "skipped": false,
+              "snippet": "  51 |     page.getByRole(\"button\", { name: \"Enter key manually\" }),\n  52 |   ).toBeHidden();\n     |     ^\n  53 | }"
+            },
+            {
+              "title": "Expect \"toBeVisible\" getByTestId('channel-sidebar')",
+              "startTime": "2026-10-03T16:59:21.647Z",
+              "duration": 80,
+              "steps": [],
+              "attachments": [],
+              "location": {
+                "file": "sidebar-order.spec.ts",
+                "line": 146,
+                "column": 53
+              },
+              "count": 1,
+              "skipped": false,
+              "snippet": "  145 |   await signIn(page, \"/repos?view=inbox\", viewerKey);\n  146 |   await expect(page.getByTestId(\"channel-sidebar\")).toBeVisible();\n      |                                                     ^\n  147 |   await page.mouse.move(1_000, 100);"
+            },
+            {
+              "title": "Mouse move",
+              "startTime": "2026-10-03T16:59:21.727Z",
+              "duration": 9,
+              "steps": [],
+              "attachments": [],
+              "location": {
+                "file": "sidebar-order.spec.ts",
+                "line": 147,
+                "column": 20
+              },
+              "count": 1,
+              "skipped": false,
+              "snippet": "  146 |   await expect(page.getByTestId(\"channel-sidebar\")).toBeVisible();\n  147 |   await page.mouse.move(1_000, 100);\n      |                    ^\n  148 |   return errors;"
+            },
+            {
+              "title": "Expect \"toBeVisible\" getByTestId('channel-sidebar').locator('section[aria-label=\"Direct messages\"]')",
+              "startTime": "2026-10-03T16:59:21.738Z",
+              "duration": 2,
+              "steps": [],
+              "attachments": [],
+              "location": {
+                "file": "sidebar-order.spec.ts",
+                "line": 159,
+                "column": 25
+              },
+              "count": 1,
+              "skipped": false,
+              "snippet": "  158 |     .locator(`section[aria-label=\"${label}\"]`);\n  159 |   await expect(section).toBeVisible();\n      |                         ^\n  160 |   await expect(section.getByTestId(\"section-more\")).toBeVisible();"
+            },
+            {
+              "title": "Expect \"toBeVisible\" getByTestId('channel-sidebar').locator('section[aria-label=\"Direct messages\"]').getByTestId('section-more')",
+              "startTime": "2026-10-03T16:59:21.740Z",
+              "duration": 1292,
+              "steps": [],
+              "attachments": [],
+              "location": {
+                "file": "sidebar-order.spec.ts",
+                "line": 160,
+                "column": 53
+              },
+              "count": 1,
+              "skipped": false,
+              "snippet": "  159 |   await expect(section).toBeVisible();\n  160 |   await expect(section.getByTestId(\"section-more\")).toBeVisible();\n      |                                                     ^\n  161 |   await shot(page, `${screenshotName}-truncated`);"
+            },
+            {
+              "title": "Expect \"toHaveCount\" locator('[data-sonner-toast]')",
+              "startTime": "2026-10-03T16:59:23.034Z",
+              "duration": 3299,
+              "steps": [],
+              "attachments": [],
+              "location": {
+                "file": "helpers/shellPage.ts",
+                "line": 39,
+                "column": 55
+              },
+              "count": 1,
+              "skipped": false,
+              "snippet": "   38 |     // would sit over the top-right of every frame: let them run out first.\n   39 |     await expect(page.locator(\"[data-sonner-toast]\")).toHaveCount(0, {\n      |                                                       ^\n   40 |       timeout: 12_000,"
+            },
+            {
+              "title": "Mouse move",
+              "startTime": "2026-10-03T16:59:26.333Z",
+              "duration": 1,
+              "steps": [],
+              "attachments": [],
+              "location": {
+                "file": "helpers/shellPage.ts",
+                "line": 45,
+                "column": 20
+              },
+              "count": 1,
+              "skipped": false,
+              "snippet": "   44 |   // bar in the frame: park it in the corner.\n   45 |   await page.mouse.move(1, 1);\n      |                    ^\n   46 |   // Let entrance animations settle so two themes capture the same frame."
+            },
+            {
+              "title": "Evaluate",
+              "startTime": "2026-10-03T16:59:26.335Z",
+              "duration": 1,
+              "steps": [],
+              "attachments": [],
+              "location": {
+                "file": "helpers/shellPage.ts",
+                "line": 49,
+                "column": 6
+              },
+              "count": 1,
+              "skipped": false,
+              "snippet": "   48 |   await page\n   49 |     .evaluate(() =>\n      |      ^\n   50 |       Promise.all("
+            },
+            {
+              "title": "Screenshot",
+              "startTime": "2026-10-03T16:59:26.336Z",
+              "duration": 59,
+              "steps": [],
+              "attachments": [],
+              "location": {
+                "file": "helpers/shellPage.ts",
+                "line": 61,
+                "column": 14
+              },
+              "count": 1,
+              "skipped": false,
+              "snippet": "   60 |     .catch(() => {});\n   61 |   await page.screenshot({ path: path.join(SHOTS_DIR, `${name}.png`) });\n      |              ^\n   62 | }"
+            },
+            {
+              "title": "Click getByTestId('channel-sidebar').locator('section[aria-label=\"Direct messages\"]').getByTestId('section-more')",
+              "startTime": "2026-10-03T16:59:26.396Z",
+              "duration": 32,
+              "steps": [],
+              "attachments": [],
+              "location": {
+                "file": "sidebar-order.spec.ts",
+                "line": 162,
+                "column": 45
+              },
+              "count": 1,
+              "skipped": false,
+              "snippet": "  161 |   await shot(page, `${screenshotName}-truncated`);\n  162 |   await section.getByTestId(\"section-more\").click();\n      |                                             ^\n  163 |   // Clicking \"N more\" leaves the pointer over the held list. Move it out"
+            },
+            {
+              "title": "Mouse move",
+              "startTime": "2026-10-03T16:59:26.429Z",
+              "duration": 8,
+              "steps": [],
+              "attachments": [],
+              "location": {
+                "file": "sidebar-order.spec.ts",
+                "line": 165,
+                "column": 20
+              },
+              "count": 1,
+              "skipped": false,
+              "snippet": "  164 |   // before reading order so pending activity/profile updates can re-rank.\n  165 |   await page.mouse.move(1_000, 100);\n      |                    ^\n  166 |   await expect(section.getByTestId(\"section-more\")).toHaveText(\"Show less\");"
+            },
+            {
+              "title": "Expect \"toHaveText\" getByTestId('channel-sidebar').locator('section[aria-label=\"Direct messages\"]').getByTestId('section-more')",
+              "startTime": "2026-10-03T16:59:26.437Z",
+              "duration": 4,
+              "steps": [],
+              "attachments": [],
+              "location": {
+                "file": "sidebar-order.spec.ts",
+                "line": 166,
+                "column": 53
+              },
+              "count": 1,
+              "skipped": false,
+              "snippet": "  165 |   await page.mouse.move(1_000, 100);\n  166 |   await expect(section.getByTestId(\"section-more\")).toHaveText(\"Show less\");\n      |                                                     ^\n  167 |   await section.scrollIntoViewIfNeeded();"
+            },
+            {
+              "title": "Scroll into view getByTestId('channel-sidebar').locator('section[aria-label=\"Direct messages\"]')",
+              "startTime": "2026-10-03T16:59:26.442Z",
+              "duration": 28,
+              "steps": [],
+              "attachments": [],
+              "location": {
+                "file": "sidebar-order.spec.ts",
+                "line": 167,
+                "column": 17
+              },
+              "count": 1,
+              "skipped": false,
+              "snippet": "  166 |   await expect(section.getByTestId(\"section-more\")).toHaveText(\"Show less\");\n  167 |   await section.scrollIntoViewIfNeeded();\n      |                 ^\n  168 |   await page.mouse.move(1_000, 100);"
+            },
+            {
+              "title": "Mouse move",
+              "startTime": "2026-10-03T16:59:26.471Z",
+              "duration": 16,
+              "steps": [],
+              "attachments": [],
+              "location": {
+                "file": "sidebar-order.spec.ts",
+                "line": 168,
+                "column": 20
+              },
+              "count": 1,
+              "skipped": false,
+              "snippet": "  167 |   await section.scrollIntoViewIfNeeded();\n  168 |   await page.mouse.move(1_000, 100);\n      |                    ^\n  169 |   await shot(page, `${screenshotName}-expanded`);"
+            },
+            {
+              "title": "Expect \"toHaveCount\" locator('[data-sonner-toast]')",
+              "startTime": "2026-10-03T16:59:26.488Z",
+              "duration": 1,
+              "steps": [],
+              "attachments": [],
+              "location": {
+                "file": "helpers/shellPage.ts",
+                "line": 39,
+                "column": 55
+              },
+              "count": 1,
+              "skipped": false,
+              "snippet": "   38 |     // would sit over the top-right of every frame: let them run out first.\n   39 |     await expect(page.locator(\"[data-sonner-toast]\")).toHaveCount(0, {\n      |                                                       ^\n   40 |       timeout: 12_000,"
+            },
+            {
+              "title": "Mouse move",
+              "startTime": "2026-10-03T16:59:26.489Z",
+              "duration": 14,
+              "steps": [],
+              "attachments": [],
+              "location": {
+                "file": "helpers/shellPage.ts",
+                "line": 45,
+                "column": 20
+              },
+              "count": 1,
+              "skipped": false,
+              "snippet": "   44 |   // bar in the frame: park it in the corner.\n   45 |   await page.mouse.move(1, 1);\n      |                    ^\n   46 |   // Let entrance animations settle so two themes capture the same frame."
+            },
+            {
+              "title": "Evaluate",
+              "startTime": "2026-10-03T16:59:26.504Z",
+              "duration": 0,
+              "steps": [],
+              "attachments": [],
+              "location": {
+                "file": "helpers/shellPage.ts",
+                "line": 49,
+                "column": 6
+              },
+              "count": 1,
+              "skipped": false,
+              "snippet": "   48 |   await page\n   49 |     .evaluate(() =>\n      |      ^\n   50 |       Promise.all("
+            },
+            {
+              "title": "Screenshot",
+              "startTime": "2026-10-03T16:59:26.504Z",
+              "duration": 53,
+              "steps": [],
+              "attachments": [],
+              "location": {
+                "file": "helpers/shellPage.ts",
+                "line": 61,
+                "column": 14
+              },
+              "count": 1,
+              "skipped": false,
+              "snippet": "   60 |     .catch(() => {});\n   61 |   await page.screenshot({ path: path.join(SHOTS_DIR, `${name}.png`) });\n      |              ^\n   62 | }"
+            },
+            {
+              "title": "Expect \"toHaveText\" getByTestId('channel-sidebar').locator('section[aria-label=\"Direct messages\"]').locator('ul > li > button[data-active] span.truncate')",
+              "startTime": "2026-10-03T16:59:26.558Z",
+              "duration": 5005,
+              "steps": [],
+              "attachments": [],
+              "location": {
+                "file": "sidebar-order.spec.ts",
+                "line": 248,
+                "column": 24
+              },
+              "error": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mlocator\u001b[39m\u001b[2m).\u001b[22mtoHaveText\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m)\u001b[22m failed\n\nLocator: getByTestId('channel-sidebar').locator('section[aria-label=\"Direct messages\"]').locator('ul > li > button[data-active] span.truncate')\nTimeout: 5000ms\n\u001b[32m- Expected  - 1\u001b[39m\n\u001b[31m+ Received  + 1\u001b[39m\n\n\u001b[33m@@ -2,9 +2,9 @@\u001b[39m\n\u001b[2m    \"Unread Quinn\",\u001b[22m\n\u001b[2m    \"Vera\",\u001b[22m\n\u001b[2m    \"Uma\",\u001b[22m\n\u001b[2m    \"Theo\",\u001b[22m\n\u001b[2m    \"Sam\",\u001b[22m\n\u001b[31m+   \"Zoe\",\u001b[39m\n\u001b[2m    \"aaron\",\u001b[22m\n\u001b[2m    \"Bella\",\u001b[22m\n\u001b[32m-   \"Zoe\",\u001b[39m\n\u001b[2m  ]\u001b[22m\n\nCall log:\n\u001b[2m  - Expect \"toHaveText\" with timeout 5000ms\u001b[22m\n\u001b[2m  - waiting for getByTestId('channel-sidebar').locator('section[aria-label=\"Direct messages\"]').locator('ul > li > button[data-active] span.truncate')\u001b[22m\n\u001b[2m    14 \u00d7 locator resolved to 8 elements\u001b[22m\n",
+              "count": 1,
+              "skipped": false,
+              "snippet": "  247 |     const rows = await sectionRows(page, \"Direct messages\", \"dms\");\n  248 |     await expect(rows).toHaveText([\n      |                        ^\n  249 |       \"Unread Quinn\","
+            },
+            {
+              "title": "After Hooks",
+              "startTime": "2026-10-03T16:59:31.564Z",
+              "duration": 208,
+              "steps": [
+                {
+                  "title": "afterEach hook",
+                  "startTime": "2026-10-03T16:59:31.608Z",
+                  "duration": 2,
+                  "steps": [
+                    {
+                      "title": "Attach \"console-errors\"",
+                      "startTime": "2026-10-03T16:59:31.608Z",
+                      "duration": 0,
+                      "steps": [],
+                      "attachments": [
+                        1
+                      ],
+                      "location": {
+                        "file": "sidebar-order.spec.ts",
+                        "line": 191,
+                        "column": 20
+                      },
+                      "count": 1,
+                      "skipped": false,
+                      "snippet": "  190 |   test.afterEach(async ({ page }, testInfo) => {\n  191 |     await testInfo.attach(\"console-errors\", {\n      |                    ^\n  192 |       body: JSON.stringify(consoleErrors.get(page) ?? [], null, 2),"
+                    },
+                    {
+                      "title": "Evaluate",
+                      "startTime": "2026-10-03T16:59:31.609Z",
+                      "duration": 1,
+                      "steps": [],
+                      "attachments": [],
+                      "location": {
+                        "file": "sidebar-order.spec.ts",
+                        "line": 197,
+                        "column": 20
+                      },
+                      "count": 1,
+                      "skipped": false,
+                      "snippet": "  196 |       body: JSON.stringify(\n  197 |         await page.evaluate(() => ({\n      |                    ^\n  198 |           visits: localStorage.getItem(\"buzz.sidebar-visits.v1\"),"
+                    },
+                    {
+                      "title": "Attach \"sidebar-state\"",
+                      "startTime": "2026-10-03T16:59:31.610Z",
+                      "duration": 0,
+                      "steps": [],
+                      "attachments": [
+                        2
+                      ],
+                      "location": {
+                        "file": "sidebar-order.spec.ts",
+                        "line": 195,
+                        "column": 20
+                      },
+                      "count": 1,
+                      "skipped": false,
+                      "snippet": "  194 |     });\n  195 |     await testInfo.attach(\"sidebar-state\", {\n      |                    ^\n  196 |       body: JSON.stringify("
+                    }
+                  ],
+                  "attachments": [],
+                  "location": {
+                    "file": "sidebar-order.spec.ts",
+                    "line": 190,
+                    "column": 8
+                  },
+                  "count": 1,
+                  "skipped": false,
+                  "snippet": "  189 | test.describe(\"rendered sidebar order\", () => {\n  190 |   test.afterEach(async ({ page }, testInfo) => {\n      |        ^\n  191 |     await testInfo.attach(\"console-errors\", {"
+                },
+                {
+                  "title": "Fixture \"page\"",
+                  "startTime": "2026-10-03T16:59:31.610Z",
+                  "duration": 1,
+                  "steps": [],
+                  "attachments": [],
+                  "count": 1,
+                  "skipped": false
+                },
+                {
+                  "title": "Fixture \"context\"",
+                  "startTime": "2026-10-03T16:59:31.611Z",
+                  "duration": 159,
+                  "steps": [
+                    {
+                      "title": "Close context",
+                      "startTime": "2026-10-03T16:59:31.619Z",
+                      "duration": 149,
+                      "steps": [],
+                      "attachments": [],
+                      "count": 1,
+                      "skipped": false
+                    }
+                  ],
+                  "attachments": [
+                    3
+                  ],
+                  "count": 1,
+                  "skipped": false
+                },
+                {
+                  "title": "Fixture \"viewport\"",
+                  "startTime": "2026-10-03T16:59:31.771Z",
+                  "duration": 0,
+                  "steps": [],
+                  "attachments": [],
+                  "location": {
+                    "file": "sidebar-order.spec.ts",
+                    "line": 174,
+                    "column": 6
+                  },
+                  "count": 1,
+                  "skipped": false,
+                  "snippet": "  173 | // Local fallback is headed; CI retains its normal isolated browser.\n  174 | test.use({\n      |      ^\n  175 |   viewport: { width: 1_440, height: 1_200 },"
+                }
+              ],
+              "attachments": [
+                0
+              ],
+              "count": 1,
+              "skipped": false
+            },
+            {
+              "title": "Worker Cleanup",
+              "startTime": "2026-10-03T16:59:31.772Z",
+              "duration": 82,
+              "steps": [
+                {
+                  "title": "Fixture \"browser\"",
+                  "startTime": "2026-10-03T16:59:31.772Z",
+                  "duration": 82,
+                  "steps": [],
+                  "attachments": [],
+                  "count": 1,
+                  "skipped": false
+                },
+                {
+                  "title": "Fixture \"headless\"",
+                  "startTime": "2026-10-03T16:59:31.854Z",
+                  "duration": 0,
+                  "steps": [],
+                  "attachments": [],
+                  "location": {
+                    "file": "sidebar-order.spec.ts",
+                    "line": 174,
+                    "column": 6
+                  },
+                  "count": 1,
+                  "skipped": false,
+                  "snippet": "  173 | // Local fallback is headed; CI retains its normal isolated browser.\n  174 | test.use({\n      |      ^\n  175 |   viewport: { width: 1_440, height: 1_200 },"
+                }
+              ],
+              "attachments": [],
+              "count": 1,
+              "skipped": false
+            }
+          ],
+          "errors": [
+            {
+              "message": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mlocator\u001b[39m\u001b[2m).\u001b[22mtoHaveText\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m)\u001b[22m failed\n\nLocator: getByTestId('channel-sidebar').locator('section[aria-label=\"Direct messages\"]').locator('ul > li > button[data-active] span.truncate')\nTimeout: 5000ms\n\u001b[32m- Expected  - 1\u001b[39m\n\u001b[31m+ Received  + 1\u001b[39m\n\n\u001b[33m@@ -2,9 +2,9 @@\u001b[39m\n\u001b[2m    \"Unread Quinn\",\u001b[22m\n\u001b[2m    \"Vera\",\u001b[22m\n\u001b[2m    \"Uma\",\u001b[22m\n\u001b[2m    \"Theo\",\u001b[22m\n\u001b[2m    \"Sam\",\u001b[22m\n\u001b[31m+   \"Zoe\",\u001b[39m\n\u001b[2m    \"aaron\",\u001b[22m\n\u001b[2m    \"Bella\",\u001b[22m\n\u001b[32m-   \"Zoe\",\u001b[39m\n\u001b[2m  ]\u001b[22m\n\nCall log:\n\u001b[2m  - Expect \"toHaveText\" with timeout 5000ms\u001b[22m\n\u001b[2m  - waiting for getByTestId('channel-sidebar').locator('section[aria-label=\"Direct messages\"]').locator('ul > li > button[data-active] span.truncate')\u001b[22m\n\u001b[2m    14 \u00d7 locator resolved to 8 elements\u001b[22m\n\n\n  246 |     const errors = await seedSidebar(page);\n  247 |     const rows = await sectionRows(page, \"Direct messages\", \"dms\");\n> 248 |     await expect(rows).toHaveText([\n      |                        ^\n  249 |       \"Unread Quinn\",\n  250 |       \"Vera\",\n  251 |       \"Uma\",\n\u001b[2m    at /Users/sgallant/software_development/.evie-worktrees/buzz-sidebar-sort/web/tests/e2e/sidebar-order.spec.ts:248:24\u001b[22m",
+              "codeframe": "  148 |   return errors;\n  149 | }\n  150 |\n  151 | async function sectionRows(\n  152 |   page: Page,\n  153 |   label: string,\n  154 |   screenshotName: string,\n  155 | ): Promise<Locator> {\n  156 |   const section = page\n  157 |     .getByTestId(\"channel-sidebar\")\n  158 |     .locator(`section[aria-label=\"${label}\"]`);\n  159 |   await expect(section).toBeVisible();\n  160 |   await expect(section.getByTestId(\"section-more\")).toBeVisible();\n  161 |   await shot(page, `${screenshotName}-truncated`);\n  162 |   await section.getByTestId(\"section-more\").click();\n  163 |   // Clicking \"N more\" leaves the pointer over the held list. Move it out\n  164 |   // before reading order so pending activity/profile updates can re-rank.\n  165 |   await page.mouse.move(1_000, 100);\n  166 |   await expect(section.getByTestId(\"section-more\")).toHaveText(\"Show less\");\n  167 |   await section.scrollIntoViewIfNeeded();\n  168 |   await page.mouse.move(1_000, 100);\n  169 |   await shot(page, `${screenshotName}-expanded`);\n  170 |   return section.locator(\"ul > li > button[data-active] span.truncate\");\n  171 | }\n  172 |\n  173 | // Local fallback is headed; CI retains its normal isolated browser.\n  174 | test.use({\n  175 |   viewport: { width: 1_440, height: 1_200 },\n  176 |   headless: !!process.env.CI,\n  177 | });\n  178 |\n  179 | const consoleErrors = new WeakMap<Page, string[]>();\n  180 |\n  181 | test.beforeEach(async ({ page }) => {\n  182 |   const errors: string[] = [];\n  183 |   consoleErrors.set(page, errors);\n  184 |   page.on(\"console\", (message) => {\n  185 |     if (message.type() === \"error\") errors.push(message.text());\n  186 |   });\n  187 | });\n  188 |\n  189 | test.describe(\"rendered sidebar order\", () => {\n  190 |   test.afterEach(async ({ page }, testInfo) => {\n  191 |     await testInfo.attach(\"console-errors\", {\n  192 |       body: JSON.stringify(consoleErrors.get(page) ?? [], null, 2),\n  193 |       contentType: \"application/json\",\n  194 |     });\n  195 |     await testInfo.attach(\"sidebar-state\", {\n  196 |       body: JSON.stringify(\n  197 |         await page.evaluate(() => ({\n  198 |           visits: localStorage.getItem(\"buzz.sidebar-visits.v1\"),\n  199 |           read: localStorage.getItem(\"buzz.read-state.v1\"),\n  200 |           favorites: localStorage.getItem(\"buzz.channel-prefs.v1\"),\n  201 |           pointerOverList: document.querySelector(\"nav:hover\") !== null,\n  202 |           sections: Array.from(\n  203 |             document.querySelectorAll(\n  204 |               '[data-testid=\"channel-sidebar\"] section',\n  205 |             ),\n  206 |             (section) => ({\n  207 |               name: section.getAttribute(\"aria-label\"),\n  208 |               labels: Array.from(\n  209 |                 section.querySelectorAll(\n  210 |                   \"ul > li > button[data-active] span.truncate\",\n  211 |                 ),\n  212 |                 (label) => label.textContent,\n  213 |               ),\n  214 |             }),\n  215 |           ),\n  216 |         })),\n  217 |         null,\n  218 |         2,\n  219 |       ),\n  220 |       contentType: \"application/json\",\n  221 |     });\n  222 |   });\n  223 |\n  224 |   test(\"Channels: unread by recency, exactly four most used, then case-insensitive A-Z\", async ({\n  225 |     page,\n  226 |   }) => {\n  227 |     const errors = await seedSidebar(page);\n  228 |     const rows = await sectionRows(page, \"Channels\", \"channels\");\n  229 |     await expect(rows).toHaveText([\n  230 |       \"zulu-new\",\n  231 |       \"alpha-old\",\n  232 |       \"Violet\",\n  233 |       \"tango\",\n  234 |       \"Sierra\",\n  235 |       \"romeo\",\n  236 |       \"aardvark\",\n  237 |       \"Bravo\",\n  238 |       \"zebra\",\n  239 |     ]);\n  240 |     expect(errors).toEqual([]);\n  241 |   });\n  242 |\n  243 |   test(\"Direct messages: unread, exactly four most used, then A-Z by displayed profile name\", async ({\n  244 |     page,\n  245 |   }) => {\n  246 |     const errors = await seedSidebar(page);\n  247 |     const rows = await sectionRows(page, \"Direct messages\", \"dms\");\n> 248 |     await expect(rows).toHaveText([\n      |                        ^ Error: expect(locator).toHaveText(expected) failed\n  249 |       \"Unread Quinn\",\n  250 |       \"Vera\",\n  251 |       \"Uma\",\n  252 |       \"Theo\",\n  253 |       \"Sam\",\n  254 |       \"aaron\",\n  255 |       \"Bella\",\n  256 |       \"Zoe\",\n  257 |     ]);\n  258 |     expect(errors).toEqual([]);\n  259 |   });\n  260 |\n  261 |   test(\"Favorites: mixed channels and DMs use unread, four most used, then A-Z\", async ({\n  262 |     page,\n  263 |   }) => {\n  264 |     const errors = await seedSidebar(page);\n  265 |     const rows = await sectionRows(page, \"Favorites\", \"favorites\");\n  266 |     await expect(rows).toHaveText([\n  267 |       \"urgent-favorite\",\n  268 |       \"Vera favorite\",\n  269 |       \"Tango favorite\",\n  270 |       \"Sierra favorite\",\n  271 |       \"Romeo favorite\",\n  272 |       \"aardvark favorite\",\n  273 |       \"Bravo favorite\",\n  274 |       \"zebra favorite\",\n  275 |     ]);\n  276 |     expect(errors).toEqual([]);\n  277 |   });\n  278 | });\n  279 |\n  280 | //"
+            }
+          ],
+          "status": "failed",
+          "annotations": [],
+          "attachments": [
+            {
+              "name": "screenshot",
+              "contentType": "image/png",
+              "path": "data/6398269c65509ea5887cdf032acaac123b26045b.png"
+            },
+            {
+              "name": "console-errors",
+              "contentType": "application/json",
+              "body": "[\n  \"Access to fetch at 'https://crichton.tailb3d4b8.ts.net:6881/api/host-stats' from origin 'http://127.0.0.1:4173' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.\",\n  \"Failed to load resource: net::ERR_FAILED\"\n]"
+            },
+            {
+              "name": "sidebar-state",
+              "contentType": "application/json",
+              "body": "{\n  \"visits\": \"{\\\"10000000-0000-4000-8000-000000000001\\\":{\\\"score\\\":500,\\\"at\\\":1791046760704},\\\"10000000-0000-4000-8000-000000000002\\\":{\\\"score\\\":1,\\\"at\\\":1791046760704},\\\"10000000-0000-4000-8000-000000000003\\\":{\\\"score\\\":50,\\\"at\\\":1791046760704},\\\"10000000-0000-4000-8000-000000000004\\\":{\\\"score\\\":40,\\\"at\\\":1791046760704},\\\"10000000-0000-4000-8000-000000000005\\\":{\\\"score\\\":30,\\\"at\\\":1791046760704},\\\"10000000-0000-4000-8000-000000000006\\\":{\\\"score\\\":20,\\\"at\\\":1791046760704},\\\"10000000-0000-4000-8000-000000000007\\\":{\\\"score\\\":10,\\\"at\\\":1791046760704},\\\"20000000-0000-4000-8000-000000000001\\\":{\\\"score\\\":1,\\\"at\\\":1791046760704},\\\"20000000-0000-4000-8000-000000000002\\\":{\\\"score\\\":50,\\\"at\\\":1791046760704},\\\"20000000-0000-4000-8000-000000000003\\\":{\\\"score\\\":40,\\\"at\\\":1791046760704},\\\"20000000-0000-4000-8000-000000000004\\\":{\\\"score\\\":30,\\\"at\\\":1791046760704},\\\"20000000-0000-4000-8000-000000000005\\\":{\\\"score\\\":20,\\\"at\\\":1791046760704},\\\"20000000-0000-4000-8000-000000000006\\\":{\\\"score\\\":10,\\\"at\\\":1791046760704},\\\"30000000-0000-4000-8000-000000000001\\\":{\\\"score\\\":1,\\\"at\\\":1791046760704},\\\"30000000-0000-4000-8000-000000000002\\\":{\\\"score\\\":50,\\\"at\\\":1791046760704},\\\"30000000-0000-4000-8000-000000000003\\\":{\\\"score\\\":40,\\\"at\\\":1791046760704},\\\"30000000-0000-4000-8000-000000000004\\\":{\\\"score\\\":30,\\\"at\\\":1791046760704},\\\"30000000-0000-4000-8000-000000000005\\\":{\\\"score\\\":20,\\\"at\\\":1791046760704},\\\"30000000-0000-4000-8000-000000000006\\\":{\\\"score\\\":10,\\\"at\\\":1791046760704}}\",\n  \"read\": \"{\\\"10000000-0000-4000-8000-000000000001\\\":1791043160,\\\"10000000-0000-4000-8000-000000000002\\\":1791043160,\\\"10000000-0000-4000-8000-000000000003\\\":1791046760,\\\"10000000-0000-4000-8000-000000000004\\\":1791046760,\\\"10000000-0000-4000-8000-000000000005\\\":1791046760,\\\"10000000-0000-4000-8000-000000000006\\\":1791046760,\\\"10000000-0000-4000-8000-000000000007\\\":1791046760,\\\"10000000-0000-4000-8000-000000000008\\\":1791046760,\\\"10000000-0000-4000-8000-000000000009\\\":1791046760,\\\"20000000-0000-4000-8000-000000000001\\\":1791043160,\\\"20000000-0000-4000-8000-000000000002\\\":1791046760,\\\"20000000-0000-4000-8000-000000000003\\\":1791046760,\\\"20000000-0000-4000-8000-000000000004\\\":1791046760,\\\"20000000-0000-4000-8000-000000000005\\\":1791046760,\\\"20000000-0000-4000-8000-000000000006\\\":1791046760,\\\"20000000-0000-4000-8000-000000000007\\\":1791046760,\\\"20000000-0000-4000-8000-000000000008\\\":1791046760,\\\"30000000-0000-4000-8000-000000000001\\\":1791043160,\\\"30000000-0000-4000-8000-000000000002\\\":1791046760,\\\"30000000-0000-4000-8000-000000000003\\\":1791046760,\\\"30000000-0000-4000-8000-000000000004\\\":1791046760,\\\"30000000-0000-4000-8000-000000000005\\\":1791046760,\\\"30000000-0000-4000-8000-000000000006\\\":1791046760,\\\"30000000-0000-4000-8000-000000000007\\\":1791046760,\\\"30000000-0000-4000-8000-000000000008\\\":1791046760}\",\n  \"favorites\": \"{\\\"favorites\\\":[{\\\"kind\\\":\\\"channel\\\",\\\"id\\\":\\\"30000000-0000-4000-8000-000000000008\\\",\\\"at\\\":1791046760697},{\\\"kind\\\":\\\"channel\\\",\\\"id\\\":\\\"30000000-0000-4000-8000-000000000007\\\",\\\"at\\\":1791046760698},{\\\"kind\\\":\\\"channel\\\",\\\"id\\\":\\\"30000000-0000-4000-8000-000000000006\\\",\\\"at\\\":1791046760699},{\\\"kind\\\":\\\"channel\\\",\\\"id\\\":\\\"30000000-0000-4000-8000-000000000005\\\",\\\"at\\\":1791046760700},{\\\"kind\\\":\\\"channel\\\",\\\"id\\\":\\\"30000000-0000-4000-8000-000000000004\\\",\\\"at\\\":1791046760701},{\\\"kind\\\":\\\"channel\\\",\\\"id\\\":\\\"30000000-0000-4000-8000-000000000003\\\",\\\"at\\\":1791046760702},{\\\"kind\\\":\\\"channel\\\",\\\"id\\\":\\\"30000000-0000-4000-8000-000000000002\\\",\\\"at\\\":1791046760703},{\\\"kind\\\":\\\"channel\\\",\\\"id\\\":\\\"30000000-0000-4000-8000-000000000001\\\",\\\"at\\\":1791046760704}],\\\"muted\\\":[]}\",\n  \"pointerOverList\": false,\n  \"sections\": [\n    {\n      \"name\": \"Favorites\",\n      \"labels\": [\n        \"urgent-favorite\",\n        \"Vera favorite\",\n        \"Tango favorite\",\n        \"Sierra favorite\",\n        \"Romeo favorite\",\n        \"zebra favorite\"\n      ]\n    },\n    {\n      \"name\": \"Channels\",\n      \"labels\": [\n        \"zulu-new\",\n        \"alpha-old\",\n        \"Violet\",\n        \"tango\",\n        \"Sierra\",\n        \"romeo\"\n      ]\n    },\n    {\n      \"name\": \"Direct messages\",\n      \"labels\": [\n        \"Unread Quinn\",\n        \"Vera\",\n        \"Uma\",\n        \"Theo\",\n        \"Sam\",\n        \"Zoe\",\n        \"aaron\",\n        \"Bella\"\n      ]\n    }\n  ]\n}"
+            },
+            {
+              "name": "video",
+              "contentType": "video/webm",
+              "path": "data/2540a73ae43f1b4729f432debe0ba833d425320b.webm"
+            },
+            {
+              "name": "error-context",
+              "contentType": "text/markdown",
+              "path": "data/26ead18aa36f9507eb80991c92f6dae2d21d6051.md"
+            }
+          ],
+          "workerIndex": 1
+        }
+      ],
+      "ok": false
+    },
+    {
+      "testId": "b257641d761884acee19-3001d254aa656c9be203",
+      "title": "Favorites: mixed channels and DMs use unread, four most used, then A-Z",
+      "projectName": "smoke",
+      "location": {
+        "file": "sidebar-order.spec.ts",
+        "line": 261,
+        "column": 3
+      },
+      "duration": 11335,
+      "annotations": [],
+      "tags": [],
+      "outcome": "unexpected",
+      "path": [
+        "rendered sidebar order"
+      ],
+      "results": [
+        {
+          "duration": 11335,
+          "startTime": "2026-10-03T16:59:32.100Z",
+          "retry": 0,
+          "steps": [
+            {
+              "title": "Before Hooks",
+              "startTime": "2026-10-03T16:59:32.107Z",
+              "duration": 472,
+              "steps": [
+                {
+                  "title": "beforeEach hook",
+                  "startTime": "2026-10-03T16:59:32.107Z",
+                  "duration": 472,
+                  "steps": [
+                    {
+                      "title": "Fixture \"browser\"",
+                      "startTime": "2026-10-03T16:59:32.110Z",
+                      "duration": 213,
+                      "steps": [
+                        {
+                          "title": "Launch browser",
+                          "startTime": "2026-10-03T16:59:32.111Z",
+                          "duration": 212,
+                          "steps": [],
+                          "attachments": [],
+                          "count": 1,
+                          "skipped": false
+                        }
+                      ],
+                      "attachments": [],
+                      "count": 1,
+                      "skipped": false
+                    },
+                    {
+                      "title": "Fixture \"context\"",
+                      "startTime": "2026-10-03T16:59:32.325Z",
+                      "duration": 6,
+                      "steps": [
+                        {
+                          "title": "Create context",
+                          "startTime": "2026-10-03T16:59:32.326Z",
+                          "duration": 5,
+                          "steps": [],
+                          "attachments": [],
+                          "count": 1,
+                          "skipped": false
+                        }
+                      ],
+                      "attachments": [],
+                      "count": 1,
+                      "skipped": false
+                    },
+                    {
+                      "title": "Fixture \"page\"",
+                      "startTime": "2026-10-03T16:59:32.331Z",
+                      "duration": 248,
+                      "steps": [
+                        {
+                          "title": "Create page",
+                          "startTime": "2026-10-03T16:59:32.332Z",
+                          "duration": 247,
+                          "steps": [],
+                          "attachments": [],
+                          "count": 1,
+                          "skipped": false
+                        }
+                      ],
+                      "attachments": [],
+                      "count": 1,
+                      "skipped": false
+                    }
+                  ],
+                  "attachments": [],
+                  "location": {
+                    "file": "sidebar-order.spec.ts",
+                    "line": 181,
+                    "column": 6
+                  },
+                  "count": 1,
+                  "skipped": false,
+                  "snippet": "  180 |\n  181 | test.beforeEach(async ({ page }) => {\n      |      ^\n  182 |   const errors: string[] = [];"
+                }
+              ],
+              "attachments": [],
+              "count": 1,
+              "skipped": false
+            },
+            {
+              "title": "Navigate to \"/repos?view=inbox\"",
+              "startTime": "2026-10-03T16:59:32.614Z",
+              "duration": 147,
+              "steps": [],
+              "attachments": [],
+              "location": {
+                "file": "helpers/signIn.ts",
+                "line": 35,
+                "column": 14
+              },
+              "count": 1,
+              "skipped": false,
+              "snippet": "  34 | ): Promise<void> {\n  35 |   await page.goto(path);\n     |              ^\n  36 |   await page.getByRole(\"button\", { name: \"Enter key manually\" }).click();"
+            },
+            {
+              "title": "Click getByRole('button', { name: 'Enter key manually' })",
+              "startTime": "2026-10-03T16:59:32.763Z",
+              "duration": 675,
+              "steps": [],
+              "attachments": [],
+              "location": {
+                "file": "helpers/signIn.ts",
+                "line": 36,
+                "column": 66
+              },
+              "count": 1,
+              "skipped": false,
+              "snippet": "  35 |   await page.goto(path);\n  36 |   await page.getByRole(\"button\", { name: \"Enter key manually\" }).click();\n     |                                                                  ^\n  37 |   await page"
+            },
+            {
+              "title": "Fill \"nsec1tc3l97xhnvddx4c07kz28rxp3sjjapdu2l0tjqkwqvlqpepm5rfqaeqqay\" getByPlaceholder('nsec1\u2026')",
+              "startTime": "2026-10-03T16:59:33.439Z",
+              "duration": 5,
+              "steps": [],
+              "attachments": [],
+              "location": {
+                "file": "helpers/signIn.ts",
+                "line": 39,
+                "column": 6
+              },
+              "count": 1,
+              "skipped": false,
+              "snippet": "  38 |     .getByPlaceholder(\"nsec1\u2026\")\n  39 |     .fill(nsecEncode(secretKey ?? generateSecretKey()));\n     |      ^\n  40 |   await page.getByRole(\"button\", { name: \"Continue\" }).click();"
+            },
+            {
+              "title": "Click getByRole('button', { name: 'Continue' })",
+              "startTime": "2026-10-03T16:59:33.444Z",
+              "duration": 33,
+              "steps": [],
+              "attachments": [],
+              "location": {
+                "file": "helpers/signIn.ts",
+                "line": 40,
+                "column": 56
+              },
+              "count": 1,
+              "skipped": false,
+              "snippet": "  39 |     .fill(nsecEncode(secretKey ?? generateSecretKey()));\n  40 |   await page.getByRole(\"button\", { name: \"Continue\" }).click();\n     |                                                        ^\n  41 |   await page.getByPlaceholder(\"New passphrase\").fill(\"e2e-passphrase\");"
+            },
+            {
+              "title": "Fill \"e2e-passphrase\" getByPlaceholder('New passphrase')",
+              "startTime": "2026-10-03T16:59:33.478Z",
+              "duration": 3,
+              "steps": [],
+              "attachments": [],
+              "location": {
+                "file": "helpers/signIn.ts",
+                "line": 41,
+                "column": 49
+              },
+              "count": 1,
+              "skipped": false,
+              "snippet": "  40 |   await page.getByRole(\"button\", { name: \"Continue\" }).click();\n  41 |   await page.getByPlaceholder(\"New passphrase\").fill(\"e2e-passphrase\");\n     |                                                 ^\n  42 |   await page.getByPlaceholder(\"Confirm passphrase\").fill(\"e2e-passphrase\");"
+            },
+            {
+              "title": "Fill \"e2e-passphrase\" getByPlaceholder('Confirm passphrase')",
+              "startTime": "2026-10-03T16:59:33.481Z",
+              "duration": 2,
+              "steps": [],
+              "attachments": [],
+              "location": {
+                "file": "helpers/signIn.ts",
+                "line": 42,
+                "column": 53
+              },
+              "count": 1,
+              "skipped": false,
+              "snippet": "  41 |   await page.getByPlaceholder(\"New passphrase\").fill(\"e2e-passphrase\");\n  42 |   await page.getByPlaceholder(\"Confirm passphrase\").fill(\"e2e-passphrase\");\n     |                                                     ^\n  43 |   if (authTag) {"
+            },
+            {
+              "title": "Click getByRole('button', { name: 'Finish' })",
+              "startTime": "2026-10-03T16:59:33.484Z",
+              "duration": 26,
+              "steps": [],
+              "attachments": [],
+              "location": {
+                "file": "helpers/signIn.ts",
+                "line": 49,
+                "column": 54
+              },
+              "count": 1,
+              "skipped": false,
+              "snippet": "  48 |   }\n  49 |   await page.getByRole(\"button\", { name: \"Finish\" }).click();\n     |                                                      ^\n  50 |   await expect("
+            },
+            {
+              "title": "Expect \"toBeHidden\" getByRole('button', { name: 'Enter key manually' })",
+              "startTime": "2026-10-03T16:59:33.513Z",
+              "duration": 3,
+              "steps": [],
+              "attachments": [],
+              "location": {
+                "file": "helpers/signIn.ts",
+                "line": 52,
+                "column": 5
+              },
+              "count": 1,
+              "skipped": false,
+              "snippet": "  51 |     page.getByRole(\"button\", { name: \"Enter key manually\" }),\n  52 |   ).toBeHidden();\n     |     ^\n  53 | }"
+            },
+            {
+              "title": "Expect \"toBeVisible\" getByTestId('channel-sidebar')",
+              "startTime": "2026-10-03T16:59:33.517Z",
+              "duration": 82,
+              "steps": [],
+              "attachments": [],
+              "location": {
+                "file": "sidebar-order.spec.ts",
+                "line": 146,
+                "column": 53
+              },
+              "count": 1,
+              "skipped": false,
+              "snippet": "  145 |   await signIn(page, \"/repos?view=inbox\", viewerKey);\n  146 |   await expect(page.getByTestId(\"channel-sidebar\")).toBeVisible();\n      |                                                     ^\n  147 |   await page.mouse.move(1_000, 100);"
+            },
+            {
+              "title": "Mouse move",
+              "startTime": "2026-10-03T16:59:33.600Z",
+              "duration": 4,
+              "steps": [],
+              "attachments": [],
+              "location": {
+                "file": "sidebar-order.spec.ts",
+                "line": 147,
+                "column": 20
+              },
+              "count": 1,
+              "skipped": false,
+              "snippet": "  146 |   await expect(page.getByTestId(\"channel-sidebar\")).toBeVisible();\n  147 |   await page.mouse.move(1_000, 100);\n      |                    ^\n  148 |   return errors;"
+            },
+            {
+              "title": "Expect \"toBeVisible\" getByTestId('channel-sidebar').locator('section[aria-label=\"Favorites\"]')",
+              "startTime": "2026-10-03T16:59:33.605Z",
+              "duration": 1294,
+              "steps": [],
+              "attachments": [],
+              "location": {
+                "file": "sidebar-order.spec.ts",
+                "line": 159,
+                "column": 25
+              },
+              "count": 1,
+              "skipped": false,
+              "snippet": "  158 |     .locator(`section[aria-label=\"${label}\"]`);\n  159 |   await expect(section).toBeVisible();\n      |                         ^\n  160 |   await expect(section.getByTestId(\"section-more\")).toBeVisible();"
+            },
+            {
+              "title": "Expect \"toBeVisible\" getByTestId('channel-sidebar').locator('section[aria-label=\"Favorites\"]').getByTestId('section-more')",
+              "startTime": "2026-10-03T16:59:34.899Z",
+              "duration": 1,
+              "steps": [],
+              "attachments": [],
+              "location": {
+                "file": "sidebar-order.spec.ts",
+                "line": 160,
+                "column": 53
+              },
+              "count": 1,
+              "skipped": false,
+              "snippet": "  159 |   await expect(section).toBeVisible();\n  160 |   await expect(section.getByTestId(\"section-more\")).toBeVisible();\n      |                                                     ^\n  161 |   await shot(page, `${screenshotName}-truncated`);"
+            },
+            {
+              "title": "Expect \"toHaveCount\" locator('[data-sonner-toast]')",
+              "startTime": "2026-10-03T16:59:34.901Z",
+              "duration": 3305,
+              "steps": [],
+              "attachments": [],
+              "location": {
+                "file": "helpers/shellPage.ts",
+                "line": 39,
+                "column": 55
+              },
+              "count": 1,
+              "skipped": false,
+              "snippet": "   38 |     // would sit over the top-right of every frame: let them run out first.\n   39 |     await expect(page.locator(\"[data-sonner-toast]\")).toHaveCount(0, {\n      |                                                       ^\n   40 |       timeout: 12_000,"
+            },
+            {
+              "title": "Mouse move",
+              "startTime": "2026-10-03T16:59:38.207Z",
+              "duration": 1,
+              "steps": [],
+              "attachments": [],
+              "location": {
+                "file": "helpers/shellPage.ts",
+                "line": 45,
+                "column": 20
+              },
+              "count": 1,
+              "skipped": false,
+              "snippet": "   44 |   // bar in the frame: park it in the corner.\n   45 |   await page.mouse.move(1, 1);\n      |                    ^\n   46 |   // Let entrance animations settle so two themes capture the same frame."
+            },
+            {
+              "title": "Evaluate",
+              "startTime": "2026-10-03T16:59:38.209Z",
+              "duration": 1,
+              "steps": [],
+              "attachments": [],
+              "location": {
+                "file": "helpers/shellPage.ts",
+                "line": 49,
+                "column": 6
+              },
+              "count": 1,
+              "skipped": false,
+              "snippet": "   48 |   await page\n   49 |     .evaluate(() =>\n      |      ^\n   50 |       Promise.all("
+            },
+            {
+              "title": "Screenshot",
+              "startTime": "2026-10-03T16:59:38.211Z",
+              "duration": 54,
+              "steps": [],
+              "attachments": [],
+              "location": {
+                "file": "helpers/shellPage.ts",
+                "line": 61,
+                "column": 14
+              },
+              "count": 1,
+              "skipped": false,
+              "snippet": "   60 |     .catch(() => {});\n   61 |   await page.screenshot({ path: path.join(SHOTS_DIR, `${name}.png`) });\n      |              ^\n   62 | }"
+            },
+            {
+              "title": "Click getByTestId('channel-sidebar').locator('section[aria-label=\"Favorites\"]').getByTestId('section-more')",
+              "startTime": "2026-10-03T16:59:38.267Z",
+              "duration": 26,
+              "steps": [],
+              "attachments": [],
+              "location": {
+                "file": "sidebar-order.spec.ts",
+                "line": 162,
+                "column": 45
+              },
+              "count": 1,
+              "skipped": false,
+              "snippet": "  161 |   await shot(page, `${screenshotName}-truncated`);\n  162 |   await section.getByTestId(\"section-more\").click();\n      |                                             ^\n  163 |   // Clicking \"N more\" leaves the pointer over the held list. Move it out"
+            },
+            {
+              "title": "Mouse move",
+              "startTime": "2026-10-03T16:59:38.293Z",
+              "duration": 11,
+              "steps": [],
+              "attachments": [],
+              "location": {
+                "file": "sidebar-order.spec.ts",
+                "line": 165,
+                "column": 20
+              },
+              "count": 1,
+              "skipped": false,
+              "snippet": "  164 |   // before reading order so pending activity/profile updates can re-rank.\n  165 |   await page.mouse.move(1_000, 100);\n      |                    ^\n  166 |   await expect(section.getByTestId(\"section-more\")).toHaveText(\"Show less\");"
+            },
+            {
+              "title": "Expect \"toHaveText\" getByTestId('channel-sidebar').locator('section[aria-label=\"Favorites\"]').getByTestId('section-more')",
+              "startTime": "2026-10-03T16:59:38.304Z",
+              "duration": 4,
+              "steps": [],
+              "attachments": [],
+              "location": {
+                "file": "sidebar-order.spec.ts",
+                "line": 166,
+                "column": 53
+              },
+              "count": 1,
+              "skipped": false,
+              "snippet": "  165 |   await page.mouse.move(1_000, 100);\n  166 |   await expect(section.getByTestId(\"section-more\")).toHaveText(\"Show less\");\n      |                                                     ^\n  167 |   await section.scrollIntoViewIfNeeded();"
+            },
+            {
+              "title": "Scroll into view getByTestId('channel-sidebar').locator('section[aria-label=\"Favorites\"]')",
+              "startTime": "2026-10-03T16:59:38.309Z",
+              "duration": 28,
+              "steps": [],
+              "attachments": [],
+              "location": {
+                "file": "sidebar-order.spec.ts",
+                "line": 167,
+                "column": 17
+              },
+              "count": 1,
+              "skipped": false,
+              "snippet": "  166 |   await expect(section.getByTestId(\"section-more\")).toHaveText(\"Show less\");\n  167 |   await section.scrollIntoViewIfNeeded();\n      |                 ^\n  168 |   await page.mouse.move(1_000, 100);"
+            },
+            {
+              "title": "Mouse move",
+              "startTime": "2026-10-03T16:59:38.337Z",
+              "duration": 16,
+              "steps": [],
+              "attachments": [],
+              "location": {
+                "file": "sidebar-order.spec.ts",
+                "line": 168,
+                "column": 20
+              },
+              "count": 1,
+              "skipped": false,
+              "snippet": "  167 |   await section.scrollIntoViewIfNeeded();\n  168 |   await page.mouse.move(1_000, 100);\n      |                    ^\n  169 |   await shot(page, `${screenshotName}-expanded`);"
+            },
+            {
+              "title": "Expect \"toHaveCount\" locator('[data-sonner-toast]')",
+              "startTime": "2026-10-03T16:59:38.353Z",
+              "duration": 1,
+              "steps": [],
+              "attachments": [],
+              "location": {
+                "file": "helpers/shellPage.ts",
+                "line": 39,
+                "column": 55
+              },
+              "count": 1,
+              "skipped": false,
+              "snippet": "   38 |     // would sit over the top-right of every frame: let them run out first.\n   39 |     await expect(page.locator(\"[data-sonner-toast]\")).toHaveCount(0, {\n      |                                                       ^\n   40 |       timeout: 12_000,"
+            },
+            {
+              "title": "Mouse move",
+              "startTime": "2026-10-03T16:59:38.355Z",
+              "duration": 15,
+              "steps": [],
+              "attachments": [],
+              "location": {
+                "file": "helpers/shellPage.ts",
+                "line": 45,
+                "column": 20
+              },
+              "count": 1,
+              "skipped": false,
+              "snippet": "   44 |   // bar in the frame: park it in the corner.\n   45 |   await page.mouse.move(1, 1);\n      |                    ^\n   46 |   // Let entrance animations settle so two themes capture the same frame."
+            },
+            {
+              "title": "Evaluate",
+              "startTime": "2026-10-03T16:59:38.370Z",
+              "duration": 1,
+              "steps": [],
+              "attachments": [],
+              "location": {
+                "file": "helpers/shellPage.ts",
+                "line": 49,
+                "column": 6
+              },
+              "count": 1,
+              "skipped": false,
+              "snippet": "   48 |   await page\n   49 |     .evaluate(() =>\n      |      ^\n   50 |       Promise.all("
+            },
+            {
+              "title": "Screenshot",
+              "startTime": "2026-10-03T16:59:38.371Z",
+              "duration": 58,
+              "steps": [],
+              "attachments": [],
+              "location": {
+                "file": "helpers/shellPage.ts",
+                "line": 61,
+                "column": 14
+              },
+              "count": 1,
+              "skipped": false,
+              "snippet": "   60 |     .catch(() => {});\n   61 |   await page.screenshot({ path: path.join(SHOTS_DIR, `${name}.png`) });\n      |              ^\n   62 | }"
+            },
+            {
+              "title": "Expect \"toHaveText\" getByTestId('channel-sidebar').locator('section[aria-label=\"Favorites\"]').locator('ul > li > button[data-active] span.truncate')",
+              "startTime": "2026-10-03T16:59:38.430Z",
+              "duration": 5007,
+              "steps": [],
+              "attachments": [],
+              "location": {
+                "file": "sidebar-order.spec.ts",
+                "line": 266,
+                "column": 24
+              },
+              "error": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mlocator\u001b[39m\u001b[2m).\u001b[22mtoHaveText\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m)\u001b[22m failed\n\nLocator: getByTestId('channel-sidebar').locator('section[aria-label=\"Favorites\"]').locator('ul > li > button[data-active] span.truncate')\nTimeout: 5000ms\n\u001b[32m- Expected  - 1\u001b[39m\n\u001b[31m+ Received  + 1\u001b[39m\n\n\u001b[33m@@ -2,9 +2,9 @@\u001b[39m\n\u001b[2m    \"urgent-favorite\",\u001b[22m\n\u001b[2m    \"Vera favorite\",\u001b[22m\n\u001b[2m    \"Tango favorite\",\u001b[22m\n\u001b[2m    \"Sierra favorite\",\u001b[22m\n\u001b[2m    \"Romeo favorite\",\u001b[22m\n\u001b[31m+   \"zebra favorite\",\u001b[39m\n\u001b[2m    \"aardvark favorite\",\u001b[22m\n\u001b[2m    \"Bravo favorite\",\u001b[22m\n\u001b[32m-   \"zebra favorite\",\u001b[39m\n\u001b[2m  ]\u001b[22m\n\nCall log:\n\u001b[2m  - Expect \"toHaveText\" with timeout 5000ms\u001b[22m\n\u001b[2m  - waiting for getByTestId('channel-sidebar').locator('section[aria-label=\"Favorites\"]').locator('ul > li > button[data-active] span.truncate')\u001b[22m\n\u001b[2m    14 \u00d7 locator resolved to 8 elements\u001b[22m\n",
+              "count": 1,
+              "skipped": false,
+              "snippet": "  265 |     const rows = await sectionRows(page, \"Favorites\", \"favorites\");\n  266 |     await expect(rows).toHaveText([\n      |                        ^\n  267 |       \"urgent-favorite\","
+            },
+            {
+              "title": "After Hooks",
+              "startTime": "2026-10-03T16:59:43.438Z",
+              "duration": 226,
+              "steps": [
+                {
+                  "title": "afterEach hook",
+                  "startTime": "2026-10-03T16:59:43.487Z",
+                  "duration": 3,
+                  "steps": [
+                    {
+                      "title": "Attach \"console-errors\"",
+                      "startTime": "2026-10-03T16:59:43.488Z",
+                      "duration": 0,
+                      "steps": [],
+                      "attachments": [
+                        1
+                      ],
+                      "location": {
+                        "file": "sidebar-order.spec.ts",
+                        "line": 191,
+                        "column": 20
+                      },
+                      "count": 1,
+                      "skipped": false,
+                      "snippet": "  190 |   test.afterEach(async ({ page }, testInfo) => {\n  191 |     await testInfo.attach(\"console-errors\", {\n      |                    ^\n  192 |       body: JSON.stringify(consoleErrors.get(page) ?? [], null, 2),"
+                    },
+                    {
+                      "title": "Evaluate",
+                      "startTime": "2026-10-03T16:59:43.488Z",
+                      "duration": 1,
+                      "steps": [],
+                      "attachments": [],
+                      "location": {
+                        "file": "sidebar-order.spec.ts",
+                        "line": 197,
+                        "column": 20
+                      },
+                      "count": 1,
+                      "skipped": false,
+                      "snippet": "  196 |       body: JSON.stringify(\n  197 |         await page.evaluate(() => ({\n      |                    ^\n  198 |           visits: localStorage.getItem(\"buzz.sidebar-visits.v1\"),"
+                    },
+                    {
+                      "title": "Attach \"sidebar-state\"",
+                      "startTime": "2026-10-03T16:59:43.489Z",
+                      "duration": 0,
+                      "steps": [],
+                      "attachments": [
+                        2
+                      ],
+                      "location": {
+                        "file": "sidebar-order.spec.ts",
+                        "line": 195,
+                        "column": 20
+                      },
+                      "count": 1,
+                      "skipped": false,
+                      "snippet": "  194 |     });\n  195 |     await testInfo.attach(\"sidebar-state\", {\n      |                    ^\n  196 |       body: JSON.stringify("
+                    }
+                  ],
+                  "attachments": [],
+                  "location": {
+                    "file": "sidebar-order.spec.ts",
+                    "line": 190,
+                    "column": 8
+                  },
+                  "count": 1,
+                  "skipped": false,
+                  "snippet": "  189 | test.describe(\"rendered sidebar order\", () => {\n  190 |   test.afterEach(async ({ page }, testInfo) => {\n      |        ^\n  191 |     await testInfo.attach(\"console-errors\", {"
+                },
+                {
+                  "title": "Fixture \"page\"",
+                  "startTime": "2026-10-03T16:59:43.490Z",
+                  "duration": 0,
+                  "steps": [],
+                  "attachments": [],
+                  "count": 1,
+                  "skipped": false
+                },
+                {
+                  "title": "Fixture \"context\"",
+                  "startTime": "2026-10-03T16:59:43.490Z",
+                  "duration": 172,
+                  "steps": [
+                    {
+                      "title": "Close context",
+                      "startTime": "2026-10-03T16:59:43.500Z",
+                      "duration": 160,
+                      "steps": [],
+                      "attachments": [],
+                      "count": 1,
+                      "skipped": false
+                    }
+                  ],
+                  "attachments": [
+                    3
+                  ],
+                  "count": 1,
+                  "skipped": false
+                },
+                {
+                  "title": "Fixture \"viewport\"",
+                  "startTime": "2026-10-03T16:59:43.663Z",
+                  "duration": 0,
+                  "steps": [],
+                  "attachments": [],
+                  "location": {
+                    "file": "sidebar-order.spec.ts",
+                    "line": 174,
+                    "column": 6
+                  },
+                  "count": 1,
+                  "skipped": false,
+                  "snippet": "  173 | // Local fallback is headed; CI retains its normal isolated browser.\n  174 | test.use({\n      |      ^\n  175 |   viewport: { width: 1_440, height: 1_200 },"
+                }
+              ],
+              "attachments": [
+                0
+              ],
+              "count": 1,
+              "skipped": false
+            },
+            {
+              "title": "Worker Cleanup",
+              "startTime": "2026-10-03T16:59:43.664Z",
+              "duration": 90,
+              "steps": [
+                {
+                  "title": "Fixture \"browser\"",
+                  "startTime": "2026-10-03T16:59:43.664Z",
+                  "duration": 90,
+                  "steps": [],
+                  "attachments": [],
+                  "count": 1,
+                  "skipped": false
+                },
+                {
+                  "title": "Fixture \"headless\"",
+                  "startTime": "2026-10-03T16:59:43.754Z",
+                  "duration": 0,
+                  "steps": [],
+                  "attachments": [],
+                  "location": {
+                    "file": "sidebar-order.spec.ts",
+                    "line": 174,
+                    "column": 6
+                  },
+                  "count": 1,
+                  "skipped": false,
+                  "snippet": "  173 | // Local fallback is headed; CI retains its normal isolated browser.\n  174 | test.use({\n      |      ^\n  175 |   viewport: { width: 1_440, height: 1_200 },"
+                }
+              ],
+              "attachments": [],
+              "count": 1,
+              "skipped": false
+            }
+          ],
+          "errors": [
+            {
+              "message": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mlocator\u001b[39m\u001b[2m).\u001b[22mtoHaveText\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m)\u001b[22m failed\n\nLocator: getByTestId('channel-sidebar').locator('section[aria-label=\"Favorites\"]').locator('ul > li > button[data-active] span.truncate')\nTimeout: 5000ms\n\u001b[32m- Expected  - 1\u001b[39m\n\u001b[31m+ Received  + 1\u001b[39m\n\n\u001b[33m@@ -2,9 +2,9 @@\u001b[39m\n\u001b[2m    \"urgent-favorite\",\u001b[22m\n\u001b[2m    \"Vera favorite\",\u001b[22m\n\u001b[2m    \"Tango favorite\",\u001b[22m\n\u001b[2m    \"Sierra favorite\",\u001b[22m\n\u001b[2m    \"Romeo favorite\",\u001b[22m\n\u001b[31m+   \"zebra favorite\",\u001b[39m\n\u001b[2m    \"aardvark favorite\",\u001b[22m\n\u001b[2m    \"Bravo favorite\",\u001b[22m\n\u001b[32m-   \"zebra favorite\",\u001b[39m\n\u001b[2m  ]\u001b[22m\n\nCall log:\n\u001b[2m  - Expect \"toHaveText\" with timeout 5000ms\u001b[22m\n\u001b[2m  - waiting for getByTestId('channel-sidebar').locator('section[aria-label=\"Favorites\"]').locator('ul > li > button[data-active] span.truncate')\u001b[22m\n\u001b[2m    14 \u00d7 locator resolved to 8 elements\u001b[22m\n\n\n  264 |     const errors = await seedSidebar(page);\n  265 |     const rows = await sectionRows(page, \"Favorites\", \"favorites\");\n> 266 |     await expect(rows).toHaveText([\n      |                        ^\n  267 |       \"urgent-favorite\",\n  268 |       \"Vera favorite\",\n  269 |       \"Tango favorite\",\n\u001b[2m    at /Users/sgallant/software_development/.evie-worktrees/buzz-sidebar-sort/web/tests/e2e/sidebar-order.spec.ts:266:24\u001b[22m",
+              "codeframe": "  166 |   await expect(section.getByTestId(\"section-more\")).toHaveText(\"Show less\");\n  167 |   await section.scrollIntoViewIfNeeded();\n  168 |   await page.mouse.move(1_000, 100);\n  169 |   await shot(page, `${screenshotName}-expanded`);\n  170 |   return section.locator(\"ul > li > button[data-active] span.truncate\");\n  171 | }\n  172 |\n  173 | // Local fallback is headed; CI retains its normal isolated browser.\n  174 | test.use({\n  175 |   viewport: { width: 1_440, height: 1_200 },\n  176 |   headless: !!process.env.CI,\n  177 | });\n  178 |\n  179 | const consoleErrors = new WeakMap<Page, string[]>();\n  180 |\n  181 | test.beforeEach(async ({ page }) => {\n  182 |   const errors: string[] = [];\n  183 |   consoleErrors.set(page, errors);\n  184 |   page.on(\"console\", (message) => {\n  185 |     if (message.type() === \"error\") errors.push(message.text());\n  186 |   });\n  187 | });\n  188 |\n  189 | test.describe(\"rendered sidebar order\", () => {\n  190 |   test.afterEach(async ({ page }, testInfo) => {\n  191 |     await testInfo.attach(\"console-errors\", {\n  192 |       body: JSON.stringify(consoleErrors.get(page) ?? [], null, 2),\n  193 |       contentType: \"application/json\",\n  194 |     });\n  195 |     await testInfo.attach(\"sidebar-state\", {\n  196 |       body: JSON.stringify(\n  197 |         await page.evaluate(() => ({\n  198 |           visits: localStorage.getItem(\"buzz.sidebar-visits.v1\"),\n  199 |           read: localStorage.getItem(\"buzz.read-state.v1\"),\n  200 |           favorites: localStorage.getItem(\"buzz.channel-prefs.v1\"),\n  201 |           pointerOverList: document.querySelector(\"nav:hover\") !== null,\n  202 |           sections: Array.from(\n  203 |             document.querySelectorAll(\n  204 |               '[data-testid=\"channel-sidebar\"] section',\n  205 |             ),\n  206 |             (section) => ({\n  207 |               name: section.getAttribute(\"aria-label\"),\n  208 |               labels: Array.from(\n  209 |                 section.querySelectorAll(\n  210 |                   \"ul > li > button[data-active] span.truncate\",\n  211 |                 ),\n  212 |                 (label) => label.textContent,\n  213 |               ),\n  214 |             }),\n  215 |           ),\n  216 |         })),\n  217 |         null,\n  218 |         2,\n  219 |       ),\n  220 |       contentType: \"application/json\",\n  221 |     });\n  222 |   });\n  223 |\n  224 |   test(\"Channels: unread by recency, exactly four most used, then case-insensitive A-Z\", async ({\n  225 |     page,\n  226 |   }) => {\n  227 |     const errors = await seedSidebar(page);\n  228 |     const rows = await sectionRows(page, \"Channels\", \"channels\");\n  229 |     await expect(rows).toHaveText([\n  230 |       \"zulu-new\",\n  231 |       \"alpha-old\",\n  232 |       \"Violet\",\n  233 |       \"tango\",\n  234 |       \"Sierra\",\n  235 |       \"romeo\",\n  236 |       \"aardvark\",\n  237 |       \"Bravo\",\n  238 |       \"zebra\",\n  239 |     ]);\n  240 |     expect(errors).toEqual([]);\n  241 |   });\n  242 |\n  243 |   test(\"Direct messages: unread, exactly four most used, then A-Z by displayed profile name\", async ({\n  244 |     page,\n  245 |   }) => {\n  246 |     const errors = await seedSidebar(page);\n  247 |     const rows = await sectionRows(page, \"Direct messages\", \"dms\");\n  248 |     await expect(rows).toHaveText([\n  249 |       \"Unread Quinn\",\n  250 |       \"Vera\",\n  251 |       \"Uma\",\n  252 |       \"Theo\",\n  253 |       \"Sam\",\n  254 |       \"aaron\",\n  255 |       \"Bella\",\n  256 |       \"Zoe\",\n  257 |     ]);\n  258 |     expect(errors).toEqual([]);\n  259 |   });\n  260 |\n  261 |   test(\"Favorites: mixed channels and DMs use unread, four most used, then A-Z\", async ({\n  262 |     page,\n  263 |   }) => {\n  264 |     const errors = await seedSidebar(page);\n  265 |     const rows = await sectionRows(page, \"Favorites\", \"favorites\");\n> 266 |     await expect(rows).toHaveText([\n      |                        ^ Error: expect(locator).toHaveText(expected) failed\n  267 |       \"urgent-favorite\",\n  268 |       \"Vera favorite\",\n  269 |       \"Tango favorite\",\n  270 |       \"Sierra favorite\",\n  271 |       \"Romeo favorite\",\n  272 |       \"aardvark favorite\",\n  273 |       \"Bravo favorite\",\n  274 |       \"zebra favorite\",\n  275 |     ]);\n  276 |     expect(errors).toEqual([]);\n  277 |   });\n  278 | });\n  279 |\n  280 | //"
+            }
+          ],
+          "status": "failed",
+          "annotations": [],
+          "attachments": [
+            {
+              "name": "screenshot",
+              "contentType": "image/png",
+              "path": "data/701a7d372fcd5055fec3c1b4ab725f9408f35621.png"
+            },
+            {
+              "name": "console-errors",
+              "contentType": "application/json",
+              "body": "[\n  \"Access to fetch at 'https://crichton.tailb3d4b8.ts.net:6881/api/host-stats' from origin 'http://127.0.0.1:4173' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.\",\n  \"Failed to load resource: net::ERR_FAILED\"\n]"
+            },
+            {
+              "name": "sidebar-state",
+              "contentType": "application/json",
+              "body": "{\n  \"visits\": \"{\\\"10000000-0000-4000-8000-000000000001\\\":{\\\"score\\\":500,\\\"at\\\":1791046772593},\\\"10000000-0000-4000-8000-000000000002\\\":{\\\"score\\\":1,\\\"at\\\":1791046772593},\\\"10000000-0000-4000-8000-000000000003\\\":{\\\"score\\\":50,\\\"at\\\":1791046772593},\\\"10000000-0000-4000-8000-000000000004\\\":{\\\"score\\\":40,\\\"at\\\":1791046772593},\\\"10000000-0000-4000-8000-000000000005\\\":{\\\"score\\\":30,\\\"at\\\":1791046772593},\\\"10000000-0000-4000-8000-000000000006\\\":{\\\"score\\\":20,\\\"at\\\":1791046772593},\\\"10000000-0000-4000-8000-000000000007\\\":{\\\"score\\\":10,\\\"at\\\":1791046772593},\\\"20000000-0000-4000-8000-000000000001\\\":{\\\"score\\\":1,\\\"at\\\":1791046772593},\\\"20000000-0000-4000-8000-000000000002\\\":{\\\"score\\\":50,\\\"at\\\":1791046772593},\\\"20000000-0000-4000-8000-000000000003\\\":{\\\"score\\\":40,\\\"at\\\":1791046772593},\\\"20000000-0000-4000-8000-000000000004\\\":{\\\"score\\\":30,\\\"at\\\":1791046772593},\\\"20000000-0000-4000-8000-000000000005\\\":{\\\"score\\\":20,\\\"at\\\":1791046772593},\\\"20000000-0000-4000-8000-000000000006\\\":{\\\"score\\\":10,\\\"at\\\":1791046772593},\\\"30000000-0000-4000-8000-000000000001\\\":{\\\"score\\\":1,\\\"at\\\":1791046772593},\\\"30000000-0000-4000-8000-000000000002\\\":{\\\"score\\\":50,\\\"at\\\":1791046772593},\\\"30000000-0000-4000-8000-000000000003\\\":{\\\"score\\\":40,\\\"at\\\":1791046772593},\\\"30000000-0000-4000-8000-000000000004\\\":{\\\"score\\\":30,\\\"at\\\":1791046772593},\\\"30000000-0000-4000-8000-000000000005\\\":{\\\"score\\\":20,\\\"at\\\":1791046772593},\\\"30000000-0000-4000-8000-000000000006\\\":{\\\"score\\\":10,\\\"at\\\":1791046772593}}\",\n  \"read\": \"{\\\"10000000-0000-4000-8000-000000000001\\\":1791043172,\\\"10000000-0000-4000-8000-000000000002\\\":1791043172,\\\"10000000-0000-4000-8000-000000000003\\\":1791046772,\\\"10000000-0000-4000-8000-000000000004\\\":1791046772,\\\"10000000-0000-4000-8000-000000000005\\\":1791046772,\\\"10000000-0000-4000-8000-000000000006\\\":1791046772,\\\"10000000-0000-4000-8000-000000000007\\\":1791046772,\\\"10000000-0000-4000-8000-000000000008\\\":1791046772,\\\"10000000-0000-4000-8000-000000000009\\\":1791046772,\\\"20000000-0000-4000-8000-000000000001\\\":1791043172,\\\"20000000-0000-4000-8000-000000000002\\\":1791046772,\\\"20000000-0000-4000-8000-000000000003\\\":1791046772,\\\"20000000-0000-4000-8000-000000000004\\\":1791046772,\\\"20000000-0000-4000-8000-000000000005\\\":1791046772,\\\"20000000-0000-4000-8000-000000000006\\\":1791046772,\\\"20000000-0000-4000-8000-000000000007\\\":1791046772,\\\"20000000-0000-4000-8000-000000000008\\\":1791046772,\\\"30000000-0000-4000-8000-000000000001\\\":1791043172,\\\"30000000-0000-4000-8000-000000000002\\\":1791046772,\\\"30000000-0000-4000-8000-000000000003\\\":1791046772,\\\"30000000-0000-4000-8000-000000000004\\\":1791046772,\\\"30000000-0000-4000-8000-000000000005\\\":1791046772,\\\"30000000-0000-4000-8000-000000000006\\\":1791046772,\\\"30000000-0000-4000-8000-000000000007\\\":1791046772,\\\"30000000-0000-4000-8000-000000000008\\\":1791046772}\",\n  \"favorites\": \"{\\\"favorites\\\":[{\\\"kind\\\":\\\"channel\\\",\\\"id\\\":\\\"30000000-0000-4000-8000-000000000008\\\",\\\"at\\\":1791046772586},{\\\"kind\\\":\\\"channel\\\",\\\"id\\\":\\\"30000000-0000-4000-8000-000000000007\\\",\\\"at\\\":1791046772587},{\\\"kind\\\":\\\"channel\\\",\\\"id\\\":\\\"30000000-0000-4000-8000-000000000006\\\",\\\"at\\\":1791046772588},{\\\"kind\\\":\\\"channel\\\",\\\"id\\\":\\\"30000000-0000-4000-8000-000000000005\\\",\\\"at\\\":1791046772589},{\\\"kind\\\":\\\"channel\\\",\\\"id\\\":\\\"30000000-0000-4000-8000-000000000004\\\",\\\"at\\\":1791046772590},{\\\"kind\\\":\\\"channel\\\",\\\"id\\\":\\\"30000000-0000-4000-8000-000000000003\\\",\\\"at\\\":1791046772591},{\\\"kind\\\":\\\"channel\\\",\\\"id\\\":\\\"30000000-0000-4000-8000-000000000002\\\",\\\"at\\\":1791046772592},{\\\"kind\\\":\\\"channel\\\",\\\"id\\\":\\\"30000000-0000-4000-8000-000000000001\\\",\\\"at\\\":1791046772593}],\\\"muted\\\":[]}\",\n  \"pointerOverList\": false,\n  \"sections\": [\n    {\n      \"name\": \"Favorites\",\n      \"labels\": [\n        \"urgent-favorite\",\n        \"Vera favorite\",\n        \"Tango favorite\",\n        \"Sierra favorite\",\n        \"Romeo favorite\",\n        \"zebra favorite\",\n        \"aardvark favorite\",\n        \"Bravo favorite\"\n      ]\n    },\n    {\n      \"name\": \"Channels\",\n      \"labels\": [\n        \"zulu-new\",\n        \"alpha-old\",\n        \"Violet\",\n        \"tango\",\n        \"Sierra\",\n        \"romeo\"\n      ]\n    },\n    {\n      \"name\": \"Direct messages\",\n      \"labels\": [\n        \"Unread Quinn\",\n        \"Vera\",\n        \"Uma\",\n        \"Theo\",\n        \"Sam\",\n        \"Zoe\"\n      ]\n    }\n  ]\n}"
+            },
+            {
+              "name": "video",
+              "contentType": "video/webm",
+              "path": "data/78064cfef7e37468b0cd73aa3eea6b3ec1415d80.webm"
+            },
+            {
+              "name": "error-context",
+              "contentType": "text/markdown",
+              "path": "data/bfefa5952ae0eddd0ce590454ae3bdae834793fd.md"
+            }
+          ],
+          "workerIndex": 2
+        }
+      ],
+      "ok": false
+    }
+  ]
+}

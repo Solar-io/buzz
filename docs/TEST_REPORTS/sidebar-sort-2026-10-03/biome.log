@@ -1,0 +1,25 @@
+src/features/sidebar/ui/RelayConnectionCard.test.mjs:7:78 lint/correctness/noUnusedFunctionParameters  FIXABLE  ━━━━━━━━━━
+
+  ! This parameter t is unused.
+  
+    5 │ // stubbed → text contains relay.test:6351
+    6 │ 
+  > 7 │ test("T9: RelayConnectionCard describe function includes relay host", async (t) => {
+      │                                                                              ^
+    8 │   // This test verifies the logic that will be implemented in the describe() function
+    9 │   // which takes a status and a relayHost, and returns text that includes the host.
+  
+  i Unused parameters might be the result of an incomplete refactoring.
+  
+  i Unsafe fix: If this is intentional, prepend t with an underscore.
+  
+     5  5 │   // stubbed → text contains relay.test:6351
+     6  6 │   
+     7    │ - test("T9:·RelayConnectionCard·describe·function·includes·relay·host",·async·(t)·=>·{
+        7 │ + test("T9:·RelayConnectionCard·describe·function·includes·relay·host",·async·(_t)·=>·{
+     8  8 │     // This test verifies the logic that will be implemented in the describe() function
+     9  9 │     // which takes a status and a relayHost, and returns text that includes the host.
+  
+
+Checked 39 files in 14ms. No fixes applied.
+Found 1 warning.

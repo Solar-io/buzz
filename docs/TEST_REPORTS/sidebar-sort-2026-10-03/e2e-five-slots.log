@@ -1,0 +1,162 @@
+
+Running 3 tests using 1 worker
+
+(node:77690) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:77690) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+  ✘  1 [smoke] › tests/e2e/sidebar-order.spec.ts:224:3 › rendered sidebar order › Channels: unread by recency, exactly four most used, then case-insensitive A-Z (11.3s)
+(node:82494) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:82494) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+  ✘  2 [smoke] › tests/e2e/sidebar-order.spec.ts:243:3 › rendered sidebar order › Direct messages: unread, exactly four most used, then A-Z by displayed profile name (11.3s)
+(node:88624) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:88624) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+  ✘  3 [smoke] › tests/e2e/sidebar-order.spec.ts:261:3 › rendered sidebar order › Favorites: mixed channels and DMs use unread, four most used, then A-Z (11.3s)
+
+
+  1) [smoke] › tests/e2e/sidebar-order.spec.ts:224:3 › rendered sidebar order › Channels: unread by recency, exactly four most used, then case-insensitive A-Z 
+
+    Error: [2mexpect([22m[31mlocator[39m[2m).[22mtoHaveText[2m([22m[32mexpected[39m[2m)[22m failed
+
+    Locator: getByTestId('channel-sidebar').locator('section[aria-label="Channels"]').locator('ul > li > button[data-active] span.truncate')
+    Timeout: 5000ms
+    [32m- Expected  - 1[39m
+    [31m+ Received  + 1[39m
+
+    [33m@@ -3,9 +3,9 @@[39m
+    [2m    "alpha-old",[22m
+    [2m    "Violet",[22m
+    [2m    "tango",[22m
+    [2m    "Sierra",[22m
+    [2m    "romeo",[22m
+    [31m+   "zebra",[39m
+    [2m    "aardvark",[22m
+    [2m    "Bravo",[22m
+    [32m-   "zebra",[39m
+    [2m  ][22m
+
+    Call log:
+    [2m  - Expect "toHaveText" with timeout 5000ms[22m
+    [2m  - waiting for getByTestId('channel-sidebar').locator('section[aria-label="Channels"]').locator('ul > li > button[data-active] span.truncate')[22m
+    [2m    14 × locator resolved to 9 elements[22m
+
+
+      227 |     const errors = await seedSidebar(page);
+      228 |     const rows = await sectionRows(page, "Channels", "channels");
+    > 229 |     await expect(rows).toHaveText([
+          |                        ^
+      230 |       "zulu-new",
+      231 |       "alpha-old",
+      232 |       "Violet",
+        at /Users/sgallant/software_development/.evie-worktrees/buzz-sidebar-sort/web/tests/e2e/sidebar-order.spec.ts:229:24
+
+    attachment #1: screenshot (image/png) ──────────────────────────────────────────────────────────
+    ../docs/TEST_REPORTS/sidebar-sort-2026-10-03/e2e-five-slots/sidebar-order-rendered-sid-3ce23-d-then-case-insensitive-A-Z-smoke/test-failed-1.png
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    attachment #4: video (video/webm) ──────────────────────────────────────────────────────────────
+    ../docs/TEST_REPORTS/sidebar-sort-2026-10-03/e2e-five-slots/sidebar-order-rendered-sid-3ce23-d-then-case-insensitive-A-Z-smoke/video.webm
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    Error Context: ../docs/TEST_REPORTS/sidebar-sort-2026-10-03/e2e-five-slots/sidebar-order-rendered-sid-3ce23-d-then-case-insensitive-A-Z-smoke/error-context.md
+
+  2) [smoke] › tests/e2e/sidebar-order.spec.ts:243:3 › rendered sidebar order › Direct messages: unread, exactly four most used, then A-Z by displayed profile name 
+
+    Error: [2mexpect([22m[31mlocator[39m[2m).[22mtoHaveText[2m([22m[32mexpected[39m[2m)[22m failed
+
+    Locator: getByTestId('channel-sidebar').locator('section[aria-label="Direct messages"]').locator('ul > li > button[data-active] span.truncate')
+    Timeout: 5000ms
+    [32m- Expected  - 1[39m
+    [31m+ Received  + 1[39m
+
+    [33m@@ -2,9 +2,9 @@[39m
+    [2m    "Unread Quinn",[22m
+    [2m    "Vera",[22m
+    [2m    "Uma",[22m
+    [2m    "Theo",[22m
+    [2m    "Sam",[22m
+    [31m+   "Zoe",[39m
+    [2m    "aaron",[22m
+    [2m    "Bella",[22m
+    [32m-   "Zoe",[39m
+    [2m  ][22m
+
+    Call log:
+    [2m  - Expect "toHaveText" with timeout 5000ms[22m
+    [2m  - waiting for getByTestId('channel-sidebar').locator('section[aria-label="Direct messages"]').locator('ul > li > button[data-active] span.truncate')[22m
+    [2m    14 × locator resolved to 8 elements[22m
+
+
+      246 |     const errors = await seedSidebar(page);
+      247 |     const rows = await sectionRows(page, "Direct messages", "dms");
+    > 248 |     await expect(rows).toHaveText([
+          |                        ^
+      249 |       "Unread Quinn",
+      250 |       "Vera",
+      251 |       "Uma",
+        at /Users/sgallant/software_development/.evie-worktrees/buzz-sidebar-sort/web/tests/e2e/sidebar-order.spec.ts:248:24
+
+    attachment #1: screenshot (image/png) ──────────────────────────────────────────────────────────
+    ../docs/TEST_REPORTS/sidebar-sort-2026-10-03/e2e-five-slots/sidebar-order-rendered-sid-bbe60-Z-by-displayed-profile-name-smoke/test-failed-1.png
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    attachment #4: video (video/webm) ──────────────────────────────────────────────────────────────
+    ../docs/TEST_REPORTS/sidebar-sort-2026-10-03/e2e-five-slots/sidebar-order-rendered-sid-bbe60-Z-by-displayed-profile-name-smoke/video.webm
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    Error Context: ../docs/TEST_REPORTS/sidebar-sort-2026-10-03/e2e-five-slots/sidebar-order-rendered-sid-bbe60-Z-by-displayed-profile-name-smoke/error-context.md
+
+  3) [smoke] › tests/e2e/sidebar-order.spec.ts:261:3 › rendered sidebar order › Favorites: mixed channels and DMs use unread, four most used, then A-Z 
+
+    Error: [2mexpect([22m[31mlocator[39m[2m).[22mtoHaveText[2m([22m[32mexpected[39m[2m)[22m failed
+
+    Locator: getByTestId('channel-sidebar').locator('section[aria-label="Favorites"]').locator('ul > li > button[data-active] span.truncate')
+    Timeout: 5000ms
+    [32m- Expected  - 1[39m
+    [31m+ Received  + 1[39m
+
+    [33m@@ -2,9 +2,9 @@[39m
+    [2m    "urgent-favorite",[22m
+    [2m    "Vera favorite",[22m
+    [2m    "Tango favorite",[22m
+    [2m    "Sierra favorite",[22m
+    [2m    "Romeo favorite",[22m
+    [31m+   "zebra favorite",[39m
+    [2m    "aardvark favorite",[22m
+    [2m    "Bravo favorite",[22m
+    [32m-   "zebra favorite",[39m
+    [2m  ][22m
+
+    Call log:
+    [2m  - Expect "toHaveText" with timeout 5000ms[22m
+    [2m  - waiting for getByTestId('channel-sidebar').locator('section[aria-label="Favorites"]').locator('ul > li > button[data-active] span.truncate')[22m
+    [2m    14 × locator resolved to 8 elements[22m
+
+
+      264 |     const errors = await seedSidebar(page);
+      265 |     const rows = await sectionRows(page, "Favorites", "favorites");
+    > 266 |     await expect(rows).toHaveText([
+          |                        ^
+      267 |       "urgent-favorite",
+      268 |       "Vera favorite",
+      269 |       "Tango favorite",
+        at /Users/sgallant/software_development/.evie-worktrees/buzz-sidebar-sort/web/tests/e2e/sidebar-order.spec.ts:266:24
+
+    attachment #1: screenshot (image/png) ──────────────────────────────────────────────────────────
+    ../docs/TEST_REPORTS/sidebar-sort-2026-10-03/e2e-five-slots/sidebar-order-rendered-sid-68e2a-ead-four-most-used-then-A-Z-smoke/test-failed-1.png
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    attachment #4: video (video/webm) ──────────────────────────────────────────────────────────────
+    ../docs/TEST_REPORTS/sidebar-sort-2026-10-03/e2e-five-slots/sidebar-order-rendered-sid-68e2a-ead-four-most-used-then-A-Z-smoke/video.webm
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    Error Context: ../docs/TEST_REPORTS/sidebar-sort-2026-10-03/e2e-five-slots/sidebar-order-rendered-sid-68e2a-ead-four-most-used-then-A-Z-smoke/error-context.md
+
+  3 failed
+    [smoke] › tests/e2e/sidebar-order.spec.ts:224:3 › rendered sidebar order › Channels: unread by recency, exactly four most used, then case-insensitive A-Z 
+    [smoke] › tests/e2e/sidebar-order.spec.ts:243:3 › rendered sidebar order › Direct messages: unread, exactly four most used, then A-Z by displayed profile name 
+    [smoke] › tests/e2e/sidebar-order.spec.ts:261:3 › rendered sidebar order › Favorites: mixed channels and DMs use unread, four most used, then A-Z 

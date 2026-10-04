@@ -197,3 +197,9 @@ W8a integration evidence: [current-main composition](TEST_REPORTS/parity-w8a.md#
 - [x] Record evidence and commit the integration in the provisioned branch.
 
 Evidence: [W9b2 current-main composition](TEST_REPORTS/parity-w9b2.md#w9b2-composition-with-current-main--2026-10-03).
+
+## Web sidebar order QA (2026-10-03)
+
+- [ ] Rendered Favorites, Channels and Direct messages order with hardcoded expectations.
+- [ ] Kill five-slot and raw-DM-order mutations; restore and rerun.
+- [ ] Required web unit, typecheck and Biome checks; commit spec and evidence.

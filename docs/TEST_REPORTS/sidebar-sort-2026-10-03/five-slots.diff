@@ -1,0 +1,13 @@
+diff --git a/web/src/features/sidebar/lib/sectionOrder.ts b/web/src/features/sidebar/lib/sectionOrder.ts
+index 819ed6282..969e207f7 100644
+--- a/web/src/features/sidebar/lib/sectionOrder.ts
++++ b/web/src/features/sidebar/lib/sectionOrder.ts
+@@ -43,7 +43,7 @@ export interface RankOptions {
+ }
+ 
+ /** How many read items rank by usage before the alphabetical remainder. */
+-export const FREQUENT_SLOTS = 4;
++export const FREQUENT_SLOTS = 5;
+ 
+ /** Visit scores closer than this are treated as equal (float decay noise). */
+ const SCORE_EPSILON = 1e-6;

@@ -1,0 +1,30 @@
+Total messages: 28 (Errors: 27, Warnings: 0)
+Returning 27 messages for level "error"
+
+[ERROR] Access to fetch at 'https://crichton.tailb3d4b8.ts.net:6881/api/host-stats' from origin 'http://127.0.0.1:4173' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource. @ http://127.0.0.1:4173/repos:0
+[ERROR] Failed to load resource: net::ERR_FAILED @ https://crichton.tailb3d4b8.ts.net:6881/api/host-stats:0
+[ERROR] WebSocket connection to 'ws://127.0.0.1:4173/' failed:  @ http://127.0.0.1:4173/assets/index-D4_T_akc.js:13
+[ERROR] Access to fetch at 'https://pilot.tailb3d4b8.ts.net:6770/v1/pace' from origin 'http://127.0.0.1:4173' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource. @ http://127.0.0.1:4173/repos:0
+[ERROR] Failed to load resource: net::ERR_FAILED @ https://pilot.tailb3d4b8.ts.net:6770/v1/pace:0
+[ERROR] Access to fetch at 'https://pilot.tailb3d4b8.ts.net:6770/v1/codex' from origin 'http://127.0.0.1:4173' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource. @ http://127.0.0.1:4173/repos:0
+[ERROR] Failed to load resource: net::ERR_FAILED @ https://pilot.tailb3d4b8.ts.net:6770/v1/codex:0
+[ERROR] Access to fetch at 'https://pilot.tailb3d4b8.ts.net:6770/v1/runway' from origin 'http://127.0.0.1:4173' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource. @ http://127.0.0.1:4173/repos:0
+[ERROR] Failed to load resource: net::ERR_FAILED @ https://pilot.tailb3d4b8.ts.net:6770/v1/runway:0
+[ERROR] WebSocket connection to 'ws://127.0.0.1:4173/' failed:  @ http://127.0.0.1:4173/assets/index-D4_T_akc.js:13
+[ERROR] WebSocket connection to 'ws://127.0.0.1:4173/' failed:  @ http://127.0.0.1:4173/assets/index-D4_T_akc.js:13
+[ERROR] WebSocket connection to 'ws://127.0.0.1:4173/' failed:  @ http://127.0.0.1:4173/assets/index-D4_T_akc.js:13
+[ERROR] WebSocket connection to 'ws://127.0.0.1:4173/' failed:  @ http://127.0.0.1:4173/assets/index-D4_T_akc.js:13
+[ERROR] Access to fetch at 'https://crichton.tailb3d4b8.ts.net:6881/api/host-stats' from origin 'http://127.0.0.1:4173' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource. @ http://127.0.0.1:4173/repos:0
+[ERROR] Failed to load resource: net::ERR_FAILED @ https://crichton.tailb3d4b8.ts.net:6881/api/host-stats:0
+[ERROR] WebSocket connection to 'ws://127.0.0.1:4173/' failed:  @ http://127.0.0.1:4173/assets/index-D4_T_akc.js:13
+[ERROR] Access to fetch at 'https://crichton.tailb3d4b8.ts.net:6881/api/host-stats' from origin 'http://127.0.0.1:4173' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource. @ http://127.0.0.1:4173/repos:0
+[ERROR] Failed to load resource: net::ERR_FAILED @ https://crichton.tailb3d4b8.ts.net:6881/api/host-stats:0
+[ERROR] Access to fetch at 'https://crichton.tailb3d4b8.ts.net:6881/api/host-stats' from origin 'http://127.0.0.1:4173' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource. @ http://127.0.0.1:4173/repos:0
+[ERROR] Failed to load resource: net::ERR_FAILED @ https://crichton.tailb3d4b8.ts.net:6881/api/host-stats:0
+[ERROR] WebSocket connection to 'ws://127.0.0.1:4173/' failed:  @ http://127.0.0.1:4173/assets/index-D4_T_akc.js:13
+[ERROR] WebSocket connection to 'ws://buzz-e2e.invalid/canary' failed:  @ :0
+[ERROR] Access to fetch at 'https://crichton.tailb3d4b8.ts.net:6881/api/host-stats' from origin 'http://127.0.0.1:4173' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource. @ http://127.0.0.1:4173/repos:0
+[ERROR] Failed to load resource: net::ERR_FAILED @ https://crichton.tailb3d4b8.ts.net:6881/api/host-stats:0
+[ERROR] WebSocket connection to 'ws://127.0.0.1:4173/' failed:  @ http://127.0.0.1:4173/assets/index-D4_T_akc.js:13
+[ERROR] Access to fetch at 'https://crichton.tailb3d4b8.ts.net:6881/api/host-stats' from origin 'http://127.0.0.1:4173' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource. @ http://127.0.0.1:4173/repos:0
+[ERROR] Failed to load resource: net::ERR_FAILED @ https://crichton.tailb3d4b8.ts.net:6881/api/host-stats:0
