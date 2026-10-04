@@ -182,6 +182,17 @@ impl EventQueue {
         }
     }
 
+    #[cfg(test)]
+    pub(crate) fn auth_notice_pending(&self, channel: Uuid) -> bool {
+        self.auth_parking.notice_pending(channel)
+    }
+    pub(crate) fn auth_notice_completion(
+        &self,
+        channel: Uuid,
+    ) -> impl FnOnce(bool) + Send + 'static {
+        self.auth_parking.notice_completion(channel)
+    }
+
     fn restore_auth_batch(&mut self, batch: FlushBatch) {
         if !batch.cancelled_events.is_empty() {
             self.cancelled_batches
@@ -6088,6 +6099,9 @@ mod auth_parking_tests {
             let (dead, notice) = queue.park_auth(original.clone(), 1000 + attempt * 60);
             assert!(dead.is_none());
             assert_eq!(notice, attempt == 0);
+            if notice {
+                queue.auth_notice_completion(ch)(true);
+            }
             queue.mark_complete(ch);
             assert_eq!(queue.retry_counts[&ch], 9);
             assert!(
@@ -6113,6 +6127,7 @@ mod auth_parking_tests {
         let ch = Uuid::new_v4();
         let first = batch(ch, "one");
         assert!(queue.park_auth(first.clone(), 100).1);
+        queue.auth_notice_completion(ch)(true);
         assert!(!queue.park_auth(first.clone(), 160).1);
         assert!(
             queue
@@ -6144,6 +6159,7 @@ mod auth_parking_tests {
             saved["batches"][0]["events"][0]["event"]["id"],
             original.events[0].event.id.to_hex()
         );
+        queue.auth_notice_completion(ch)(true);
         let mut restarted = EventQueue::new(DedupMode::Queue);
         restarted.load_auth_parked(path.clone(), 1002);
         assert_eq!(restarted.queued_event_count(&ch), 2);

@@ -1,7 +1,8 @@
 //! Durable auth-outage work. Only auth failures enter this journal; normal retry
 //! accounting stays in the queue. Wall-clock expiry survives process restarts.
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
@@ -77,14 +78,16 @@ struct SavedBatch {
 }
 
 #[derive(Default, Serialize, Deserialize)]
-pub(crate) struct AuthParking {
+struct ParkingState {
     batches: Vec<SavedBatch>,
     noticed_channels: HashSet<Uuid>,
     #[serde(skip)]
     path: Option<PathBuf>,
+    #[serde(skip)]
+    pending_notices: HashMap<Uuid, Uuid>,
 }
 
-impl AuthParking {
+impl ParkingState {
     pub(crate) fn load(path: PathBuf, now: u64) -> Self {
         let mut state = match std::fs::read(&path) {
             Ok(bytes) => serde_json::from_slice::<Self>(&bytes).unwrap_or_else(|error| {
@@ -181,7 +184,12 @@ impl AuthParking {
                 .collect(),
             cancel_reason: batch.cancel_reason,
         });
-        let notice = self.noticed_channels.insert(batch.channel_id);
+        let notice = !self.noticed_channels.contains(&batch.channel_id)
+            && !self.pending_notices.contains_key(&batch.channel_id);
+        if notice {
+            self.pending_notices
+                .insert(batch.channel_id, Uuid::new_v4());
+        }
         self.persist();
         (false, notice)
     }
@@ -220,6 +228,7 @@ impl AuthParking {
                 .map(|e| e.event.id)
                 .collect(),
         );
+        self.pending_notices.remove(&batch.channel_id);
         let reset_notice = self.noticed_channels.remove(&batch.channel_id);
         let after = self
             .batches
@@ -258,6 +267,53 @@ impl AuthParking {
         if let Err(error) = result {
             let _ = std::fs::remove_file(&temp);
             tracing::error!(%error, path = %path.display(), "could not persist auth parking journal");
+        }
+    }
+}
+
+// The publication task and event loop share the same journal lock. An accepted
+// notice is persisted immediately, without waiting for another prompt/probe.
+#[derive(Default, Clone)]
+pub(crate) struct AuthParking(Arc<Mutex<ParkingState>>);
+
+impl AuthParking {
+    fn state(&self) -> std::sync::MutexGuard<'_, ParkingState> {
+        self.0
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+    pub(crate) fn load(path: PathBuf, now: u64) -> Self {
+        Self(Arc::new(Mutex::new(ParkingState::load(path, now))))
+    }
+    pub(crate) fn restored_batches(&self, now: u64) -> Vec<FlushBatch> {
+        self.state().restored_batches(now)
+    }
+    pub(crate) fn park(&mut self, batch: &FlushBatch, now: u64) -> (bool, bool) {
+        self.state().park(batch, now)
+    }
+    pub(crate) fn contains(&self, id: nostr::EventId) -> bool {
+        self.state().contains(id)
+    }
+    pub(crate) fn finish(&mut self, batch: &FlushBatch) {
+        self.state().finish(batch);
+    }
+    #[cfg(test)]
+    pub(crate) fn notice_pending(&self, channel: Uuid) -> bool {
+        self.state().pending_notices.contains_key(&channel)
+    }
+    pub(crate) fn notice_completion(&self, channel: Uuid) -> impl FnOnce(bool) + Send + 'static {
+        let token = self.state().pending_notices.get(&channel).copied();
+        let parking = self.clone();
+        move |accepted| {
+            let mut state = parking.state();
+            // A late delivery must not suppress a new outage after completion.
+            if token.is_some() && state.pending_notices.get(&channel).copied() == token {
+                state.pending_notices.remove(&channel);
+                if accepted {
+                    state.noticed_channels.insert(channel);
+                    state.persist();
+                }
+            }
         }
     }
 }

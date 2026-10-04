@@ -5572,7 +5572,7 @@ pub(crate) async fn post_failure_notice(
     channel_id: Uuid,
     thread_tags: &ThreadTags,
     content: &str,
-) {
+) -> bool {
     let thread_ref = thread_tags.root_event_id.as_deref().and_then(|root| {
         let root_id = nostr::EventId::from_hex(root).ok()?;
         let parent_id = thread_tags
@@ -5590,20 +5590,26 @@ pub(crate) async fn post_failure_notice(
             Ok(b) => b,
             Err(e) => {
                 tracing::warn!(channel = %channel_id, "failure notice: build failed: {e}");
-                return;
+                return false;
             }
         };
     let event = match builder.sign_with_keys(&rest.keys) {
         Ok(e) => e,
         Err(e) => {
             tracing::warn!(channel = %channel_id, "failure notice: sign failed: {e}");
-            return;
+            return false;
         }
     };
     match tokio::time::timeout(Duration::from_secs(5), rest.submit_event(&event)).await {
-        Ok(Ok(_)) => {}
-        Ok(Err(e)) => tracing::warn!(channel = %channel_id, "failure notice failed: {e}"),
-        Err(_) => tracing::warn!(channel = %channel_id, "failure notice timed out"),
+        Ok(Ok(_)) => true,
+        Ok(Err(e)) => {
+            tracing::warn!(channel = %channel_id, "failure notice failed: {e}");
+            false
+        }
+        Err(_) => {
+            tracing::warn!(channel = %channel_id, "failure notice timed out");
+            false
+        }
     }
 }
 
