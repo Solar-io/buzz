@@ -3534,6 +3534,15 @@ async fn tokio_main() -> Result<()> {
                 }
                 if drop_withheld {
                     queue.remove_event(channel_id, &event_id);
+                    // The event never enters a FlushBatch, so no
+                    // ReactionGuard owns the 👀 added at queue-push time.
+                    // It is delivered now, not queued: clear it here or it
+                    // reads as Queued on the Work rail until its TTL.
+                    let rc = ctx.rest_client.clone();
+                    let eid = event_id.clone();
+                    tokio::spawn(async move {
+                        pool::reaction_remove(&rc, &eid, "👀").await;
+                    });
                 }
                 if release_withheld {
                     queue.release_native_steer(channel_id, &event_id);
