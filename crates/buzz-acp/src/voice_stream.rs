@@ -623,7 +623,10 @@ pub async fn run_voice_stream(
         params: &params,
         pending: Vec::new(),
         published: 0,
-        next_allowed: tokio::time::Instant::now(),
+        // Only segment 0 may beat the first gap — via the explicit
+        // `published == 0` exemption in `may_publish`, the single rule that
+        // keeps the first sentence immediate.
+        next_allowed: tokio::time::Instant::now() + MIN_PUBLISH_GAP,
     };
 
     let note_cli_send = |raw: &serde_json::Value, detected: &mut bool| {
