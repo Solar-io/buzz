@@ -232,3 +232,14 @@ Evidence: [W9b2 current-main composition](TEST_REPORTS/parity-w9b2.md#w9b2-compo
 - [x] Compare live/installed bundle, expand both sections, capture order/account/console and health evidence.
 - [ ] Rerun Sam-specific Channels and DM recency acceptance with Sam authenticated; current session is Crash Override.
 - [ ] Investigate repeated host-stats HTTP 401. See [report](TEST_REPORTS/test-report-2026-10-04-1021.md).
+
+## Voice streamed replies — web chain (2026-10-04)
+
+Plan: `~/.buzz/PLANS/VOICE_STREAMED_REPLIES_2026-10-04.md`.
+
+- [x] Step 0 web: `voiceLatency.ts` ring on `window.__buzzVoiceLatency` + `[voice-latency]` console lines, wired into the huddle speech hook and player.
+- [x] Step 0 bridge: `[tts] at=<ISO>` on every buzz-tts-bridge request line (infra repo).
+- [x] Step 4: `speechStream.ts` tracker + pull queue + `buzz.voice.streamedReplies` switch (default on).
+- [x] Step 5: `speakStream` in the player, 24820 subscription and stream routing in `useHuddleAgentSpeech`.
+- [ ] Steps 1-3 (buzz-acp harness side) — separate coder.
+- [ ] Step 6 live acceptance: baseline with harness switch off, then Kaiya on; read `window.__buzzVoiceLatency`.
