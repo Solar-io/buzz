@@ -66,3 +66,21 @@ test("silences notifications from Huddle backing channels", () => {
   );
   assert.equal(shouldPlayNotificationSound(null, silentChannelIds), true);
 });
+
+test("a muted channel or DM is silent, even when a huddle set is also passed", () => {
+  const huddles = new Set(["active-huddle"]);
+  const muted = new Set(["muted-dm"]);
+  assert.equal(shouldPlayNotificationSound("muted-dm", huddles, muted), false);
+  assert.equal(
+    shouldPlayNotificationSound("muted-dm", undefined, muted),
+    false,
+  );
+  assert.equal(
+    shouldPlayNotificationSound("active-huddle", huddles, muted),
+    false,
+  );
+  assert.equal(
+    shouldPlayNotificationSound("ordinary-dm", huddles, muted),
+    true,
+  );
+});

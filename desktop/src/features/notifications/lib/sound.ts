@@ -150,11 +150,13 @@ export function slotForFeedKind(
   }
 }
 
+// Mute means "no sound": a muted channel or DM still notifies, silently —
+// mentions included. Callers pass every silencing set (huddle rooms, mutes).
 export function shouldPlayNotificationSound(
   channelId: string | null | undefined,
-  silentChannelIds?: ReadonlySet<string>,
+  ...silentChannelIdSets: (ReadonlySet<string> | undefined)[]
 ): boolean {
-  return !channelId || !silentChannelIds?.has(channelId);
+  return !channelId || !silentChannelIdSets.some((ids) => ids?.has(channelId));
 }
 
 const cache = new Map<SoundName, HTMLAudioElement>();

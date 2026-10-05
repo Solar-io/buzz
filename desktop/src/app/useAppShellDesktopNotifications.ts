@@ -33,6 +33,7 @@ export function useAppShellDesktopNotifications({
   openSearchHit,
   pubkey,
   silentChannelIds,
+  mutedChannelIds,
 }: {
   channels: Channel[];
   enabled: boolean;
@@ -48,6 +49,7 @@ export function useAppShellDesktopNotifications({
   ) => Promise<unknown>;
   pubkey?: string;
   silentChannelIds?: ReadonlySet<string>;
+  mutedChannelIds?: ReadonlySet<string>;
 }) {
   // Roster alerts are owner/admin-only and self-gating; mounted here because
   // it shares this hook's "desktop notifications are on" precondition and
@@ -94,7 +96,13 @@ export function useAppShellDesktopNotifications({
         }),
       }).then((didSend) => {
         if (!didSend) return;
-        if (shouldPlayNotificationSound(channel.id, silentChannelIds)) {
+        if (
+          shouldPlayNotificationSound(
+            channel.id,
+            silentChannelIds,
+            mutedChannelIds,
+          )
+        ) {
           playNotificationSound(resolveSlotSound(notificationSettings, "dm"));
         }
         void requestDockBounce();
@@ -137,7 +145,13 @@ export function useAppShellDesktopNotifications({
         }),
       }).then((didSend) => {
         if (!didSend) return;
-        if (shouldPlayNotificationSound(channelId, silentChannelIds)) {
+        if (
+          shouldPlayNotificationSound(
+            channelId,
+            silentChannelIds,
+            mutedChannelIds,
+          )
+        ) {
           playNotificationSound(
             resolveSlotSound(notificationSettings, "thread_reply"),
           );

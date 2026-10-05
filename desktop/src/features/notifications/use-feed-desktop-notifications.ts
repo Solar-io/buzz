@@ -120,7 +120,11 @@ export function useFeedDesktopNotifications(
 
       if (
         didSend &&
-        shouldPlayNotificationSound(item.channelId, silentChannelIds)
+        shouldPlayNotificationSound(
+          item.channelId,
+          silentChannelIds,
+          mutedChannelIds,
+        )
       ) {
         const slot = slotForFeedKind(item.kind, item.category);
         playNotificationSound(resolveSlotSound(settings, slot));

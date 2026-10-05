@@ -369,6 +369,7 @@ export function AppShell() {
     openSearchHit,
     pubkey: identityQuery.data?.pubkey,
     silentChannelIds: huddleBackingChannelIds,
+    mutedChannelIds,
   });
   const {
     followedRootIds,
