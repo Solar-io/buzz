@@ -281,6 +281,35 @@ test("the speech filter is channel-scoped by #h", () => {
   assert.equal(filter.since, 1_787_800_000);
 });
 
+test("with segments, the speech filter also requests kind 24820", () => {
+  const filter = huddleAgentSpeechFilter(CHANNEL, 1_787_800_000, {
+    segments: true,
+  });
+  assert.deepEqual(filter.kinds, [9, 40002, 24820]);
+  assert.deepEqual(filter["#h"], [CHANNEL]);
+});
+
+test("enqueueTask runs in the same order as enqueue, and cancel drops queued tasks", async () => {
+  const order = [];
+  const speaker = createOrderedSpeaker(async (text) => {
+    await new Promise((r) => setTimeout(r, 5));
+    order.push(text);
+  });
+  speaker.setEnabled(true);
+  speaker.enqueue("one", AGENT);
+  speaker.enqueueTask(async () => {
+    order.push("stream");
+  });
+  speaker.enqueue("three", AGENT);
+  await new Promise((r) => setTimeout(r, 40));
+  assert.deepEqual(order, ["one", "stream", "three"]);
+  speaker.enqueue("slow", AGENT);
+  speaker.enqueueTask(async () => order.push("dropped"));
+  speaker.cancel();
+  await new Promise((r) => setTimeout(r, 40));
+  assert.deepEqual(order, ["one", "stream", "three"]);
+});
+
 test("the member-snapshot filter keys on #d, the addressable coordinate", () => {
   const filter = huddleMemberSnapshotFilter(CHANNEL);
   assert.deepEqual(filter["#d"], [CHANNEL]);

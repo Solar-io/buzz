@@ -445,3 +445,186 @@ test("the PREFETCHED body is read from its headers on, while chunk 1 still plays
   );
   player.dispose();
 });
+
+// ── speakStream: live pull queue (plan VOICE_STREAMED_REPLIES §5 row 5) ────
+
+const { createSpeechQueue } = await import("../huddle/lib/speechStream.ts");
+
+const SEG1 =
+  "Sure, I can look into the overnight deploy logs for you right now.";
+const SEG2 =
+  "The second sentence arrives while the first one is still playing.";
+const SEG3 = "And a third one lands after a pause, the way a tool call would.";
+
+function streamPlayer(ctx, fetchImpl, extra = {}) {
+  return createAgentSpeechPlayer({
+    getVoices: () => [],
+    voiceSelectionFor: () => undefined,
+    ttsUrl: () => "https://web.test:6366/tts",
+    createAudioContext: () => ctx,
+    fetchImpl,
+    ...extra,
+  });
+}
+
+test("speakStream: segment 2 arriving mid-playback is fetched BEFORE segment 1 finishes", async () => {
+  const ctx = wallClockContext();
+  const fetched = [];
+  const spokenAt = [];
+  const player = streamPlayer(
+    ctx,
+    (_url, init) => {
+      fetched.push({ text: JSON.parse(init.body).text, at: Date.now() });
+      return Promise.resolve(pcmResponse(0.5));
+    },
+    { onChunkSpoken: (chunk) => spokenAt.push({ chunk, at: Date.now() }) },
+  );
+  const queue = createSpeechQueue();
+  queue.push(SEG1);
+  const pending = player.speakStream(queue, AGENT);
+  await tick(120); // segment 1 is playing (0.5 s of audio)
+  assert.equal(fetched.length, 1, "only segment 1 so far");
+  queue.push(SEG2);
+  await tick(30);
+  queue.close();
+  assert.equal(await pending, "spoken");
+  assert.deepEqual(
+    fetched.map((f) => f.text),
+    [
+      "Sure, I can look into the overnight deploy logs for you right now.",
+      "The second sentence arrives while the first one is still playing.",
+    ],
+  );
+  assert.equal(spokenAt.length, 2);
+  assert.ok(
+    fetched[1].at < spokenAt[0].at,
+    `segment 2 fetched at ${fetched[1].at} must precede segment 1 settling at ${spokenAt[0].at}`,
+  );
+  player.dispose();
+});
+
+test("speakStream: speaking stays true across back-to-back segments, false on an empty queue, true again", async () => {
+  const ctx = wallClockContext();
+  const changes = [];
+  const player = streamPlayer(ctx, () => Promise.resolve(pcmResponse(0.25)), {
+    onSpeakingChange: (s) => changes.push(s),
+  });
+  const queue = createSpeechQueue();
+  queue.push(SEG1);
+  const pending = player.speakStream(queue, AGENT);
+  await tick(80);
+  queue.push(SEG2); // lands while segment 1 plays: no flap
+  await tick(900); // both played; queue empty but open (a tool run)
+  assert.deepEqual(changes, [true, false], "true once, false only when dry");
+  queue.push(SEG3);
+  await tick(50);
+  assert.deepEqual(changes, [true, false, true], "the next segment re-arms");
+  queue.close();
+  assert.equal(await pending, "spoken");
+  assert.deepEqual(changes, [true, false, true, false]);
+  player.dispose();
+});
+
+test("speakStream: interrupt aborts the prefetched request and ends the stream 'stopped'", async () => {
+  const ctx = manualContext();
+  const inits = [];
+  const player = streamPlayer(ctx, (_url, init) => {
+    inits.push(init);
+    return Promise.resolve(pcmResponse(1));
+  });
+  const queue = createSpeechQueue();
+  queue.push(SEG1);
+  const pending = player.speakStream(queue, AGENT);
+  await tick(60);
+  queue.push(SEG2);
+  await tick(60);
+  // Clock frozen: segment 1 still "plays", segment 2 is held ahead.
+  assert.equal(inits.length, 2, "exactly one request held ahead");
+  player.interrupt();
+  const result = await Promise.race([pending, tick(500).then(() => "hung")]);
+  assert.equal(result, "stopped");
+  assert.equal(inits[1].signal?.aborted, true, "prefetch aborted");
+  player.dispose();
+});
+
+test("speakStream: interrupt while waiting on an empty live queue resolves 'stopped' at once", async () => {
+  const ctx = wallClockContext();
+  const player = streamPlayer(ctx, () => Promise.resolve(pcmResponse(0.05)));
+  const queue = createSpeechQueue();
+  queue.push("Short one.");
+  const pending = player.speakStream(queue, AGENT);
+  await tick(300); // played; now parked on queue.next()
+  player.interrupt();
+  const result = await Promise.race([pending, tick(200).then(() => "hung")]);
+  assert.equal(result, "stopped");
+  player.dispose();
+});
+
+test("speakStream: an interrupt mid-fetch aborts the in-flight request", async () => {
+  const ctx = manualContext();
+  const inits = [];
+  const player = streamPlayer(ctx, (_url, init) => {
+    inits.push(init);
+    return new Promise(() => {}); // the bridge never answers
+  });
+  const queue = createSpeechQueue();
+  queue.push(SEG1);
+  const pending = player.speakStream(queue, AGENT);
+  await tick(30);
+  player.interrupt();
+  assert.equal(await pending, "stopped");
+  assert.equal(inits.length, 1);
+  assert.equal(inits[0].signal?.aborted, true, "in-flight request aborted");
+  player.dispose();
+});
+
+test("speakStream: latency milestones — first /tts request before first audio", async () => {
+  const ctx = wallClockContext();
+  const marks = [];
+  const player = streamPlayer(ctx, () => Promise.resolve(pcmResponse(0.1)));
+  const queue = createSpeechQueue();
+  queue.push(SEG1);
+  queue.push(SEG2);
+  queue.close();
+  const result = await player.speakStream(queue, AGENT, {
+    latency: {
+      ttsRequested: () => marks.push("tts"),
+      audioStarted: () => marks.push("audio"),
+    },
+  });
+  assert.equal(result, "spoken");
+  // The player reports every request/start; the recorder keeps the first.
+  assert.equal(marks.filter((m) => m === "tts").length, 2, "one per sentence");
+  assert.equal(marks[0], "tts");
+  assert.ok(marks.indexOf("audio") > 0, "audio is scheduled after a request");
+  player.dispose();
+});
+
+test("speakStream: a bridge failure falls back for the REMAINDER, not the spoken part", async () => {
+  spoken.length = 0;
+  const ctx = wallClockContext();
+  let requests = 0;
+  const player = streamPlayer(ctx, () => {
+    requests += 1;
+    return Promise.resolve(
+      requests === 1 ? pcmResponse(0.1) : new Response("down", { status: 502 }),
+    );
+  });
+  const queue = createSpeechQueue();
+  queue.push(SEG1);
+  const pending = player.speakStream(queue, AGENT);
+  await tick(250); // segment 1 played over the bridge
+  queue.push(SEG2);
+  await tick(50);
+  queue.push(SEG3);
+  queue.close();
+  assert.equal(await pending, "fallback");
+  assert.deepEqual(
+    spoken.map((u) => u.text),
+    [
+      "The second sentence arrives while the first one is still playing.",
+      "And a third one lands after a pause, the way a tool call would.",
+    ],
+  );
+  player.dispose();
+});

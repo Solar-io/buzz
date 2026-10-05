@@ -73,6 +73,7 @@ import {
   type BridgeSpeakRequest,
 } from "./bridgeSpeech.ts";
 import type { AgentVoiceSelection } from "../../voice/lib/agentVoiceSelection.ts";
+import { AGENT_SPEECH_SEGMENT_KIND } from "./speechStream.ts";
 
 export {
   GROUP_MEMBERS_KIND,
@@ -215,13 +216,20 @@ export function shouldSpeakLocally(
   return !audioPeerPubkeys.some((peer) => peer.toLowerCase() === speaker);
 }
 
-/** The live REQ filter for speakable agent messages in one huddle. */
+/**
+ * The live REQ filter for speakable agent messages in one huddle. With
+ * `segments`, the kind-24820 streamed-reply segments (`speechStream.ts`)
+ * ride on the same REQ — ephemeral, so `since` does not apply to them.
+ */
 export function huddleAgentSpeechFilter(
   channelId: string,
   sinceSeconds: number,
+  options: { segments?: boolean } = {},
 ): { kinds: number[]; "#h": string[]; since: number; limit: number } {
   return {
-    kinds: [...SPEAKABLE_MESSAGE_KINDS],
+    kinds: options.segments
+      ? [...SPEAKABLE_MESSAGE_KINDS, AGENT_SPEECH_SEGMENT_KIND]
+      : [...SPEAKABLE_MESSAGE_KINDS],
     "#h": [channelId],
     since: sinceSeconds,
     limit: 50,
@@ -790,6 +798,11 @@ export function chunkBridgeText(
 export interface OrderedSpeaker {
   /** Queue one utterance. Returns whether it was accepted. */
   enqueue: (text: string, speakerPubkey: string) => "queued" | "disabled";
+  /**
+   * Queue an arbitrary speaking task in the same order (a streamed reply:
+   * one task that speaks a whole live stream).
+   */
+  enqueueTask: (task: () => Promise<unknown>) => "queued" | "disabled";
   /** Turning speech off cancels everything still queued. */
   setEnabled: (enabled: boolean) => void;
   /** Drop everything queued without changing the enabled flag. */
@@ -812,22 +825,26 @@ export function createOrderedSpeaker(
   let tail = Promise.resolve();
   let enabled = initiallyEnabled;
   let generation = 0;
+  const enqueueTask = (task: () => Promise<unknown>): "queued" | "disabled" => {
+    if (!enabled) {
+      return "disabled";
+    }
+    const queuedGeneration = generation;
+    tail = tail
+      .then(async () => {
+        if (!enabled || generation !== queuedGeneration) {
+          return;
+        }
+        await task();
+      })
+      .catch(onError);
+    return "queued";
+  };
   return {
     enqueue(text, speakerPubkey) {
-      if (!enabled) {
-        return "disabled";
-      }
-      const queuedGeneration = generation;
-      tail = tail
-        .then(() => {
-          if (!enabled || generation !== queuedGeneration) {
-            return;
-          }
-          return speak(text, speakerPubkey);
-        })
-        .catch(onError);
-      return "queued";
+      return enqueueTask(() => speak(text, speakerPubkey));
     },
+    enqueueTask,
     setEnabled(nextEnabled) {
       if (!nextEnabled) {
         generation += 1;

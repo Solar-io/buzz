@@ -164,6 +164,9 @@ async function mountHook(voiceOverride) {
   await act(async () => {
     root.render(React.createElement(Harness));
   });
+  // A test that fails before unmount must not leave the hook's timers
+  // holding the process open: `after` unmounts whatever is left.
+  liveRoots.add(root);
   return {
     captured,
     deliverSpeechSelection(selection) {
@@ -184,6 +187,7 @@ async function mountHook(voiceOverride) {
       });
     },
     async unmount() {
+      liveRoots.delete(root);
       await act(async () => {
         root.unmount();
       });
@@ -191,6 +195,7 @@ async function mountHook(voiceOverride) {
     },
   };
 }
+const liveRoots = new Set();
 
 test("bug5: setSuppressed drops agent replies while set and never flips the speaker mute", async () => {
   spoken.length = 0;
@@ -481,7 +486,182 @@ test("wiring: an eleven selection routes to the bridge, disposition eleven-bridg
   await harness.unmount();
 });
 
-after(() => {
+// ── Streamed replies (plan VOICE_STREAMED_REPLIES_2026-10-04 §3.5, §5 row 5) ──
+// jsdom has no AudioContext, so every reply speaks through the fake
+// synthesizer and `spoken` is the transcript of what was heard.
+
+const SID = "turn-7";
+let eventSeq = 0;
+function streamSegment(seq, offset, content, extra = {}) {
+  const tags = [
+    ["h", CHANNEL],
+    ["buzz-speech", SID, String(seq), String(offset)],
+  ];
+  if (extra.done !== undefined) tags.push(["done", String(extra.done)]);
+  return {
+    id: `seg-${eventSeq++}`,
+    kind: 24820,
+    pubkey: AGENT,
+    created_at: Math.floor(Date.now() / 1000),
+    content,
+    tags,
+  };
+}
+function taggedFinal(content) {
+  return {
+    id: `final-${eventSeq++}`,
+    kind: 9,
+    pubkey: AGENT,
+    created_at: Math.floor(Date.now() / 1000),
+    content,
+    tags: [
+      ["h", CHANNEL],
+      ["buzz-speech", SID, "2", String(content.length)],
+    ],
+  };
+}
+const STREAM_FINAL = "Sure. It's 72 degrees in Austin right now.";
+
+async function mountStreaming() {
+  spoken.length = 0;
+  const harness = await mountHook();
+  await act(async () => harness.captured.current.setEnabled(true));
+  await harness.flush();
+  const speechSub = subscriptions.find((sub) => sub.filter["#h"]);
+  assert.ok(speechSub, "the hook must subscribe to the speech filter");
+  return { harness, speechSub, deliver: (e) => speechSub.handlers.onEvent(e) };
+}
+
+test("streamed reply: 24820 is requested, segments speak in order, the tagged final is not re-spoken", async () => {
+  dom.window.localStorage.removeItem("buzz.voice.streamedReplies");
+  const { harness, speechSub, deliver } = await mountStreaming();
+  assert.deepEqual(speechSub.filter.kinds, [9, 40002, 24820]);
+  deliver(streamSegment(0, 0, "Sure."));
+  await harness.flush();
+  assert.deepEqual(
+    spoken.map((u) => u.text),
+    ["Sure."],
+    "sentence 1 is spoken before the rest of the reply exists",
+  );
+  deliver(
+    streamSegment(1, 5, " It's 72 degrees in Austin right now.", { done: 42 }),
+  );
+  deliver(taggedFinal(STREAM_FINAL));
+  await harness.flush();
+  assert.deepEqual(
+    spoken.map((u) => u.text),
+    ["Sure.", "It's 72 degrees in Austin right now."],
+  );
+  await harness.unmount();
+});
+
+test("streamed reply: an untagged CLI copy of the stream is not spoken twice", async () => {
+  dom.window.localStorage.removeItem("buzz.voice.streamedReplies");
+  const { harness, deliver } = await mountStreaming();
+  deliver(streamSegment(0, 0, "Sure."));
+  deliver(
+    streamSegment(1, 5, " It's 72 degrees in Austin right now.", { done: 42 }),
+  );
+  await harness.flush();
+  deliver(
+    speakableMessage({
+      id: "cli-copy",
+      kind: 9,
+      content: "Sure. It's 72 degrees in Austin right now.",
+    }),
+  );
+  deliver(
+    speakableMessage({ id: "unrelated", kind: 9, content: "Build is green." }),
+  );
+  await harness.flush();
+  assert.deepEqual(
+    spoken.map((u) => u.text),
+    ["Sure.", "It's 72 degrees in Austin right now.", "Build is green."],
+  );
+  await harness.unmount();
+});
+
+test("switch off: 24820 is not requested or spoken, and the tagged final is spoken whole", async () => {
+  dom.window.localStorage.setItem("buzz.voice.streamedReplies", "false");
+  try {
+    const { harness, speechSub, deliver } = await mountStreaming();
+    assert.deepEqual(speechSub.filter.kinds, [9, 40002]);
+    deliver(streamSegment(0, 0, "Sure."));
+    await harness.flush();
+    assert.equal(spoken.length, 0, "a segment is ignored with the switch off");
+    deliver(taggedFinal(STREAM_FINAL));
+    await harness.flush();
+    assert.deepEqual(
+      spoken.map((u) => u.text),
+      ["Sure. It's 72 degrees in Austin right now."],
+    );
+    await harness.unmount();
+  } finally {
+    dom.window.localStorage.removeItem("buzz.voice.streamedReplies");
+  }
+});
+
+test("barge-in: interrupt cuts the stream — later segments and the final's tail stay silent", async () => {
+  dom.window.localStorage.removeItem("buzz.voice.streamedReplies");
+  const { harness, deliver } = await mountStreaming();
+  deliver(streamSegment(0, 0, "Sure."));
+  await harness.flush();
+  await act(async () => harness.captured.current.interrupt());
+  deliver(
+    streamSegment(1, 5, " It's 72 degrees in Austin right now.", { done: 42 }),
+  );
+  deliver(taggedFinal(STREAM_FINAL));
+  await harness.flush();
+  assert.deepEqual(
+    spoken.map((u) => u.text),
+    ["Sure."],
+  );
+  // The reader stays armed: the NEXT reply speaks.
+  deliver(speakableMessage({ id: "next-reply", kind: 9, content: "Okay." }));
+  await harness.flush();
+  assert.deepEqual(
+    spoken.map((u) => u.text),
+    ["Sure.", "Okay."],
+  );
+  await harness.unmount();
+});
+
+test("latency: a human [voice] message pairs with the agent's streamed reply on window.__buzzVoiceLatency", async () => {
+  dom.window.localStorage.removeItem("buzz.voice.streamedReplies");
+  const savedInfo = console.info;
+  console.info = () => {};
+  try {
+    const { harness, deliver } = await mountStreaming();
+    deliver({
+      id: "voice-turn-1",
+      kind: 9,
+      pubkey: HUMAN,
+      created_at: Math.floor(Date.now() / 1000),
+      content: "[voice] what's the weather in Austin",
+      tags: [["h", CHANNEL]],
+    });
+    deliver(streamSegment(0, 0, "Sure.", { done: 5 }));
+    await harness.flush();
+    const ring = dom.window.__buzzVoiceLatency;
+    assert.ok(Array.isArray(ring), "the ring is published on window");
+    const record = ring.find((r) => r.triggerId === "voice-turn-1");
+    assert.ok(record, "the [voice] turn was recorded as t0");
+    assert.equal(record.channelId, "eph-1");
+    assert.equal(record.path, "stream");
+    assert.equal(record.agentPubkey, "a".repeat(64));
+    assert.ok(record.tSeg0 >= record.t0);
+    assert.ok(record.tAudio0 >= record.tSeg0, "first audio recorded");
+    await harness.unmount();
+  } finally {
+    console.info = savedInfo;
+  }
+});
+
+after(async () => {
+  for (const root of liveRoots) {
+    await act(async () => root.unmount());
+  }
+  liveRoots.clear();
   Object.assign(globalThis, {
     window: originals.window,
     document: originals.document,

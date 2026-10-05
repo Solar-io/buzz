@@ -42,6 +42,7 @@ import {
 } from "../../huddle/lib/huddlePrefs.ts";
 import { applySinkId } from "../../huddle/lib/huddleAudioGraph.ts";
 import type { AgentVoiceSelection } from "./agentVoiceSelection.ts";
+import type { VoiceLatencyReply } from "./voiceLatency.ts";
 
 /**
  * How one `speak` ended:
@@ -57,7 +58,32 @@ export type AgentSpeakResult = "spoken" | "fallback" | "stopped" | "failed";
 export interface AgentSpeakOptions {
   /** Per-call override; falls back to the player's `getVoiceOverride`. */
   voiceOverride?: HuddleVoiceOverride | null;
+  /** Latency milestones for this reply (first /tts request, first audio). */
+  latency?: VoiceLatencyReply;
 }
+
+/**
+ * A pull queue of text to speak (`speakStream`). `next()` resolves the next
+ * item, or null when the source is finished. `ready()` — optional — says
+ * whether `next()` would resolve without waiting; a source without it is
+ * treated as always ready (an array).
+ */
+export interface SpeechSource {
+  next(): Promise<string | null>;
+  ready?(): boolean;
+}
+
+/** A finished source over fixed items — what `speak(text)` uses. */
+export function speechSourceFromArray(items: readonly string[]): SpeechSource {
+  let index = 0;
+  return {
+    next: () => Promise.resolve(index < items.length ? items[index++] : null),
+    ready: () => true,
+  };
+}
+
+/** Sentinel an interrupt resolves a wait with. */
+const STOPPED = Symbol("stopped");
 
 export interface AgentSpeechPlayerDeps {
   /** The ranked local voice list, read at utterance time. */
@@ -92,6 +118,15 @@ export type AudioContextStateListener = (state: string) => void;
 export interface AgentSpeechPlayer {
   speak(
     text: string,
+    pubkey: string,
+    opts?: AgentSpeakOptions,
+  ): Promise<AgentSpeakResult>;
+  /**
+   * Speak a live pull queue for one agent — streamed replies. Resolves when
+   * the source is finished and the last sentence has sounded (or stopped).
+   */
+  speakStream(
+    source: SpeechSource,
     pubkey: string,
     opts?: AgentSpeakOptions,
   ): Promise<AgentSpeakResult>;
@@ -264,8 +299,24 @@ export function createAgentSpeechPlayer(
     }
   };
 
-  const speak = async (
-    text: string,
+  /**
+   * Speak a PULL QUEUE of text for one agent (§3.5.3). `speak(text)` is
+   * this over a one-item array, so there is one code path.
+   *
+   * Each pulled item is chunked per route (one sentence per bridge
+   * request; packed chunks for local synth). The bridge leg keeps ONE
+   * request ahead: the next sentence is fetched as soon as the current
+   * one's headers arrive — or, on a live stream, as soon as the next
+   * segment arrives while the current one plays.
+   *
+   * `onSpeakingChange(true)` fires when sound starts and `false` only when
+   * nothing is playing AND the source has nothing ready, so back-to-back
+   * segments keep the half-duplex mic parked while a real pause (a tool
+   * run) lets it re-open. Bridge failure falls to local synth for the
+   * REMAINDER (the failed sentence onward), not the whole reply again.
+   */
+  const speakStream = async (
+    source: SpeechSource,
     speakerPubkey: string,
     opts: AgentSpeakOptions = {},
   ): Promise<AgentSpeakResult> => {
@@ -274,6 +325,7 @@ export function createAgentSpeechPlayer(
     }
     const stopAt = stopToken;
     const stopped = () => stopToken !== stopAt;
+    const latency = opts.latency;
     const key = speakerPubkey.toLowerCase();
     // THE SEAM (voicePrecedence.ts): channel override, then the owner's
     // 30183 assignment, then the agent's own 30182, then nothing — and a
@@ -290,13 +342,59 @@ export function createAgentSpeechPlayer(
     deps.onRoute?.(key, route);
     const profile = route.profile;
     const voice = resolveProfileVoice(profile, voices);
-    // Sentence-sized chunks: Chromium stalls single utterances past
-    // ~15 s, so a long reply must never be ONE utterance. Chunks also
-    // bound the watchdog and make cancellation land between sentences.
-    const chunks = chunkSpeakableText(text);
-    const utterances = chunks.length > 0 ? chunks : [text];
-    deps.onSpeakingChange?.(true);
+
+    let speakingNow = false;
+    const setSpeakingNow = (next: boolean) => {
+      if (next === speakingNow) return;
+      speakingNow = next;
+      deps.onSpeakingChange?.(next);
+    };
+    setSpeakingNow(true);
     let outcome: AgentSpeakResult = "spoken";
+
+    /** Resolves `null` the moment `interrupt()` runs. */
+    const untilStop = <T>(promise: Promise<T>): Promise<T | typeof STOPPED> => {
+      let wake: () => void = () => {};
+      return Promise.race([
+        promise,
+        new Promise<typeof STOPPED>((resolve) => {
+          wake = () => resolve(STOPPED);
+          stopWaiters.add(wake);
+        }),
+      ]).finally(() => stopWaiters.delete(wake));
+    };
+
+    // Raw items pulled from the source and not yet consumed by a path.
+    const inbox: string[] = [];
+    let exhausted = false;
+    let pulling: Promise<void> | null = null;
+    let onArrive: (() => void) | null = null;
+    const pull = (): Promise<void> => {
+      if (pulling === null && !exhausted) {
+        pulling = source
+          .next()
+          .then(
+            (item) => {
+              if (item === null) exhausted = true;
+              else inbox.push(item);
+            },
+            () => {
+              exhausted = true;
+            },
+          )
+          .finally(() => {
+            pulling = null;
+            onArrive?.();
+          });
+      }
+      return pulling ?? Promise.resolve();
+    };
+    /** Nothing playing and nothing ready: the mic may re-open. */
+    const idleIfDry = () => {
+      if (inbox.length === 0 && source.ready?.() === false) {
+        setSpeakingNow(false);
+      }
+    };
 
     // Bridge engines: `route.bridge` IS the decision — execute it, or fall
     // to the local-synth path below. A bridge failure must not mute the
@@ -306,12 +404,6 @@ export function createAgentSpeechPlayer(
     if (bridgeRequest !== null) {
       const context = bridgeContext();
       if (context !== null) {
-        // ONE server sentence per request on the bridge route (the jitter
-        // buffer plans a sentence at a time; Chatterbox slows as a request
-        // grows) — local synth keeps its packed chunks.
-        const bridgeChunks = chunkBridgeText(text);
-        const bridgeUtterances =
-          bridgeChunks.length > 0 ? bridgeChunks : [text];
         const voiceKey = `${bridgeRequest.engine}:${bridgeRequest.voice}`;
         calibration ??= loadCalibration();
         const cal = calibration;
@@ -331,6 +423,7 @@ export function createAgentSpeechPlayer(
          * instead of one burst when the sentence's turn comes.
          */
         const startFetch = (chunk: string) => {
+          latency?.ttsRequested();
           const controller =
             typeof AbortController === "undefined"
               ? null
@@ -372,37 +465,68 @@ export function createAgentSpeechPlayer(
           };
         };
         type InFlight = ReturnType<typeof startFetch>;
+        /** Bridge sentences pulled but not yet requested. */
+        const upcoming: string[] = [];
         let current: InFlight | null = null;
-        let prefetched: InFlight | null = null;
+        // Assigned from `onArrive` too, so keep TS from narrowing it to null.
+        let prefetched = null as InFlight | null;
+        /** True between a chunk's headers and its settle: prefetch allowed. */
+        let headersIn = false;
+        const refill = () => {
+          while (inbox.length > 0) {
+            const item = inbox.shift() as string;
+            // ONE server sentence per request on the bridge route (the
+            // jitter buffer plans a sentence at a time; Chatterbox slows as
+            // a request grows) — local synth keeps its packed chunks.
+            const chunks = chunkBridgeText(item);
+            upcoming.push(...(chunks.length > 0 ? chunks : [item]));
+          }
+        };
+        const maybePrefetch = () => {
+          refill();
+          if (
+            headersIn &&
+            prefetched === null &&
+            upcoming.length > 0 &&
+            !stopped()
+          ) {
+            prefetched = startFetch(upcoming.shift() as string);
+          }
+        };
+        onArrive = maybePrefetch;
         try {
-          for (let i = 0; i < bridgeUtterances.length; i++) {
+          for (;;) {
             if (stopped()) {
               break;
             }
-            const chunk = bridgeUtterances[i];
-            current = prefetched ?? startFetch(chunk);
+            refill();
+            if (prefetched === null && upcoming.length === 0) {
+              if (exhausted) break;
+              idleIfDry();
+              if ((await untilStop(pull())) === STOPPED) break;
+              continue;
+            }
+            setSpeakingNow(true);
+            current = prefetched ?? startFetch(upcoming.shift() as string);
             prefetched = null;
+            const chunk = current.chunk;
             // A hung bridge must not wedge the queue (watchdog), and an
             // interrupt must not wait for the fetch to answer (stop race).
-            let wake: () => void = () => {};
             let watchdog: ReturnType<typeof setTimeout> | null = null;
-            const raced = await Promise.race([
-              current.promise,
-              new Promise<never>((_, reject) => {
-                watchdog = setTimeout(
-                  () => reject(new Error("bridge fetch watchdog")),
-                  watchdogMs(chunk),
-                );
-              }),
-              new Promise<null>((resolve) => {
-                wake = () => resolve(null);
-                stopWaiters.add(wake);
-              }),
-            ]).finally(() => {
-              stopWaiters.delete(wake);
+            const raced = await untilStop(
+              Promise.race([
+                current.promise,
+                new Promise<never>((_, reject) => {
+                  watchdog = setTimeout(
+                    () => reject(new Error("bridge fetch watchdog")),
+                    watchdogMs(chunk),
+                  );
+                }),
+              ]),
+            ).finally(() => {
               if (watchdog !== null) clearTimeout(watchdog);
             });
-            if (raced === null) {
+            if (raced === STOPPED) {
               // Interrupted mid-fetch: drop the body when it lands.
               current.cancel();
               current = null;
@@ -412,10 +536,12 @@ export function createAgentSpeechPlayer(
               throw new Error(`bridge ${raced.status}`);
             }
             // Headers are in: request the next chunk NOW so it is
-            // synthesizing while this one plays.
-            if (i + 1 < bridgeUtterances.length && !stopped()) {
-              prefetched = startFetch(bridgeUtterances[i + 1]);
-            }
+            // synthesizing while this one plays — and if the source has
+            // nothing yet, ask it, so a segment that lands mid-sentence is
+            // fetched before this one ends.
+            headersIn = true;
+            if (upcoming.length === 0 && inbox.length === 0) void pull();
+            maybePrefetch();
             const servedEngine = raced.headers?.get?.("x-tts-engine") ?? null;
             if (servedEngine) {
               const servedVoice = raced.headers?.get?.("x-tts-voice") ?? null;
@@ -426,7 +552,6 @@ export function createAgentSpeechPlayer(
               });
             }
             const drain = current.drainFor(raced);
-            current = null;
             await playBridgeResponse(drain, context, {
               shouldStop: stopped,
               scheduleSettle: settleOnClock(context),
@@ -435,20 +560,35 @@ export function createAgentSpeechPlayer(
                 voiceKey,
                 calibration: cal,
               },
+              onFirstStart: () => latency?.audioStarted(),
               ...(gain === null ? {} : { destination: gain }),
             });
+            current = null;
+            headersIn = false;
             deps.onChunkSpoken?.(chunk);
           }
           prefetched?.cancel();
           prefetched = null;
         } catch (err) {
+          // Fall back for the REMAINDER: the sentence that failed, the one
+          // held ahead, and everything pulled but not yet requested.
+          const remainder = [
+            current?.chunk,
+            prefetched?.chunk,
+            ...upcoming.splice(0),
+            ...inbox.splice(0),
+          ].filter((part): part is string => typeof part === "string");
           current?.cancel();
           prefetched?.cancel();
+          if (remainder.length > 0) inbox.push(remainder.join(" "));
           bridgeFailed = true;
           console.warn(`${logTag} bridge failed, speaking locally`, err);
+        } finally {
+          onArrive = null;
+          headersIn = false;
         }
         if (!bridgeFailed) {
-          deps.onSpeakingChange?.(false);
+          setSpeakingNow(false);
           return stopped() ? "stopped" : "spoken";
         }
         outcome = "fallback";
@@ -463,60 +603,94 @@ export function createAgentSpeechPlayer(
       }
     }
 
+    /** Next raw item for the local path: inbox, an in-flight pull, the source. */
+    const nextLocal = async (): Promise<string | null | typeof STOPPED> => {
+      for (;;) {
+        if (inbox.length > 0) return inbox.shift() as string;
+        if (exhausted) return null;
+        idleIfDry();
+        if ((await untilStop(pull())) === STOPPED) return STOPPED;
+      }
+    };
+
     try {
-      for (const chunk of utterances) {
+      for (;;) {
         if (stopped()) {
           break;
         }
-        // One chunk = one utterance, settling on EVERY path exactly once:
-        // onend, onerror, its own watchdog, or a forced stop.
-        await new Promise<void>((resolve) => {
-          const utterance = new SpeechSynthesisUtterance(chunk);
-          if (voice) {
-            utterance.voice = voice;
-          } else {
-            // Voiceless path: tag the text English so the default engine
-            // does not read it through another locale.
-            utterance.lang = "en";
+        const item = await nextLocal();
+        if (item === null || item === STOPPED) {
+          break;
+        }
+        setSpeakingNow(true);
+        // Sentence-sized chunks: Chromium stalls single utterances past
+        // ~15 s, so a long reply must never be ONE utterance. Chunks also
+        // bound the watchdog and make cancellation land between sentences.
+        const chunks = chunkSpeakableText(item);
+        const utterances = chunks.length > 0 ? chunks : [item];
+        for (const chunk of utterances) {
+          if (stopped()) {
+            break;
           }
-          utterance.rate = profile.rate;
-          utterance.pitch = profile.pitch;
-          // No gain node on this path: the mute lands on the utterance.
-          utterance.volume = muted ? 0 : 1;
-          let settled = false;
-          let watchdog: ReturnType<typeof setTimeout> | null = null;
-          const finish = () => {
-            if (settled) {
-              return;
+          // One chunk = one utterance, settling on EVERY path exactly once:
+          // onend, onerror, its own watchdog, or a forced stop.
+          await new Promise<void>((resolve) => {
+            const utterance = new SpeechSynthesisUtterance(chunk);
+            if (voice) {
+              utterance.voice = voice;
+            } else {
+              // Voiceless path: tag the text English so the default engine
+              // does not read it through another locale.
+              utterance.lang = "en";
             }
-            settled = true;
-            if (watchdog !== null) {
-              clearTimeout(watchdog);
-              watchdog = null;
-            }
-            if (activeSettle === finish) {
-              activeSettle = null;
-            }
-            resolve();
-          };
-          watchdog = setTimeout(finish, watchdogMs(chunk));
-          utterance.onend = finish;
-          utterance.onerror = finish;
-          activeSettle = finish;
-          window.speechSynthesis.speak(utterance);
-        });
-        // Chunk-level echo records, even for a chunk cut short: part of
-        // it sounded (pre-extraction behaviour).
-        deps.onChunkSpoken?.(chunk);
+            utterance.rate = profile.rate;
+            utterance.pitch = profile.pitch;
+            // No gain node on this path: the mute lands on the utterance.
+            utterance.volume = muted ? 0 : 1;
+            let settled = false;
+            let watchdog: ReturnType<typeof setTimeout> | null = null;
+            const finish = () => {
+              if (settled) {
+                return;
+              }
+              settled = true;
+              if (watchdog !== null) {
+                clearTimeout(watchdog);
+                watchdog = null;
+              }
+              if (activeSettle === finish) {
+                activeSettle = null;
+              }
+              resolve();
+            };
+            watchdog = setTimeout(finish, watchdogMs(chunk));
+            utterance.onend = finish;
+            utterance.onerror = finish;
+            activeSettle = finish;
+            latency?.audioStarted();
+            window.speechSynthesis.speak(utterance);
+          });
+          // Chunk-level echo records, even for a chunk cut short: part of
+          // it sounded (pre-extraction behaviour).
+          deps.onChunkSpoken?.(chunk);
+        }
       }
     } finally {
-      deps.onSpeakingChange?.(false);
+      setSpeakingNow(false);
     }
     return stopped() ? "stopped" : outcome;
   };
 
+  const speak = (
+    text: string,
+    speakerPubkey: string,
+    opts: AgentSpeakOptions = {},
+  ): Promise<AgentSpeakResult> =>
+    speakStream(speechSourceFromArray([text]), speakerPubkey, opts);
+
   return {
     speak,
+    speakStream,
     interrupt,
     setMuted(next) {
       muted = next;

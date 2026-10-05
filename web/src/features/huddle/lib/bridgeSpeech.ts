@@ -413,6 +413,8 @@ export async function playBridgeResponse(
      */
     destination?: AudioNode;
     jitter?: BridgeJitterOptions;
+    /** Called once, when the first piece of this stream is scheduled. */
+    onFirstStart?: () => void;
   } = {},
 ): Promise<{ seconds: number }> {
   const shouldStop = options.shouldStop ?? (() => false);
@@ -468,7 +470,10 @@ export async function playBridgeResponse(
     if (!flowing) {
       // (Re)starting after a hold: begin a fresh schedule at the clock.
       queueAt = Math.max(queueAt, audioContext.currentTime + 0.02);
-      firstStart ??= queueAt;
+      if (firstStart === null) {
+        firstStart = queueAt;
+        options.onFirstStart?.();
+      }
       flowing = true;
     }
     for (const piece of pending) {
