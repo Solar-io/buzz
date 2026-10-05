@@ -564,6 +564,16 @@ async fn hard_cap_is_forty_events_per_turn() {
     handle.await.unwrap();
     let segments = sink.segments();
     assert_eq!(segments.len(), 40);
+    // Wire contract with the web tracker: seq is strictly contiguous from 0
+    // (it orders by seq), and offsets index the final text exactly.
+    let final_units: Vec<u16> = sink.finals()[0].content.encode_utf16().collect();
+    for (i, ev) in segments.iter().enumerate() {
+        let speech = tag_values(ev, "buzz-speech").unwrap();
+        assert_eq!(speech[2], i.to_string(), "seq must be contiguous");
+        let offset: usize = speech[3].parse().unwrap();
+        let units: Vec<u16> = ev.content.encode_utf16().collect();
+        assert_eq!(&final_units[offset..offset + units.len()], &units[..]);
+    }
     assert!(tag_values(&segments[39], "done").is_some());
     let joined: String = segments.iter().map(|e| e.content.clone()).collect();
     assert_eq!(joined, sink.finals()[0].content);

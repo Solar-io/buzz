@@ -373,8 +373,31 @@ async fn switch_off_voice_turn_publishes_nothing_and_prompt_is_unchanged() {
         assert!(!block.contains("[Voice Reply]"), "{block}");
         assert!(!block.contains("[Reply Mode]"), "{block}");
     }
-    // Byte-identical to the configuration that cannot stream at all.
-    assert_eq!(off_prompts[0], base_prompts[0]);
+    // Byte-identical to the configuration that cannot stream at all, except
+    // the wall-clock lines: the two turns run seconds apart (their REST
+    // context fetches retry against a dead port) and may straddle a minute.
+    let unclocked = |blocks: &[String]| -> Vec<String> {
+        blocks
+            .iter()
+            .map(|b| {
+                b.lines()
+                    .map(|l| {
+                        if l.starts_with("Now: ") || l.starts_with("Timing: ") {
+                            "<clock>"
+                        } else {
+                            l
+                        }
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            })
+            .collect()
+    };
+    assert_eq!(unclocked(&off_prompts[0]), unclocked(&base_prompts[0]));
+    // Guard the normaliser itself: it must not blank the whole prompt.
+    assert!(unclocked(&off_prompts[0])
+        .concat()
+        .contains("Content: [voice] what's the weather"));
     assert!(off_prompts[0]
         .last()
         .unwrap()
