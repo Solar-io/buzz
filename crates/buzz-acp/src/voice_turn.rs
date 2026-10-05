@@ -53,7 +53,10 @@
 //! entry > name entry > `*` > env var > unset. A missing key falls through
 //! to the next tier; explicit `unset` or blank masks all lower tiers.
 //! `voiceModel` applies only to marked turns and keeps the existing catalog
-//! validation and post-turn model restoration. The file is read fresh at
+//! validation and post-turn model restoration. `voiceStream` (`on`/`off`,
+//! env fallback `BUZZ_VOICE_STREAM`, default off) switches streamed spoken
+//! replies for `[voice]` turns — see [`crate::voice_stream`]; it follows the
+//! same pubkey > name > `*` > env precedence. The file is read fresh at
 //! each turn resolution so edits land on the next turn without a restart; a
 //! missing, invalid-JSON, or non-object file behaves as absent (fail-soft).
 //! A class value that is present but not in the vocabulary is `Invalid` —
@@ -94,6 +97,13 @@ pub const ENV_TEXT_EFFORT: &str = "BUZZ_TEXT_TURN_EFFORT";
 
 /// Env var selecting the optional per-turn model for marked turns.
 pub const ENV_MODEL: &str = "BUZZ_VOICE_TURN_MODEL";
+
+/// Env var switching streamed voice replies (`on` | `off`) when the config
+/// file does not decide it. Default off. See [`crate::voice_stream`].
+pub const ENV_VOICE_STREAM: &str = "BUZZ_VOICE_STREAM";
+
+/// Config-file key for the streamed-voice-reply switch.
+pub const VOICE_STREAM_KEY: &str = "voiceStream";
 
 /// Env var carrying the sidecar's own display name — the legacy agent key
 /// the effort config file matches against. Present on every sidecar process.
@@ -225,6 +235,8 @@ pub struct EffortFileEntry {
     pub voice: Option<String>,
     /// Model for marked turns (`voiceModel` in the config file).
     pub voice_model: Option<String>,
+    /// Streamed voice replies switch (`voiceStream` in the config file).
+    pub voice_stream: Option<String>,
 }
 
 impl EffortFileEntry {
@@ -267,6 +279,15 @@ impl AgentEffortFile {
             .as_deref()
             .or(self.agent.voice_model.as_deref())
             .or(self.wildcard.voice_model.as_deref())
+    }
+
+    /// The raw `voiceStream` switch: pubkey > name > wildcard > absent.
+    pub fn voice_stream_value(&self) -> Option<&str> {
+        self.pubkey
+            .voice_stream
+            .as_deref()
+            .or(self.agent.voice_stream.as_deref())
+            .or(self.wildcard.voice_stream.as_deref())
     }
 }
 
@@ -332,6 +353,9 @@ pub fn parse_agent_effort_file(
                     String::new()
                 }
             }),
+            // Present-but-non-string is serialized as-is so it fails the
+            // on/off check loudly (warn, stay off) instead of falling through.
+            voice_stream: class_value_from(entry_obj, VOICE_STREAM_KEY),
         };
         if key == WILDCARD_KEY {
             file.wildcard = entry;
@@ -523,6 +547,87 @@ impl TurnKnobs<'_> {
             EffortClass::Voice => self.voice_env,
         }
     }
+}
+
+/// Outcome of resolving the streamed-voice-reply switch.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum VoiceStreamSwitch {
+    /// `on` — `[voice]` turns stream their reply.
+    On,
+    /// `off`, `unset`, blank, or absent at every tier — today's behaviour.
+    Off,
+    /// Present but not `on`/`off`. Treated as off with a warning: a typo
+    /// must never turn streaming on.
+    Invalid(String),
+}
+
+impl VoiceStreamSwitch {
+    /// True only for an explicit `on`.
+    pub fn is_on(&self) -> bool {
+        matches!(self, VoiceStreamSwitch::On)
+    }
+}
+
+/// Resolve one raw `voiceStream` / `BUZZ_VOICE_STREAM` value.
+pub fn resolve_voice_stream_value(value: Option<&str>) -> VoiceStreamSwitch {
+    let Some(value) = value.map(str::trim).filter(|v| !v.is_empty()) else {
+        return VoiceStreamSwitch::Off;
+    };
+    if value.eq_ignore_ascii_case("on") {
+        VoiceStreamSwitch::On
+    } else if value.eq_ignore_ascii_case("off") || value.eq_ignore_ascii_case("unset") {
+        VoiceStreamSwitch::Off
+    } else {
+        VoiceStreamSwitch::Invalid(value.to_string())
+    }
+}
+
+/// The injected sources for the streamed-voice-reply switch (pure seam).
+#[derive(Debug, Clone, Default)]
+pub struct VoiceStreamKnobs<'a> {
+    /// `BUZZ_VOICE_STREAM`.
+    pub env: Option<&'a str>,
+    /// `BUZZ_ACP_DISPLAY_NAME` — the config file's legacy name key.
+    pub agent_name: Option<&'a str>,
+    /// The harness's own lowercase public key hex.
+    pub agent_pubkey: Option<&'a str>,
+    /// Raw config-file content; `None` = file absent (or unusable).
+    pub file_content: Option<&'a str>,
+}
+
+/// Resolve the streamed-voice-reply switch with the same precedence as the
+/// effort knobs: pubkey > name > `*` > `BUZZ_VOICE_STREAM` > off. A file
+/// value that is present (including `off`/blank) decides and masks the env.
+pub fn resolve_voice_stream(knobs: &VoiceStreamKnobs) -> VoiceStreamSwitch {
+    let file = knobs
+        .file_content
+        .and_then(|raw| parse_agent_effort_file(raw, knobs.agent_name, knobs.agent_pubkey).ok());
+    let resolved = match file.as_ref().and_then(AgentEffortFile::voice_stream_value) {
+        Some(raw) => resolve_voice_stream_value(Some(raw)),
+        None => resolve_voice_stream_value(knobs.env),
+    };
+    if let VoiceStreamSwitch::Invalid(raw) = &resolved {
+        tracing::warn!(
+            target: "buzz_acp::voice_stream",
+            value = %raw,
+            "invalid voiceStream value (expected on/off) — streaming stays off"
+        );
+    }
+    resolved
+}
+
+/// [`resolve_voice_stream`] over the process environment and the config
+/// file, read fresh so a flip lands on the next turn without a restart.
+pub fn voice_stream_from_env(agent_pubkey: Option<&str>) -> VoiceStreamSwitch {
+    let env = std::env::var(ENV_VOICE_STREAM).ok();
+    let agent_name = std::env::var(ENV_AGENT_NAME).ok();
+    let file_content = read_agent_effort_file();
+    resolve_voice_stream(&VoiceStreamKnobs {
+        env: env.as_deref(),
+        agent_name: agent_name.as_deref(),
+        agent_pubkey,
+        file_content: file_content.as_deref(),
+    })
 }
 
 /// Read the per-agent effort config file, fresh — the file is tiny and every

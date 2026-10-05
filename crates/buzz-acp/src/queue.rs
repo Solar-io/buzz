@@ -1602,6 +1602,37 @@ fn format_conversation_context(
     s
 }
 
+/// The `[Voice Reply]` section: on a streamed voice turn, everything the
+/// agent writes as plain text is spoken and posted by the harness.
+pub const VOICE_REPLY_SECTION: &str = "[Voice Reply]\n\
+This turn is a live voice call. Everything you write as plain text in this turn is spoken aloud \
+to the caller as you write it, and posted to this channel as your reply when the turn ends. \
+Reply in plain text. Do NOT use `buzz messages send` to answer in this channel this turn. \
+Put the answer in your first short sentence. Talk the way you would speak: no markdown, lists, \
+code, URLs or emoji. If you need a tool first, you may say one short line such as \
+\"Let me check.\" before using it. This applies to this turn only.";
+
+/// The `[Reply Mode]` reminder for a turn that is NOT streamed in a session
+/// that has had a streamed voice turn — without it a typed message could be
+/// answered in plain text and silently lost.
+pub const REPLY_MODE_SECTION: &str = "[Reply Mode]\n\
+This turn is not a streamed voice reply: reply with `buzz messages send` as usual. \
+Plain text you write this turn is not delivered.";
+
+/// How the turn's reply is delivered — selects an optional closing section.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum ReplyMode {
+    /// Today's behaviour: no extra section. Every turn when the
+    /// `voiceStream` switch is off.
+    #[default]
+    Default,
+    /// A streamed `[voice]` turn: append [`VOICE_REPLY_SECTION`].
+    VoiceStream,
+    /// A non-streamed turn in a session that has streamed: append
+    /// [`REPLY_MODE_SECTION`].
+    TextAfterVoiceStream,
+}
+
 /// Arguments for [`format_prompt`] beyond the required [`FlushBatch`].
 #[derive(Default)]
 pub struct FormatPromptArgs<'a> {
@@ -1652,6 +1683,9 @@ pub struct FormatPromptArgs<'a> {
     /// Defaults to `false` so a caller that never sets it behaves as if this
     /// were the session's first message.
     pub standing_context_sent: bool,
+    /// Reply-delivery section for this turn; [`ReplyMode::Default`] adds
+    /// nothing, keeping the prompt byte-identical to the pre-streaming one.
+    pub reply_mode: ReplyMode,
 }
 
 /// The prompt sections that do not change for the life of a session: base
@@ -1949,6 +1983,14 @@ pub fn format_prompt(batch: &FlushBatch, args: &FormatPromptArgs<'_>) -> Vec<Str
     // 4c. Closing note for cancel + re-prompt.
     if has_cancelled {
         sections.push(framing.closing_note.to_string());
+    }
+
+    // 4d. Reply-delivery section — last, closest to generation, so it wins
+    // over the standing "always reply with `buzz messages send`" framing.
+    match args.reply_mode {
+        ReplyMode::Default => {}
+        ReplyMode::VoiceStream => sections.push(VOICE_REPLY_SECTION.to_string()),
+        ReplyMode::TextAfterVoiceStream => sections.push(REPLY_MODE_SECTION.to_string()),
     }
 
     sections

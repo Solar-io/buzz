@@ -873,3 +873,128 @@ fn agent_effort_file_default_is_empty() {
     assert_eq!(file.class_value(EffortClass::Text), None);
     assert_eq!(file.class_value(EffortClass::Voice), None);
 }
+
+// ── voiceStream switch ─────────────────────────────────────────────────────
+
+fn stream_knobs<'a>(raw: Option<&'a str>, env: Option<&'a str>) -> super::VoiceStreamKnobs<'a> {
+    super::VoiceStreamKnobs {
+        env,
+        agent_name: Some("Kaiya"),
+        agent_pubkey: Some(PUBKEY),
+        file_content: raw,
+    }
+}
+
+#[test]
+fn voice_stream_defaults_off() {
+    use super::{resolve_voice_stream, VoiceStreamSwitch};
+    assert_eq!(
+        resolve_voice_stream(&stream_knobs(None, None)),
+        VoiceStreamSwitch::Off
+    );
+    assert_eq!(
+        resolve_voice_stream(&stream_knobs(Some("{}"), None)),
+        VoiceStreamSwitch::Off
+    );
+    // A file entry without the key leaves the default alone.
+    assert_eq!(
+        resolve_voice_stream(&stream_knobs(Some(r#"{"Kaiya":{"voice":"low"}}"#), None)),
+        VoiceStreamSwitch::Off
+    );
+}
+
+#[test]
+fn voice_stream_precedence_is_pubkey_name_wildcard_env() {
+    use super::{resolve_voice_stream, VoiceStreamSwitch};
+    let on = VoiceStreamSwitch::On;
+    let off = VoiceStreamSwitch::Off;
+    assert_eq!(resolve_voice_stream(&stream_knobs(None, Some("on"))), on);
+    assert_eq!(
+        resolve_voice_stream(&stream_knobs(Some(r#"{"*":{"voiceStream":"on"}}"#), None)),
+        on
+    );
+    assert_eq!(
+        resolve_voice_stream(&stream_knobs(
+            Some(r#"{"kaiya":{"voiceStream":"ON"}}"#),
+            None
+        )),
+        on,
+        "name match is case-insensitive"
+    );
+    let raw = format!(
+        r#"{{"*":{{"voiceStream":"on"}},"Kaiya":{{"voiceStream":"on"}},"{PUBKEY}":{{"voiceStream":"off"}}}}"#
+    );
+    assert_eq!(
+        resolve_voice_stream(&stream_knobs(Some(&raw), Some("on"))),
+        off
+    );
+    let raw = r#"{"*":{"voiceStream":"off"},"Kaiya":{"voiceStream":"on"}}"#;
+    assert_eq!(resolve_voice_stream(&stream_knobs(Some(raw), None)), on);
+    // A file value masks the env, including an explicit off.
+    let raw = r#"{"*":{"voiceStream":"off"}}"#;
+    assert_eq!(
+        resolve_voice_stream(&stream_knobs(Some(raw), Some("on"))),
+        off
+    );
+    // Another agent's entry is not ours.
+    let raw = r#"{"Evie":{"voiceStream":"on"}}"#;
+    assert_eq!(resolve_voice_stream(&stream_knobs(Some(raw), None)), off);
+}
+
+#[test]
+fn voice_stream_typos_never_turn_streaming_on() {
+    use super::{resolve_voice_stream, VoiceStreamSwitch};
+    for value in [r#""yes""#, r#""true""#, "true", "1", r#"{"a":1}"#] {
+        let raw = format!(r#"{{"Kaiya":{{"voiceStream":{value}}}}}"#);
+        let resolved = resolve_voice_stream(&stream_knobs(Some(&raw), Some("on")));
+        assert!(
+            matches!(resolved, VoiceStreamSwitch::Invalid(_)),
+            "{value}: {resolved:?}"
+        );
+        assert!(!resolved.is_on());
+    }
+    assert!(!resolve_voice_stream(&stream_knobs(None, Some("enabled"))).is_on());
+}
+
+#[test]
+fn voice_stream_file_is_reread_without_restart() {
+    // Impure seam in an isolated subprocess, like the effort reload test.
+    const CHILD: &str = "BUZZ_VOICE_STREAM_RELOAD_TEST";
+    if let Ok(path) = std::env::var(CHILD) {
+        assert!(super::voice_stream_from_env(Some(PUBKEY)).is_on());
+        std::fs::write(&path, r#"{"Kaiya":{"voiceStream":"off"}}"#).expect("edit fixture");
+        assert!(!super::voice_stream_from_env(Some(PUBKEY)).is_on());
+        std::fs::write(&path, "{}").expect("edit fixture");
+        // File silent → env decides.
+        assert!(super::voice_stream_from_env(Some(PUBKEY)).is_on());
+        return;
+    }
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../.scratch")
+        .join(format!("voice-stream-reload-{}.json", std::process::id()));
+    std::fs::create_dir_all(path.parent().expect("fixture parent")).expect("scratch dir");
+    std::fs::write(&path, r#"{"kaiya":{"voiceStream":"on"}}"#).expect("fixture");
+    let output = std::process::Command::new(std::env::current_exe().expect("test executable"))
+        .args([
+            "--exact",
+            "voice_turn::tests::voice_stream_file_is_reread_without_restart",
+            "--nocapture",
+        ])
+        .env(CHILD, &path)
+        .env(super::ENV_CONFIG_PATH, &path)
+        .env(super::ENV_AGENT_NAME, "Kaiya")
+        .env(super::ENV_VOICE_STREAM, "on")
+        .output()
+        .expect("run fixture subprocess");
+    std::fs::remove_file(path).expect("remove fixture");
+    assert!(
+        output.status.success(),
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stdout).contains("1 passed"),
+        "child must actually run the test"
+    );
+}

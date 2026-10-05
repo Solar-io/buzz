@@ -17,6 +17,7 @@ mod relay;
 mod setup_mode;
 mod task_status;
 mod usage;
+mod voice_stream;
 mod voice_turn;
 
 pub use usage::TurnUsage;
@@ -2277,6 +2278,13 @@ async fn tokio_main() -> Result<()> {
         pool_router: config.pool_router.clone(),
         task_status_sink: Some(task_status_sink.clone()),
         task_status_refresh: task_status::STATUS_REFRESH,
+        // Always wired; whether a turn streams is the per-turn `voiceStream`
+        // switch (default off), read fresh from the config file.
+        speech_sink: Some(Arc::new(voice_stream::RelaySpeechSink::new(
+            relay.event_publisher(),
+            relay.rest_client(),
+        ))),
+        voice_stream_forced: None,
     });
 
     // D8.8: close any `running` status heads a previous process of this agent
@@ -4157,6 +4165,8 @@ mod claim_router_tests {
             pool_router: crate::auth_pool::PoolRouter::default(),
             task_status_sink: None,
             task_status_refresh: crate::task_status::STATUS_REFRESH,
+            speech_sink: None,
+            voice_stream_forced: None,
         }
     }
 
