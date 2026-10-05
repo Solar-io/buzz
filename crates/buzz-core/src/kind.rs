@@ -586,6 +586,16 @@ pub const KIND_OWNER_ADMIN_ACK: u32 = 24202;
 /// Ephemeral: huddle emoji reaction burst. Channel-scoped to the ephemeral
 /// huddle channel with an `h` tag; never stored in the timeline.
 pub const KIND_HUDDLE_REACTION: u32 = 24810;
+/// Ephemeral: one sentence-sized segment of an agent's spoken reply on a
+/// live voice call, published as the model streams it. Channel-scoped with
+/// an `h` tag, signed by the agent, never stored. Carries
+/// `["buzz-speech", <stream_id>, <seq>, <offset>]` (offset in UTF-16 code
+/// units into the reply's final text) and, on the last segment of a stream,
+/// `["done", <total_chars>]`. The full reply follows as an ordinary kind:9
+/// tagged `["buzz-speech", <stream_id>, <segments>, <total_chars>]`, which is
+/// the fallback for any client that does not consume this kind. 24811 is
+/// avoided because web tests use it as a "different kind" fixture.
+pub const KIND_AGENT_SPEECH_SEGMENT: u32 = 24820;
 // Stream messaging
 /// NIP-29 group chat message kind. V1 used kind:10001 (replaceable range — wrong), then 40001.
 ///
@@ -890,6 +900,7 @@ pub const ALL_KINDS: &[u32] = &[
     KIND_PRESENCE_UPDATE,
     KIND_TYPING_INDICATOR,
     KIND_HUDDLE_REACTION,
+    KIND_AGENT_SPEECH_SEGMENT,
     KIND_BLOSSOM_AUTH,
     KIND_PAIRING,
     KIND_AGENT_OBSERVER_FRAME,
@@ -1105,6 +1116,9 @@ const _: () = assert!(KIND_AUTH <= u16::MAX as u32);
 const _: () = assert!(KIND_CANVAS <= u16::MAX as u32);
 const _: () = assert!(KIND_HUDDLE_GUIDELINES <= u16::MAX as u32);
 const _: () = assert!(EPHEMERAL_KIND_MIN < EPHEMERAL_KIND_MAX);
+// Speech segments must stay ephemeral: the relay fans them out without
+// storing them, which is what keeps one reply from becoming N history rows.
+const _: () = assert!(is_ephemeral(KIND_AGENT_SPEECH_SEGMENT));
 // Compile-time: KIND_AGENT_TURN_METRIC is a regular stored kind (not ephemeral, not replaceable).
 const _: () = assert!(!is_ephemeral(KIND_AGENT_TURN_METRIC));
 const _: () = assert!(!is_replaceable(KIND_AGENT_TURN_METRIC));
@@ -1130,6 +1144,15 @@ mod tests {
         for &k in ALL_KINDS {
             assert!(seen.insert(k), "duplicate kind value: {k}");
         }
+    }
+
+    #[test]
+    fn agent_speech_segment_kind_is_pinned_ephemeral_and_listed() {
+        // Wire value is shared with the web client; it must never drift.
+        assert_eq!(KIND_AGENT_SPEECH_SEGMENT, 24820);
+        assert!(is_ephemeral(KIND_AGENT_SPEECH_SEGMENT));
+        assert!(!is_relay_only_kind(KIND_AGENT_SPEECH_SEGMENT));
+        assert!(ALL_KINDS.contains(&KIND_AGENT_SPEECH_SEGMENT));
     }
 
     #[test]

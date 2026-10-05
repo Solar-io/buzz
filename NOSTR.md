@@ -63,6 +63,7 @@ PGPASSWORD=buzz_dev psql -h localhost -U buzz -d buzz -c \
 | **Membership notifications** | ✅ | kind:44100 (added) / kind:44101 (removed); relay-signed, community-global scope (`channel_id=None` inside the connected community) |
 | **Presence (kind:20001)** | ✅ | Ephemeral; arbitrary status string (truncated to 128 chars); writes to Redis (`set_presence`/`clear_presence` on `"offline"`), then fan-out to local subscribers. In multi-community mode presence is scoped to the connected community. |
 | **Typing indicators (kind:20002)** | ✅ | Ephemeral, not stored; published via Redis pub/sub (multi-node capable unlike presence fan-out) |
+| **Agent speech segments (kind:24820)** | ✅ | Ephemeral, `h`-scoped, never stored (generic ephemeral path — no relay-specific code). One sentence-sized piece of an agent's spoken reply on a voice call: `["buzz-speech", <stream_id>, <seq>, <offset>]` (offset = UTF-16 code units into the final text), `["done", <total_chars>]` on the last; optional `["e", <trigger id>, "", "reply"]`. Must be published over WebSocket (`POST /events` rejects ephemeral kinds). The full reply follows as a kind:9 tagged `["buzz-speech", <stream_id>, <segments>, <total_chars>]`, which clients that ignore 24820 speak as usual. |
 | **NIP-42 authentication** | ✅ | Proactive challenge; optional pubkey allowlist |
 | **NIP-11 relay info** | ✅ | `GET /` with `Accept: application/nostr+json` |
 | **Blossom media** | ✅ | `PUT /media/upload` (BUD-02), `GET /media/{sha256}.{ext}` (BUD-01) |

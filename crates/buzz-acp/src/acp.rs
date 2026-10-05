@@ -236,6 +236,17 @@ pub struct AcpClient {
     /// adapter advertises no usable knob — then every effort override at the
     /// steer boundary is skipped without an RPC, exactly like the prompt path.
     thought_level: Option<ThoughtLevelState>,
+    /// Per-turn speech tap for streamed voice replies (see
+    /// [`crate::voice_stream`]). When set, `agent_message_chunk` text and
+    /// tool-call boundaries for the tapped session are forwarded to the
+    /// turn's `VoiceStreamer`. `None` (the default) changes nothing.
+    speech_tap: Option<SpeechTapHandle>,
+}
+
+/// An installed speech tap: forwards only updates for `session_id`.
+struct SpeechTapHandle {
+    session_id: String,
+    tx: tokio::sync::mpsc::UnboundedSender<crate::voice_stream::SpeechTap>,
 }
 
 /// The session's live `thought_level` knob, as last touched through this
@@ -667,6 +678,7 @@ impl AcpClient {
             usage_models: Default::default(),
             standard_adapter,
             thought_level: None,
+            speech_tap: None,
         })
     }
 
@@ -1069,6 +1081,43 @@ impl AcpClient {
     /// Idempotent — safe to call when `steer_rx` is already `None`.
     pub fn clear_steer_rx(&mut self) {
         self.steer_rx = None;
+    }
+
+    /// Install the speech tap for one turn on `session_id`. Replaces any
+    /// previous tap (dropping its sender, which ends that stream).
+    pub fn set_speech_tap(
+        &mut self,
+        session_id: &str,
+        tx: tokio::sync::mpsc::UnboundedSender<crate::voice_stream::SpeechTap>,
+    ) {
+        self.speech_tap = Some(SpeechTapHandle {
+            session_id: session_id.to_string(),
+            tx,
+        });
+    }
+
+    /// Remove the speech tap. Dropping the sender is the stream's turn-end
+    /// signal: its `done` segment and final message follow. Idempotent.
+    pub fn clear_speech_tap(&mut self) {
+        self.speech_tap = None;
+    }
+
+    /// Forward one tap message if a tap is installed for this update's
+    /// session and the update is the top-level agent's own (subagent output
+    /// carries `_meta.claudeCode.parentToolUseId` and is never spoken).
+    fn forward_speech(&self, msg: &serde_json::Value, item: crate::voice_stream::SpeechTap) {
+        let Some(tap) = self.speech_tap.as_ref() else {
+            return;
+        };
+        if msg["params"]["sessionId"].as_str() != Some(tap.session_id.as_str()) {
+            return;
+        }
+        let parent = &msg["params"]["update"]["_meta"]["claudeCode"]["parentToolUseId"];
+        if !parent.is_null() {
+            return;
+        }
+        // A closed receiver means the streamer is gone; nothing to do.
+        let _ = tap.tx.send(item);
     }
 
     /// Returns `true` if no steer receiver is currently installed.
@@ -2150,6 +2199,10 @@ impl AcpClient {
             "agent_message_chunk" => {
                 if let Some(text) = update["content"]["text"].as_str() {
                     tracing::info!(target: "acp::stream", "{text}");
+                    self.forward_speech(
+                        msg,
+                        crate::voice_stream::SpeechTap::Text(text.to_string()),
+                    );
                 }
                 false
             }
@@ -2163,6 +2216,12 @@ impl AcpClient {
                     .and_then(|v| v.as_str())
                     .unwrap_or("unknown");
                 tracing::info!(target: "acp::tool", "tool_call: {title} ({kind})");
+                self.forward_speech(
+                    msg,
+                    crate::voice_stream::SpeechTap::ToolBoundary {
+                        raw_input: update.get("rawInput").cloned(),
+                    },
+                );
                 true
             }
             "tool_call_update" => {
@@ -2172,6 +2231,14 @@ impl AcpClient {
                     .unwrap_or("?");
                 let status = update.get("status").and_then(|v| v.as_str()).unwrap_or("?");
                 tracing::info!(target: "acp::tool", "tool_call_update: {tool_id} → {status}");
+                if let Some(raw_input) = update.get("rawInput").filter(|v| !v.is_null()) {
+                    self.forward_speech(
+                        msg,
+                        crate::voice_stream::SpeechTap::ToolInput {
+                            raw_input: raw_input.clone(),
+                        },
+                    );
+                }
                 false
             }
             "plan" => {
@@ -5807,6 +5874,82 @@ done
             client.take_turn_usage().is_none(),
             "overflow without another valid signal must not emit all-null usage"
         );
+    }
+
+    /// Fake adapter for the speech-tap tests: on the prompt request it emits,
+    /// in order, a text chunk, a thought chunk, a `tool_call` (empty input), a
+    /// chunk for ANOTHER session, a subagent chunk, the `tool_call_update`
+    /// with the real input, and a final text chunk — then ends the turn.
+    const SPEECH_TAP_SCRIPT: &str = r#"
+        read -r REQ
+        ID=$(printf '%s' "$REQ" | sed -E 's/.*"id":([0-9]+).*/\1/')
+        echo '{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"tap-session","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"Let me check. "}}}}'
+        echo '{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"tap-session","update":{"sessionUpdate":"agent_thought_chunk","content":{"type":"text","text":"SECRET THOUGHT"}}}}'
+        echo '{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"tap-session","update":{"sessionUpdate":"tool_call","toolCallId":"t1","title":"Bash","kind":"execute","rawInput":{}}}}'
+        echo '{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"other-session","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"OTHER SESSION"}}}}'
+        echo '{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"tap-session","update":{"_meta":{"claudeCode":{"parentToolUseId":"t9"}},"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"SUBAGENT TEXT"}}}}'
+        echo '{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"tap-session","update":{"sessionUpdate":"tool_call_update","toolCallId":"t1","status":"completed","rawInput":{"command":"date"}}}}'
+        echo '{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"tap-session","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"It is noon."}}}}'
+        echo '{"jsonrpc":"2.0","id":'"$ID"',"result":{"stopReason":"end_turn"}}'
+        sleep 1
+    "#;
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn speech_tap_forwards_text_and_tool_boundaries_for_its_session_only() {
+        use crate::voice_stream::SpeechTap;
+        let mut client = spawn_script(SPEECH_TAP_SCRIPT).await;
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        client.set_speech_tap("tap-session", tx);
+        let stop = client
+            .session_prompt_with_idle_timeout(
+                "tap-session",
+                "hello",
+                std::time::Duration::from_secs(2),
+                std::time::Duration::from_secs(5),
+            )
+            .await
+            .expect("prompt");
+        assert_eq!(stop, StopReason::EndTurn);
+        client.clear_speech_tap();
+
+        let mut got = Vec::new();
+        while let Some(item) = rx.recv().await {
+            got.push(item);
+        }
+        assert_eq!(
+            got,
+            vec![
+                SpeechTap::Text("Let me check. ".into()),
+                SpeechTap::ToolBoundary {
+                    raw_input: Some(serde_json::json!({})),
+                },
+                SpeechTap::ToolInput {
+                    raw_input: serde_json::json!({"command": "date"}),
+                },
+                SpeechTap::Text("It is noon.".into()),
+            ],
+            "no thought text, no other session, no subagent text"
+        );
+        client.shutdown().await;
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn no_speech_tap_leaves_the_turn_unchanged() {
+        // Same wire, no tap installed: the turn ends exactly as before.
+        let mut client = spawn_script(SPEECH_TAP_SCRIPT).await;
+        let stop = client
+            .session_prompt_with_idle_timeout(
+                "tap-session",
+                "hello",
+                std::time::Duration::from_secs(2),
+                std::time::Duration::from_secs(5),
+            )
+            .await
+            .expect("prompt");
+        assert_eq!(stop, StopReason::EndTurn);
+        client.shutdown().await;
     }
 
     #[cfg(unix)]

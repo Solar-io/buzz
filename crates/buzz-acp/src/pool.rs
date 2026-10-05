@@ -224,6 +224,10 @@ pub struct SessionState {
     /// Per-channel successful-delivery state. Created with the ACP session and
     /// cleared atomically with every invalidation path.
     pub deliveries: HashMap<Uuid, ChannelDeliveryState>,
+    /// Channels whose live session has had a streamed voice turn. Unstreamed
+    /// turns there get the `[Reply Mode]` reminder so a typed message is not
+    /// answered in (undelivered) plain text. Cleared with the session.
+    pub voice_streamed: HashSet<Uuid>,
 }
 
 impl SessionState {
@@ -250,6 +254,7 @@ impl SessionState {
         self.canvas_pending_notice.remove(channel_id);
         self.canvas_notice_delivered_at.remove(channel_id);
         self.deliveries.remove(channel_id);
+        self.voice_streamed.remove(channel_id);
         self.sessions.remove(channel_id).is_some()
     }
 
@@ -265,6 +270,7 @@ impl SessionState {
         self.canvas_pending_notice.clear();
         self.canvas_notice_delivered_at.clear();
         self.deliveries.clear();
+        self.voice_streamed.clear();
     }
 
     /// Refresh the cached canvas for a channel and arm the one-shot change
@@ -863,6 +869,13 @@ pub struct PromptContext {
     pub task_status_sink: Option<Arc<dyn crate::task_status::TaskStatusSink>>,
     /// Interval at which a running turn's status head is re-published.
     pub task_status_refresh: Duration,
+    /// Streamed voice replies: where kind:24820 segments and the final
+    /// kind:9 go. `None` disables streaming regardless of the switch.
+    pub speech_sink: Option<Arc<dyn crate::voice_stream::SpeechSink>>,
+    /// Test seam for the `voiceStream` switch. `None` (production) reads
+    /// `~/.buzz/agent-effort.json` / `BUZZ_VOICE_STREAM` fresh each `[voice]`
+    /// turn; `Some` forces it without touching process state.
+    pub voice_stream_forced: Option<bool>,
 }
 
 impl AgentPool {
@@ -2461,6 +2474,9 @@ fn send_prompt_result(
     batch: Option<FlushBatch>,
 ) {
     agent.acp.clear_steer_rx();
+    // Backstop: the tap is normally cleared the moment the prompt resolves;
+    // never let one outlive its turn into the slot's next one.
+    agent.acp.clear_speech_tap();
     // Every classified exit records its task status here, so
     // `TurnCompletionGuard` publishes the matching terminal head.
     result_tx.outcome.set(task_state_for_outcome(&outcome));
@@ -2471,6 +2487,68 @@ fn send_prompt_result(
         outcome,
         batch,
     });
+}
+
+/// The `[voice]` event a streamed turn answers.
+#[derive(Debug, Clone)]
+struct VoiceStreamTrigger {
+    event_id: String,
+    created_at: u64,
+}
+
+/// Per-turn streamed-voice decision.
+#[derive(Debug, Clone, Default)]
+struct VoiceStreamPlan {
+    /// The triggering `[voice]` event, when this is a `[voice]` channel turn
+    /// (streamed or measure-only).
+    trigger: Option<VoiceStreamTrigger>,
+    /// Stream this turn: `[voice]` && switch on && a sink exists.
+    stream_on: bool,
+    /// The prompt's reply-delivery section.
+    reply_mode: crate::queue::ReplyMode,
+}
+
+/// Decide whether this turn streams its reply. v1 scope is `[voice] ` only
+/// (`[video] ` desktop turns are unchanged). The switch is read only for
+/// `[voice]` turns; `stream_on` additionally needs a configured sink.
+fn plan_voice_stream(
+    ctx: &PromptContext,
+    source: &PromptSource,
+    batch: Option<&FlushBatch>,
+    state: &SessionState,
+) -> VoiceStreamPlan {
+    let PromptSource::Channel(cid) = source else {
+        return VoiceStreamPlan::default();
+    };
+    let trigger = batch
+        .and_then(|b| b.events.last())
+        .filter(|be| {
+            be.event
+                .content
+                .starts_with(crate::voice_turn::VOICE_TURN_MARKER)
+        })
+        .map(|be| VoiceStreamTrigger {
+            event_id: be.event.id.to_hex(),
+            created_at: be.event.created_at.as_secs(),
+        });
+    let stream_on = trigger.is_some()
+        && ctx.speech_sink.is_some()
+        && ctx.voice_stream_forced.unwrap_or_else(|| {
+            crate::voice_turn::voice_stream_from_env(Some(&ctx.agent_keys.public_key().to_hex()))
+                .is_on()
+        });
+    let reply_mode = if stream_on {
+        crate::queue::ReplyMode::VoiceStream
+    } else if state.voice_streamed.contains(cid) {
+        crate::queue::ReplyMode::TextAfterVoiceStream
+    } else {
+        crate::queue::ReplyMode::Default
+    };
+    VoiceStreamPlan {
+        trigger,
+        stream_on,
+        reply_mode,
+    }
 }
 
 /// Core async function spawned for each prompt.
@@ -3080,6 +3158,13 @@ pub async fn run_prompt_task(
     // (`prompt[0].text.startsWith("/")`) fires; the wrapped Buzz context
     // follows as a second block.
     let mut slash_command: Option<String> = None;
+    // Streamed voice replies (spec: VOICE_STREAMED_REPLIES): a channel turn
+    // answering a `[voice] ` event, with the `voiceStream` switch on and a
+    // sink to publish to, is told to answer in plain text, which the harness
+    // speaks as it streams. The switch is resolved only for `[voice]` turns,
+    // so every other turn reads no extra config and — with the switch off
+    // everywhere — gets a byte-identical prompt.
+    let voice_stream_plan = plan_voice_stream(&ctx, &source, batch.as_ref(), &agent.state);
     // Event IDs represented by this prompt. Commit only after ACP reports a
     // successful turn; failed/cancelled prompts must be retryable without loss.
     let mut pending_delivered_event_ids = HashSet::new();
@@ -3188,6 +3273,7 @@ pub async fn run_prompt_task(
                     .get(&b.channel_id)
                     .map(|notice| notice.rendered_section.as_str()),
                 standing_context_sent,
+                reply_mode: voice_stream_plan.reply_mode,
             },
         )
     } else {
@@ -3291,6 +3377,34 @@ pub async fn run_prompt_task(
     let voice_override_guard =
         apply_voice_turn_overrides(&mut agent, &voice_turn_overrides, &session_id).await;
 
+    // Speech tap + streamer, installed last so the stream clock starts as
+    // close to the prompt as possible. The streamer is detached: the slot is
+    // returned without waiting for the final post. A `[voice]` turn with the
+    // switch off still gets a measure-only tap (no sink) so `first_chunk`
+    // logs the baseline; it publishes nothing.
+    if let (Some(trigger), PromptSource::Channel(cid)) = (&voice_stream_plan.trigger, &source) {
+        let (tap_tx, tap_rx) = mpsc::unbounded_channel();
+        agent.acp.set_speech_tap(&session_id, tap_tx);
+        let sink = if voice_stream_plan.stream_on {
+            agent.state.voice_streamed.insert(*cid);
+            ctx.speech_sink.clone()
+        } else {
+            None
+        };
+        tokio::spawn(crate::voice_stream::run_voice_stream(
+            tap_rx,
+            sink,
+            crate::voice_stream::VoiceStreamParams {
+                channel_id: *cid,
+                stream_id: turn_id.clone(),
+                trigger_event_id: Some(trigger.event_id.clone()),
+                trigger_created_at: Some(trigger.created_at),
+                keys: ctx.agent_keys.clone(),
+                started: tokio::time::Instant::now(),
+            },
+        ));
+    }
+
     // When control_rx is Some (channel tasks), wrap the prompt in select! so
     // the main loop can cancel, interrupt, or rotate it. Heartbeats
     // (control_rx=None) take the simple await path — they are not controllable.
@@ -3318,6 +3432,10 @@ pub async fn run_prompt_task(
                     ctx.max_turn_duration,
                 ) => result,
                 mode = rx => {
+                    // The turn is being cancelled/interrupted/rotated: end the
+                    // speech stream now, so what was generated so far still
+                    // gets its done segment and final message.
+                    agent.acp.clear_speech_tap();
                     let control_signal = mode.unwrap_or(ControlSignal::Cancel);
                     // Land the model switch before any cancel/requeue work: setting
                     // `desired_model` here means the fresh session created by the
@@ -3485,6 +3603,10 @@ pub async fn run_prompt_task(
             }
         }
     };
+
+    // The prompt resolved: end the speech stream (its done segment and final
+    // go out while the rest of the turn is wrapped up).
+    agent.acp.clear_speech_tap();
 
     // The prompt ran to completion on this path — success, error, or timeout —
     // so the session survives and its pre-turn config must come back before
@@ -9839,6 +9961,8 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
             pool_router: crate::auth_pool::PoolRouter::default(),
             task_status_sink: None,
             task_status_refresh: crate::task_status::STATUS_REFRESH,
+            speech_sink: None,
+            voice_stream_forced: None,
         }
     }
 
@@ -11889,3 +12013,7 @@ done"#
         );
     }
 }
+
+#[cfg(test)]
+#[path = "pool_voice_stream_tests.rs"]
+mod voice_stream_pool_tests;
