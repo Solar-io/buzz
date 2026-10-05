@@ -75,8 +75,8 @@ export function classifyMessage(
       silentWake: isWakeForOthers(event, self),
       isDm: channelId != null && context.dmChannelIds.includes(channelId),
       // A message with no channel cannot be matched against the viewer's
-      // prefs or the open channel; treat it as muted rather than notifying
-      // about something the app cannot then navigate to.
+      // prefs or the open channel; treat it as muted (no sound). The runtime
+      // drops such an event outright — there is nothing to navigate to.
       channelMuted:
         channelId == null || context.mutedChannelIds.includes(channelId),
       isActiveChannel:

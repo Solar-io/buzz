@@ -11,12 +11,13 @@ import type {
 } from "../lib/notifyDecision.ts";
 import { promptForNotificationPermission } from "../lib/permissionStore.ts";
 import { updateNotificationSettings } from "../lib/settingsStore.ts";
+import { NotificationSoundSettings } from "./NotificationSoundSettings";
 
 const MODES: { value: NotificationMode; label: string; hint: string }[] = [
   {
     value: "all",
     label: "All messages",
-    hint: "Every message in a channel you have not muted.",
+    hint: "Every message. Muted channels notify without sound.",
   },
   {
     value: "mentions",
@@ -196,6 +197,8 @@ export function NotificationSettingsContent({
           ))}
         </div>
       </fieldset>
+
+      <NotificationSoundSettings />
 
       <section className="flex items-center justify-between gap-4">
         <div className="min-w-0">

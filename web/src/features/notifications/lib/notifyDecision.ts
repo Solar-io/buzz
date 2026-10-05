@@ -1,17 +1,22 @@
 /**
  * The notify/skip decision for one incoming message.
  *
- * A browser gets a smaller job than the desktop: no tray, no per-slot sounds,
- * one OS notification and a count in the tab title. The whole of that job
+ * A browser gets a smaller job than the desktop: no tray, one OS
+ * notification, a count in the tab title, and a sound. The whole of that job
  * hinges on a handful of booleans, so they live here as a pure function — the
  * runtime hook classifies an event, this decides, and a unit test can pin
  * every branch without a relay, a permission prompt, or a browser.
  *
- * Two outputs, not one, because the two channels have different gates: the
- * title badge is ours to draw and needs no permission, while an OS
- * notification needs a granted permission the user may never give (or may
- * have refused, after which the page cannot re-ask). Collapsing them would
- * make a denied permission silently disable the badge too.
+ * Three outputs, not one, because each has its own gate: the title badge is
+ * ours to draw and needs no permission; an OS notification needs a granted
+ * permission the user may never give (or may have refused, after which the
+ * page cannot re-ask); and the sound needs neither, but is the one thing a
+ * muted channel withholds. Collapsing them would make a denied permission
+ * silently disable the badge and the sound too.
+ *
+ * MUTE MEANS "NO SOUND" (the desktop's rule, 8ca8caa35): a muted channel or
+ * DM still notifies and still counts toward the badge — @mentions included —
+ * it just never plays a sound.
  */
 
 /** What the viewer wants to be alerted about. */
@@ -49,11 +54,13 @@ export interface IncomingMessage {
 /** The viewer's settings and the tab's state at the moment of arrival. */
 export interface NotifyContext {
   mode: NotificationMode;
-  /** Master switch for OS notifications; the title badge ignores it. */
+  /** Master switch for OS notifications; the badge and sound ignore it. */
   desktopEnabled: boolean;
   permission: NotificationPermissionState;
   /** `document.visibilityState === "hidden"` at the moment of arrival. */
   documentHidden: boolean;
+  /** Master switch for notification sounds. */
+  soundEnabled: boolean;
 }
 
 /**
@@ -80,35 +87,37 @@ export interface NotifyDecision {
   notify: boolean;
   /** Count this message toward the document-title badge. */
   badge: boolean;
+  /** Play the slot's notification sound. */
+  sound: boolean;
   reason: NotifyReason;
 }
+
+const SKIP = { notify: false, badge: false, sound: false } as const;
 
 /**
  * Decide what an arriving message earns.
  *
- * The relevance gate runs first and short-circuits BOTH outputs: an
- * irrelevant message is neither notified nor counted. Only once a message is
- * relevant do the two outputs diverge — the badge asks "is the tab in the
- * background", the notification asks "may we, and does the viewer want it".
+ * The relevance gate runs first and short-circuits EVERY output: an
+ * irrelevant message is neither notified, counted, nor chimed. Only once a
+ * message is relevant do the outputs diverge — the badge asks "is the tab in
+ * the background", the notification asks "may we, and does the viewer want
+ * it", the sound asks "is the channel muted, and are sounds on".
  */
 export function decideNotification(
   message: IncomingMessage,
   context: NotifyContext,
 ): NotifyDecision {
   if (message.fromSelf) {
-    return { notify: false, badge: false, reason: "self" };
+    return { ...SKIP, reason: "self" };
   }
   if (message.silentWake) {
-    return { notify: false, badge: false, reason: "silent-wake" };
+    return { ...SKIP, reason: "silent-wake" };
   }
   if (context.mode === "none") {
-    return { notify: false, badge: false, reason: "muted-everything" };
-  }
-  if (message.channelMuted) {
-    return { notify: false, badge: false, reason: "channel-muted" };
+    return { ...SKIP, reason: "muted-everything" };
   }
   if (context.mode === "mentions" && !message.mentionsSelf && !message.isDm) {
-    return { notify: false, badge: false, reason: "not-addressed" };
+    return { ...SKIP, reason: "not-addressed" };
   }
   // The one rule that is easy to get backwards, so state it in full: the
   // viewer is looking at this very channel, which means the message is
@@ -117,26 +126,36 @@ export function decideNotification(
   // exactly the case the whole feature exists for, and inverting this test
   // kills it while leaving every other case working.
   if (!context.documentHidden && message.isActiveChannel) {
-    return { notify: false, badge: false, reason: "viewing" };
+    return { ...SKIP, reason: "viewing" };
   }
 
   // The badge exists to make a BACKGROUND tab show activity; a visible tab
   // shows it in the sidebar instead.
   const badge = context.documentHidden;
+  // Mute withholds the sound and nothing else. The sound deliberately ignores
+  // permission and the desktop switch: it is how a visible tab looking at a
+  // different channel, or a browser that refused notifications, still
+  // tells you something arrived.
+  const sound = context.soundEnabled && !message.channelMuted;
 
   if (!context.desktopEnabled) {
-    return { notify: false, badge, reason: "notifications-off" };
+    return { notify: false, badge, sound, reason: "notifications-off" };
   }
   if (context.permission === "unsupported") {
-    return { notify: false, badge, reason: "unsupported" };
+    return { notify: false, badge, sound, reason: "unsupported" };
   }
   if (context.permission === "denied") {
-    return { notify: false, badge, reason: "permission-denied" };
+    return { notify: false, badge, sound, reason: "permission-denied" };
   }
   if (context.permission === "default") {
-    return { notify: false, badge, reason: "permission-default" };
+    return { notify: false, badge, sound, reason: "permission-default" };
   }
-  return { notify: true, badge, reason: "ok" };
+  return {
+    notify: true,
+    badge,
+    sound,
+    reason: message.channelMuted ? "channel-muted" : "ok",
+  };
 }
 
 /**
@@ -155,7 +174,7 @@ export function describeNotifyReason(reason: NotifyReason): string {
     case "muted-everything":
       return "Notifications are set to nothing.";
     case "channel-muted":
-      return "That channel is muted.";
+      return "That channel is muted: it notifies without sound.";
     case "not-addressed":
       return "Only mentions and DMs notify.";
     case "viewing":

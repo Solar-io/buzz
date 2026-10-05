@@ -31,6 +31,7 @@ import {
   getNotificationSettings,
   subscribeToNotificationSettings,
 } from "./lib/settingsStore.ts";
+import { playNotificationSound, soundSlotFor } from "./lib/sound.ts";
 import { formatTitleBadge, stripTitleBadge } from "./lib/titleBadge.ts";
 
 /** Chat messages. Reactions, typing and system rows never notify. */
@@ -220,16 +221,19 @@ export function useNotificationRuntime(
   }, [badgeCount, settings.titleBadgeEnabled]);
 
   const mode = settings.mode;
-  // Channels worth watching: everything the viewer has not muted. Muted ids
-  // are left out of the REQ so the relay never sends them, and the decision
-  // re-checks prefs on arrival so un-muting mid-session still works.
-  const watchedIds = useMemo(() => {
-    const muted = new Set(loadChannelPrefs().muted);
-    return channels
-      .filter((channel) => !channel.archived && !muted.has(channel.id))
-      .map((channel) => channel.id)
-      .sort();
-  }, [channels]);
+  // Channels worth watching: every live channel, MUTED ONES INCLUDED. Mute
+  // means "no sound", not "no notification", so a muted channel must still
+  // reach the decision — which reads the mute from prefs on arrival and
+  // withholds only the sound. Leaving muted ids out of the REQ (as this did
+  // before) would silently turn mute back into "never tell me".
+  const watchedIds = useMemo(
+    () =>
+      channels
+        .filter((channel) => !channel.archived)
+        .map((channel) => channel.id)
+        .sort(),
+    [channels],
+  );
   // Channel ids are UUIDs, so a joined string is a lossless set key: the REQ
   // reopens when the SET changes, not on every channel-list re-render.
   const watchedKey = watchedIds.join(",");
@@ -272,18 +276,29 @@ export function useNotificationRuntime(
             .filter((channel) => channel.type === "dm")
             .map((channel) => channel.id),
         });
+        // Every REQ is #h-scoped, so a channel-less event cannot arrive; if
+        // one ever does there is nothing to navigate to, so it alerts nothing.
+        if (channelId === null) {
+          return;
+        }
         const decision = decideNotification(message, {
           mode: current.settings.mode,
           desktopEnabled: current.settings.desktopEnabled,
           permission: current.permission,
           documentHidden: current.hidden,
+          soundEnabled: current.settings.soundEnabled,
         });
         setLastDecision(decision);
 
         if (decision.badge) {
           setBadgeCount((count) => count + 1);
         }
-        if (!decision.notify || channelId === null) {
+        // The sound is independent of the OS notification: it plays for a
+        // visible tab, a refused permission, or desktop notifications off.
+        if (decision.sound) {
+          playNotificationSound(current.settings.sounds[soundSlotFor(message)]);
+        }
+        if (!decision.notify) {
           return;
         }
 
@@ -302,6 +317,9 @@ export function useNotificationRuntime(
             body: copy.body,
             tag: copy.tag,
             icon: "/assets/icons/icon-192.png",
+            // Ours is the sound (or, for a muted channel, the silence); the
+            // OS must not stack its own chime on top.
+            silent: true,
           });
           notification.onclick = () => {
             window.focus();

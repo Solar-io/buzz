@@ -24,13 +24,19 @@ function grantedContext(overrides = {}) {
     desktopEnabled: true,
     permission: "granted",
     documentHidden: true,
+    soundEnabled: true,
     ...overrides,
   };
 }
 
 test("a mention in a hidden tab notifies and badges", () => {
   const decision = decideNotification(relevantMessage(), grantedContext());
-  assert.deepEqual(decision, { notify: true, badge: true, reason: "ok" });
+  assert.deepEqual(decision, {
+    notify: true,
+    badge: true,
+    sound: true,
+    reason: "ok",
+  });
 });
 
 test("your own message never notifies", () => {
@@ -51,20 +57,147 @@ test('mode "none" silences both outputs', () => {
   assert.deepEqual(decision, {
     notify: false,
     badge: false,
+    sound: false,
     reason: "muted-everything",
   });
 });
 
-test("a muted channel silences both outputs", () => {
+// ── Mute means "no sound" ──────────────────────────────────────────────────
+// A muted channel goes through every other gate exactly like an unmuted one;
+// only the sound is withheld. Each muted case is paired with its unmuted
+// control so a rule that kills sound for everyone cannot pass.
+
+test("a muted channel still notifies and badges, but plays no sound", () => {
   const decision = decideNotification(
     relevantMessage({ channelMuted: true }),
     grantedContext(),
   );
   assert.deepEqual(decision, {
-    notify: false,
-    badge: false,
+    notify: true,
+    badge: true,
+    sound: false,
     reason: "channel-muted",
   });
+});
+
+test("control: the same message unmuted plays a sound", () => {
+  const decision = decideNotification(
+    relevantMessage({ channelMuted: false }),
+    grantedContext(),
+  );
+  assert.equal(decision.sound, true);
+});
+
+test("a muted @mention in mode all still notifies, silently", () => {
+  const decision = decideNotification(
+    relevantMessage({ channelMuted: true, mentionsSelf: true }),
+    grantedContext({ mode: "all" }),
+  );
+  assert.equal(decision.notify, true);
+  assert.equal(decision.sound, false);
+});
+
+test("a muted DM notifies silently; an unmuted DM chimes", () => {
+  const muted = decideNotification(
+    relevantMessage({ channelMuted: true, isDm: true, mentionsSelf: false }),
+    grantedContext(),
+  );
+  const unmuted = decideNotification(
+    relevantMessage({ channelMuted: false, isDm: true, mentionsSelf: false }),
+    grantedContext(),
+  );
+  assert.equal(muted.notify, true);
+  assert.equal(muted.sound, false);
+  assert.equal(unmuted.sound, true);
+});
+
+test("a muted channel still obeys mode mentions (not addressed → nothing)", () => {
+  const decision = decideNotification(
+    relevantMessage({ channelMuted: true, mentionsSelf: false }),
+    grantedContext({ mode: "mentions" }),
+  );
+  assert.deepEqual(decision, {
+    notify: false,
+    badge: false,
+    sound: false,
+    reason: "not-addressed",
+  });
+});
+
+test("the muted reason says it notifies without sound", () => {
+  assert.equal(
+    describeNotifyReason("channel-muted"),
+    "That channel is muted: it notifies without sound.",
+  );
+});
+
+// ── Sound gates ────────────────────────────────────────────────────────────
+
+test("sounds switched off: notifies, no sound", () => {
+  const decision = decideNotification(
+    relevantMessage(),
+    grantedContext({ soundEnabled: false }),
+  );
+  assert.equal(decision.notify, true);
+  assert.equal(decision.sound, false);
+});
+
+test("viewing the channel: no sound", () => {
+  const decision = decideNotification(
+    relevantMessage({ isActiveChannel: true }),
+    grantedContext({ documentHidden: false }),
+  );
+  assert.equal(decision.sound, false);
+});
+
+test("visible tab on ANOTHER channel still plays a sound", () => {
+  const decision = decideNotification(
+    relevantMessage({ isActiveChannel: false }),
+    grantedContext({ documentHidden: false }),
+  );
+  assert.equal(decision.sound, true);
+});
+
+test('mode "none": no sound', () => {
+  const decision = decideNotification(
+    relevantMessage(),
+    grantedContext({ mode: "none" }),
+  );
+  assert.equal(decision.sound, false);
+});
+
+test("your own message: no sound", () => {
+  assert.equal(
+    decideNotification(relevantMessage({ fromSelf: true }), grantedContext())
+      .sound,
+    false,
+  );
+});
+
+test("a silent wake: no sound", () => {
+  assert.equal(
+    decideNotification(
+      relevantMessage({ silentWake: true }),
+      grantedContext({ mode: "all" }),
+    ).sound,
+    false,
+  );
+});
+
+test("sound does not depend on permission or the desktop switch", () => {
+  for (const context of [
+    { permission: "denied" },
+    { permission: "default" },
+    { permission: "unsupported" },
+    { desktopEnabled: false },
+  ]) {
+    const decision = decideNotification(
+      relevantMessage(),
+      grantedContext(context),
+    );
+    assert.equal(decision.notify, false, JSON.stringify(context));
+    assert.equal(decision.sound, true, JSON.stringify(context));
+  }
 });
 
 test('mode "mentions" drops a message that is neither a mention nor a DM', () => {
@@ -110,6 +243,7 @@ test("VISIBLE tab, looking at that channel: no alert", () => {
   assert.deepEqual(decision, {
     notify: false,
     badge: false,
+    sound: false,
     reason: "viewing",
   });
 });
@@ -119,7 +253,12 @@ test("HIDDEN tab with that channel still selected: alert anyway", () => {
     relevantMessage({ isActiveChannel: true }),
     grantedContext({ documentHidden: true }),
   );
-  assert.deepEqual(decision, { notify: true, badge: true, reason: "ok" });
+  assert.deepEqual(decision, {
+    notify: true,
+    badge: true,
+    sound: true,
+    reason: "ok",
+  });
 });
 
 test("VISIBLE tab, a different channel: notifies but does not badge", () => {
@@ -136,7 +275,12 @@ test("HIDDEN tab, a different channel: alert", () => {
     relevantMessage({ isActiveChannel: false }),
     grantedContext({ documentHidden: true }),
   );
-  assert.deepEqual(decision, { notify: true, badge: true, reason: "ok" });
+  assert.deepEqual(decision, {
+    notify: true,
+    badge: true,
+    sound: true,
+    reason: "ok",
+  });
 });
 
 // ── Permission and the master switch ───────────────────────────────────────
@@ -216,6 +360,7 @@ test("a silent wake neither notifies nor badges, even in mode all with a hidden 
   assert.deepEqual(decision, {
     notify: false,
     badge: false,
+    sound: false,
     reason: "silent-wake",
   });
 });

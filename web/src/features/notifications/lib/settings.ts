@@ -8,6 +8,12 @@
  */
 
 import type { NotificationMode } from "./notifyDecision.ts";
+import {
+  DEFAULT_SLOT_SOUNDS,
+  isSoundName,
+  SOUND_SLOTS,
+  type SlotSounds,
+} from "./sound.ts";
 
 const SETTINGS_KEY = "buzz.notifications.v1";
 
@@ -22,16 +28,50 @@ export interface NotificationSettings {
   titleBadgeEnabled: boolean;
   /** What counts as worth alerting about — governs badge and notification. */
   mode: NotificationMode;
+  /**
+   * Play a sound for messages that alert you, and for due reminders. On by
+   * default: unlike an OS notification a sound needs no permission (the
+   * browser only defers it until the first click on the page).
+   */
+  soundEnabled: boolean;
+  /** Which sound each slot plays. */
+  sounds: SlotSounds;
 }
 
 export const DEFAULT_NOTIFICATION_SETTINGS: NotificationSettings = {
   desktopEnabled: false,
   titleBadgeEnabled: true,
   mode: "mentions",
+  soundEnabled: true,
+  sounds: DEFAULT_SLOT_SOUNDS,
 };
+
+/** A defaults copy whose nested `sounds` is not shared with the constant. */
+function freshDefaults(): NotificationSettings {
+  return {
+    ...DEFAULT_NOTIFICATION_SETTINGS,
+    sounds: { ...DEFAULT_SLOT_SOUNDS },
+  };
+}
 
 function isMode(value: unknown): value is NotificationMode {
   return value === "all" || value === "mentions" || value === "none";
+}
+
+/** Slot by slot: a missing or unknown sound falls back to that slot's default. */
+function parseSounds(value: unknown): SlotSounds {
+  const record =
+    value && typeof value === "object" && !Array.isArray(value)
+      ? (value as Record<string, unknown>)
+      : {};
+  const sounds = { ...DEFAULT_SLOT_SOUNDS };
+  for (const slot of SOUND_SLOTS) {
+    const candidate = record[slot];
+    if (isSoundName(candidate)) {
+      sounds[slot] = candidate;
+    }
+  }
+  return sounds;
 }
 
 /**
@@ -45,16 +85,16 @@ export function parseNotificationSettings(
   raw: string | null,
 ): NotificationSettings {
   if (!raw) {
-    return { ...DEFAULT_NOTIFICATION_SETTINGS };
+    return freshDefaults();
   }
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
   } catch {
-    return { ...DEFAULT_NOTIFICATION_SETTINGS };
+    return freshDefaults();
   }
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    return { ...DEFAULT_NOTIFICATION_SETTINGS };
+    return freshDefaults();
   }
   const record = parsed as Record<string, unknown>;
   return {
@@ -69,6 +109,11 @@ export function parseNotificationSettings(
     mode: isMode(record.mode)
       ? record.mode
       : DEFAULT_NOTIFICATION_SETTINGS.mode,
+    soundEnabled:
+      typeof record.soundEnabled === "boolean"
+        ? record.soundEnabled
+        : DEFAULT_NOTIFICATION_SETTINGS.soundEnabled,
+    sounds: parseSounds(record.sounds),
   };
 }
 
@@ -84,7 +129,7 @@ export function loadNotificationSettings(): NotificationSettings {
       globalThis.localStorage?.getItem(SETTINGS_KEY) ?? null,
     );
   } catch {
-    return { ...DEFAULT_NOTIFICATION_SETTINGS };
+    return freshDefaults();
   }
 }
 

@@ -5,6 +5,7 @@ import {
   useNotificationPermission,
   useNotificationSettings,
 } from "@/features/notifications/hooks";
+import { playNotificationSound } from "@/features/notifications/lib/sound";
 
 import { notify } from "@/shared/ui/notify";
 import {
@@ -48,6 +49,9 @@ export interface ReminderNotificationOptions {
  *    from `features/notifications` rather than being re-derived here: this
  *    hook never calls `Notification.requestPermission`, so it cannot fight
  *    the message runtime over the prompt.
+ *
+ * Plus the `reminder` slot's sound when sounds are on — gated on nothing
+ * else, so it plays even where the OS notification cannot.
  *
  * The watermark advances on EVERY check, including ones where both surfaces
  * were suppressed. Re-enabling notifications later must not replay a backlog
@@ -142,6 +146,12 @@ export function useReminderNotifications(
         );
       }
 
+      // The reminder chime needs neither permission nor the desktop switch —
+      // the same independence the message sound has.
+      if (current.settings.soundEnabled) {
+        playNotificationSound(current.settings.sounds.reminder);
+      }
+
       if (
         !current.settings.desktopEnabled ||
         current.permission !== "granted"
@@ -153,6 +163,7 @@ export function useReminderNotifications(
           body: copy.body,
           tag: copy.tag,
           icon: "/assets/icons/icon-192.png",
+          silent: true,
         });
         notification.onclick = () => {
           window.focus();
