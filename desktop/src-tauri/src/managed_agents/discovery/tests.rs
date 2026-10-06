@@ -5,9 +5,10 @@ use super::{
     apply_agent_command_update, classify_runtime, codex_adapter_availability,
     codex_adapter_is_outdated, create_time_agent_command_override, default_agent_command,
     effective_agent_command, find_nvm_default_bin, is_login_shell_path_uninit, is_safe_nvm_tag,
-    managed_agent_avatar_url, normalize_agent_args, parse_semver_tag, probe_codex_acp_version,
-    record_agent_command, refresh_login_shell_path, try_record_agent_command,
-    BUZZ_AGENT_AVATAR_URL, CLAUDE_CODE_AVATAR_URL, CODEX_AVATAR_URL, GOOSE_AVATAR_URL,
+    managed_agent_avatar_url, normalize_agent_args, ordered_search_dirs, parse_semver_tag,
+    probe_codex_acp_version, record_agent_command, refresh_login_shell_path,
+    try_record_agent_command, BUZZ_AGENT_AVATAR_URL, CLAUDE_CODE_AVATAR_URL, CODEX_AVATAR_URL,
+    GOOSE_AVATAR_URL,
 };
 use crate::managed_agents::AcpAvailabilityStatus;
 
@@ -1816,4 +1817,27 @@ fn discovery_publish_path_drops_mid_flight_delete() {
         lookup_loaded_harness_by_id("mid-flight-delete").is_none(),
         "discovery's publish must not resurrect a harness deleted mid-discovery"
     );
+}
+
+#[test]
+fn release_search_prefers_bundled_sidecars_over_source_tree() {
+    let root = PathBuf::from("/src/buzz");
+    let exe = PathBuf::from("/Applications/Buzz.app/Contents/MacOS");
+    let dirs = ordered_search_dirs(&root, None, Some(exe.clone()), true);
+    assert_eq!(dirs.len(), 3);
+    assert_eq!(
+        dirs[0], exe,
+        "installed app must check its own bundle first"
+    );
+    assert!(dirs.contains(&PathBuf::from("/src/buzz/target/debug")));
+    assert!(dirs.contains(&PathBuf::from("/src/buzz/target/release")));
+}
+
+#[test]
+fn dev_search_prefers_source_tree_over_exe_dir() {
+    let root = PathBuf::from("/src/buzz");
+    let exe = PathBuf::from("/elsewhere");
+    let dirs = ordered_search_dirs(&root, None, Some(exe.clone()), false);
+    assert_eq!(dirs.len(), 3);
+    assert_eq!(dirs[2], exe, "dev builds check fresh target/ output first");
 }

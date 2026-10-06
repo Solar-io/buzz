@@ -490,16 +490,37 @@ fn profile_target_dirs(root: &Path) -> [PathBuf; 2] {
 }
 
 fn command_search_dirs() -> Vec<PathBuf> {
-    let mut dirs = profile_target_dirs(&workspace_root_dir()).to_vec();
-    if let Ok(current_dir) = std::env::current_dir() {
-        dirs.extend(profile_target_dirs(&current_dir));
-    }
-
-    dirs.extend(
+    ordered_search_dirs(
+        &workspace_root_dir(),
+        std::env::current_dir().ok().as_deref(),
         std::env::current_exe()
             .ok()
             .and_then(|path| path.parent().map(Path::to_path_buf)),
-    );
+        !cfg!(debug_assertions),
+    )
+}
+
+/// Release builds look beside their own executable first: an installed app
+/// must run the sidecars it shipped with, not whatever happens to sit in the
+/// source tree it was compiled from (`workspace_root_dir` is baked in at build
+/// time). Debug builds keep preferring fresh `target/` output for `just dev`.
+fn ordered_search_dirs(
+    workspace_root: &Path,
+    current_dir: Option<&Path>,
+    exe_dir: Option<PathBuf>,
+    exe_dir_first: bool,
+) -> Vec<PathBuf> {
+    let mut dirs = Vec::new();
+    if exe_dir_first {
+        dirs.extend(exe_dir.clone());
+    }
+    dirs.extend(profile_target_dirs(workspace_root));
+    if let Some(current_dir) = current_dir {
+        dirs.extend(profile_target_dirs(current_dir));
+    }
+    if !exe_dir_first {
+        dirs.extend(exe_dir);
+    }
     dirs.into_iter().fold(Vec::new(), |mut unique, dir| {
         if !unique.contains(&dir) {
             unique.push(dir);
