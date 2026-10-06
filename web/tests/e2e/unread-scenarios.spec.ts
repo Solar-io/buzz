@@ -160,7 +160,11 @@ async function open(
         );
         localStorage.setItem(
           "buzz.notifications.v1",
-          JSON.stringify({ mode: "all", desktopEnabled: true, soundEnabled: false }),
+          JSON.stringify({
+            mode: "all",
+            desktopEnabled: true,
+            soundEnabled: false,
+          }),
         );
         localStorage.setItem("buzz-theme", "buzz");
         localStorage.setItem("buzz-follow-system", "false");
@@ -261,8 +265,11 @@ async function attention(page: Page, on: boolean) {
 const trace = (page: Page) =>
   page.evaluate(
     () =>
-      (window as unknown as { __buzzUnreadTrace: Array<Record<string, unknown>> })
-        .__buzzUnreadTrace,
+      (
+        window as unknown as {
+          __buzzUnreadTrace: Array<Record<string, unknown>>;
+        }
+      ).__buzzUnreadTrace,
   );
 const osCount = (page: Page) =>
   page.evaluate(() => (window as unknown as { __os: string[] }).__os.length);
@@ -571,11 +578,11 @@ for (const mode of ["resting", "away"] as const) {
         }),
       );
       await expect(badge(dmRow(page, peerName(TARGET)))).toHaveText("2");
-      const texts = await toasts(page).allTextContents();
-      expect(
-        texts.join("|").toLowerCase(),
-        "toast text should say 'in thread'",
-      ).toContain("thread");
+      // Exact copy (tightened): the reply's toast meta reads "DM · in thread";
+      // the parent's toast says plain "DM", so only the reply can match.
+      await expect(
+        toasts(page).filter({ hasText: "a thread reply" }),
+      ).toContainText("DM · in thread");
     });
 
     test(`#12 own send from another device: no toast, no pill [${mode}]`, async ({
@@ -662,8 +669,12 @@ for (const mode of ["resting", "away"] as const) {
         await page.waitForTimeout(150);
       }
       await page.waitForTimeout(1_000);
-      const rendered = await dmRows(page).filter({ has: page.getByTestId("dm-row-badge") }).count();
-      const more = await dmSection(page).getByTestId("section-more").textContent();
+      const rendered = await dmRows(page)
+        .filter({ has: page.getByTestId("dm-row-badge") })
+        .count();
+      const more = await dmSection(page)
+        .getByTestId("section-more")
+        .textContent();
       test.info().annotations.push({
         type: "evidence",
         description: `pills rendered=${rendered} more="${more}"`,
@@ -671,7 +682,9 @@ for (const mode of ["resting", "away"] as const) {
       if (rendered < 8) expect(more).toMatch(/8|unread/i);
       else expect(rendered).toBe(8);
       // newest first: Peer 16 pushed last
-      const names = await dmRows(page).locator("span.truncate").allTextContents();
+      const names = await dmRows(page)
+        .locator("span.truncate")
+        .allTextContents();
       expect(names[0]).toContain(peerName(16));
     });
 
@@ -686,9 +699,14 @@ for (const mode of ["resting", "away"] as const) {
       await expect(
         dmSection(page).getByTestId("section-unread-dot"),
       ).toBeVisible({ timeout: 3_000 });
-      const header = await dmSection(page).locator("header, div").first().textContent();
-      test.info().annotations.push({ type: "evidence", description: `header="${header}"` });
-      await dmSection(page).getByRole("button", { name: /direct messages/i }).first().click();
+      // The folded header counts UNREAD conversations, not all 24.
+      await expect(dmSection(page).getByTestId("section-count")).toHaveText(
+        "2",
+      );
+      await dmSection(page)
+        .getByRole("button", { name: /direct messages/i })
+        .first()
+        .click();
       await page.mouse.move(700, 600);
       const top = await dmRows(page).first().textContent();
       expect(top).toMatch(/Peer (18|03)/);
@@ -707,7 +725,9 @@ for (const mode of ["resting", "away"] as const) {
       });
       await item.click();
       await expect(badge(row)).toHaveCount(0);
-      const last = (await trace(page)).filter((t) => t.type === "markerMoved").at(-1);
+      const last = (await trace(page))
+        .filter((t) => t.type === "markerMoved")
+        .at(-1);
       expect(last?.source).toBe("menu");
     });
 
@@ -813,14 +833,13 @@ test("#22 relay CLOSED one batch: health sweep heals within 60s, missed message 
   const fx = build();
   const relay = await open(page, fx);
   await page.waitForTimeout(5_000);
-  const closed = relay.closeSubs(
-    (fs) =>
-      fs.some(
-        (f) =>
-          Array.isArray(f["#h"]) &&
-          (f["#h"] as string[]).includes(dmId(TARGET)) &&
-          typeof f.since === "number",
-      ),
+  const closed = relay.closeSubs((fs) =>
+    fs.some(
+      (f) =>
+        Array.isArray(f["#h"]) &&
+        (f["#h"] as string[]).includes(dmId(TARGET)) &&
+        typeof f.since === "number",
+    ),
   );
   expect(closed).toBeGreaterThan(0);
   relay.add(live(fx, TARGET)); // missed: stored, never fanned out
@@ -843,5 +862,7 @@ test("boot cost: 68 DMs with history, 10 unread", async ({ page }) => {
     type: "evidence",
     description: `REQs=${s.reqs} eventFrames=${s.eventFrames} bytes=${s.bytes}`,
   });
-  console.log(`BOOTCOST reqs=${s.reqs} events=${s.eventFrames} bytes=${s.bytes}`);
+  console.log(
+    `BOOTCOST reqs=${s.reqs} events=${s.eventFrames} bytes=${s.bytes}`,
+  );
 });

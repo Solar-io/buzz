@@ -77,6 +77,15 @@ export interface ChannelActivity {
    * Optional: samples built before it existed, and synthetic ones, have none.
    */
   eventId?: string;
+  /** A reply inside a thread (NIP-10 root/reply `e` tag), not a top-level message. */
+  inThread?: boolean;
+}
+
+/** NIP-10: a thread reply carries an `e` tag marked "root" or "reply". */
+function isThreadReply(event: SignedNostrEvent): boolean {
+  return event.tags.some(
+    (tag) => tag[0] === "e" && (tag[3] === "reply" || tag[3] === "root"),
+  );
 }
 
 export type ChannelActivityMap = Map<string, ChannelActivity>;
@@ -149,6 +158,7 @@ export function channelActivityFromEvent(
     pubkey: event.pubkey,
     preview: plainPreview(event.content),
     eventId: event.id,
+    ...(isThreadReply(event) ? { inThread: true } : {}),
   };
 }
 

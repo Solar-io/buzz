@@ -606,3 +606,27 @@ test("QA #8 control: backlog older than the feed's start is never toasted before
     await h.close();
   }
 });
+
+test("QA #11: a thread reply's toast says exactly 'DM · in thread'; a top-level message says 'DM'", async () => {
+  const channels = dmChannels(2);
+  const read = Object.fromEntries(channels.map((c) => [c.id, 1_000]));
+  const h = await boot({ channels, read });
+  try {
+    await h.eoseAll();
+    await h.deliver(kind9("parent", dmId(1), peer(1), 2_000));
+    await h.deliver({
+      ...kind9("reply", dmId(1), peer(1), 2_001),
+      tags: [
+        ["h", dmId(1)],
+        ["e", "parent", "", "reply"],
+      ],
+    });
+    assert.deepEqual(
+      h.toasts.map((t) => t.spec.meta),
+      ["DM", "DM · in thread"],
+    );
+    assert.equal(h.rows().find((r) => r.name === peerName(1)).badge, "2");
+  } finally {
+    await h.close();
+  }
+});

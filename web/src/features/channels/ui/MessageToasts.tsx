@@ -156,6 +156,7 @@ export function MessageToasts({
           current.profiles.get(entry.pubkey)?.displayName ??
           readAuthorName(entry.pubkey),
         preview: entry.preview,
+        inThread: entry.inThread === true,
       });
       // Six seconds with a timer line (notify.ts AUTO_DISMISS_MS).
       notify.message({
