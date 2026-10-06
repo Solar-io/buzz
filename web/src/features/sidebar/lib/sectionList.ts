@@ -114,9 +114,10 @@ export function truncateSection<T>({
 /** What a section header shows beside its label. */
 export interface SectionHeaderState {
   /**
-   * Shown only while collapsed: the UNREAD count when anything inside is
-   * unread (QA #18 — a folded DM section read "24" for two new messages),
-   * otherwise the item count.
+   * Shown only while collapsed. With `count: "unread"` (the conversation
+   * sections) it is the UNREAD count when anything inside is unread (QA
+   * #18 — a folded DM section read "24" for two new messages), otherwise
+   * the item count; the nav disclosures keep the item count.
    */
   count: number | null;
   /** Accent dot: collapsed and something inside is unread. */
@@ -127,15 +128,18 @@ export function sectionHeaderState<T>({
   items,
   collapsed,
   isUnread,
+  count = "items",
 }: {
   items: readonly T[];
   collapsed: boolean;
   isUnread?: (item: T) => boolean;
+  /** What the folded number counts. */
+  count?: "items" | "unread";
 }): SectionHeaderState {
   if (!collapsed) return { count: null, unreadDot: false };
   const unread = isUnread ? items.filter(isUnread).length : 0;
   return {
-    count: unread > 0 ? unread : items.length,
+    count: count === "unread" && unread > 0 ? unread : items.length,
     unreadDot: unread > 0,
   };
 }

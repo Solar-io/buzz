@@ -81,8 +81,18 @@ test("a collapsed header shows the UNREAD count and a dot when anything is unrea
       items: ["x", "Y", "z", "W"],
       collapsed: true,
       isUnread: (s) => s === s.toUpperCase(),
+      count: "unread",
     }),
     { count: 2, unreadDot: true },
+  );
+  // The nav disclosures (Forums / Links) keep counting their items.
+  assert.deepEqual(
+    sectionHeaderState({
+      items: ["x", "Y", "z", "W"],
+      collapsed: true,
+      isUnread: (s) => s === s.toUpperCase(),
+    }),
+    { count: 4, unreadDot: true },
   );
   assert.deepEqual(
     sectionHeaderState({

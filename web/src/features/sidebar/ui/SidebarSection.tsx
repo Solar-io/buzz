@@ -49,7 +49,13 @@ export function SidebarSection<T>({
   visibleItems = SIDEBAR_LIST_OPTIONS.visibleItems,
 }: SidebarSectionProps<T>) {
   const [expanded, setExpanded] = useState(false);
-  const header = sectionHeaderState({ items, collapsed, isUnread });
+  // Conversation sections count what is unread when folded (QA #18).
+  const header = sectionHeaderState({
+    items,
+    collapsed,
+    isUnread,
+    count: "unread",
+  });
   const list = truncateSection({
     items,
     limit: visibleItems,
