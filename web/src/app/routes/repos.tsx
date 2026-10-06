@@ -327,10 +327,11 @@ function ChannelBrowser() {
     `${selectedId ?? ""}|${view ?? ""}`,
   );
   // I3: only a conversation actually on screen is marked seen.
+  const conversationShown = view === undefined && web.state.active === null;
   useMarkShownSeen({
     channelId,
     newestMessageAt,
-    shown: view === undefined && web.state.active === null,
+    shown: conversationShown,
     markSeen: markOpenSeen,
   });
   // Sidebar + buttons: section-header plus buttons open the create dialogs.
@@ -641,6 +642,7 @@ function ChannelBrowser() {
       }}
       toasts={{
         selectedId: selectedId ?? null,
+        shownId: conversationShown ? (selectedId ?? null) : null,
         onArrival: activityStore.onArrival,
         channelPrefs,
         profiles: dmProfiles,

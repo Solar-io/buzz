@@ -57,7 +57,11 @@ export interface NotifyContext {
   /** Master switch for OS notifications; the badge and sound ignore it. */
   desktopEnabled: boolean;
   permission: NotificationPermissionState;
-  /** `document.visibilityState === "hidden"` at the moment of arrival. */
+  /**
+   * The page is NOT being looked at at the moment of arrival: tab hidden or
+   * window unfocused (`!isPageAttended()`, pageAttention.ts — the same rule
+   * the read marker and the toasts use).
+   */
   documentHidden: boolean;
   /** Master switch for notification sounds. */
   soundEnabled: boolean;

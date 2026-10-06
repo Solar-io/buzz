@@ -101,7 +101,7 @@ function kind9(id, channelId, pubkey, createdAt) {
 }
 
 /** What repos.tsx mounts, minus everything unrelated to unread. */
-function Shell({ channels, profiles, onFrame }) {
+function Shell({ channels, profiles, onFrame, selectedId = null }) {
   const session = globalThis.__BUZZ_TEST_RELAY_SESSION__;
   // THE read-marker store, as repos.tsx reads it (phase 2).
   const read = useChannelMarkers();
@@ -117,7 +117,7 @@ function Shell({ channels, profiles, onFrame }) {
     null,
     React.createElement(MessageToasts, {
       selfPubkey: SELF,
-      selectedId: null,
+      selectedId,
       channels,
       onArrival: store.onArrival,
       channelPrefs: PREFS,
@@ -145,7 +145,7 @@ function Shell({ channels, profiles, onFrame }) {
   );
 }
 
-async function boot({ channels, read }) {
+async function boot({ channels, read, selectedId = null }) {
   FakeSocket.instances = [];
   localStorage.clear();
   localStorage.setItem("buzz.read-state.v1", JSON.stringify(read));
@@ -204,6 +204,7 @@ async function boot({ channels, read }) {
   const element = () =>
     React.createElement(Shell, {
       channels: shownChannels,
+      selectedId,
       profiles,
       onFrame: (f) => {
         frame.current = f;
@@ -627,6 +628,34 @@ test("QA #11: a thread reply's toast says exactly 'DM · in thread'; a top-level
     );
     assert.equal(h.rows().find((r) => r.name === peerName(1)).badge, "2");
   } finally {
+    await h.close();
+  }
+});
+
+test("QA #3b: the open DM in a visible but UNFOCUSED window toasts; visible and focused, it does not", async () => {
+  const doc = dom.window.document;
+  const channels = dmChannels(2);
+  const read = Object.fromEntries(channels.map((c) => [c.id, 1_000]));
+  const h = await boot({ channels, read, selectedId: dmId(1) });
+  Object.defineProperty(doc, "visibilityState", {
+    configurable: true,
+    get: () => "visible",
+  });
+  try {
+    await h.eoseAll();
+    doc.hasFocus = () => true;
+    await h.deliver(kind9("seen", dmId(1), peer(1), 2_000));
+    assert.equal(h.toasts.length, 0, "on screen and looked at: no toast");
+    doc.hasFocus = () => false;
+    await h.deliver(kind9("unseen", dmId(1), peer(1), 2_001));
+    assert.equal(
+      h.toasts.length,
+      1,
+      "unfocused: the open DM is not being looked at",
+    );
+  } finally {
+    delete doc.visibilityState;
+    delete doc.hasFocus;
     await h.close();
   }
 });

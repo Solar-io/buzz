@@ -10,6 +10,8 @@ export interface NotificationRuntimeProps {
   channels: ChannelSummary[];
   /** The conversation-activity store's live arrivals. */
   onArrival: ConversationActivityStore["onArrival"];
+  /** The conversation on screen (null while a web view covers it). */
+  shownId?: string | null;
 }
 
 /**
@@ -28,6 +30,7 @@ export function NotificationRuntime({
   selfPubkey,
   channels,
   onArrival,
+  shownId,
 }: NotificationRuntimeProps) {
   const navigate = useNavigate();
   const activeChannelId = useRouterState({
@@ -41,7 +44,7 @@ export function NotificationRuntime({
     selfPubkey,
     channels,
     onArrival,
-    activeChannelId,
+    activeChannelId: shownId === undefined ? activeChannelId : shownId,
     onOpenChannel: (channelId) => {
       void navigate({ to: "/repos", search: { c: channelId } });
     },

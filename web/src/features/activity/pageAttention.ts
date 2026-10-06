@@ -26,6 +26,21 @@ export function isPageAttended(): boolean {
   return typeof document.hasFocus === "function" ? document.hasFocus() : true;
 }
 
+/**
+ * THE definition of "the viewer is looking at this conversation", used by
+ * every surface that decides whether to tell them about it (left-nav QA
+ * #3b): the read-marker gate (useMarkShownSeen), toast suppression
+ * (MessageToasts) and the OS notification / badge decision
+ * (NotificationRuntime). `shownId` is the conversation on screen — the open
+ * one, unless a web view or another page covers it.
+ */
+export function isViewingConversation(
+  channelId: string,
+  shownId: string | null | undefined,
+): boolean {
+  return shownId != null && shownId === channelId && isPageAttended();
+}
+
 /** Re-check on every event that can change the answer. */
 export function subscribePageAttention(listener: () => void): () => void {
   if (typeof window === "undefined" || typeof document === "undefined") {

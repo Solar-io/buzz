@@ -86,6 +86,11 @@ export function ShellProviders({
                 selfPubkey={selfPubkey}
                 channels={channels}
                 onArrival={toasts.onArrival}
+                shownId={
+                  toasts.shownId === undefined
+                    ? toasts.selectedId
+                    : toasts.shownId
+                }
               />
               <StageRoute {...stage} selfPubkey={selfPubkey} />
               <RemindMeLaterProvider selfPubkey={selfPubkey}>

@@ -6,6 +6,10 @@ import {
   useSyncExternalStore,
 } from "react";
 import type { ConversationActivityStore } from "@/features/activity/conversationActivity.ts";
+import {
+  isPageAttended,
+  usePageAttended,
+} from "@/features/activity/pageAttention.ts";
 import { loadSeed } from "@/shared/lib/localSeed";
 import { loadChannelPrefs } from "@/features/channels/lib/channelPrefs.ts";
 import type { Profile } from "@/features/channels/hooks";
@@ -74,21 +78,6 @@ export function useNotificationPermission(): NotificationPermissionState {
   return permission;
 }
 
-/** True while the tab is backgrounded. */
-export function useDocumentHidden(): boolean {
-  const [hidden, setHidden] = useState(
-    () =>
-      typeof document !== "undefined" && document.visibilityState === "hidden",
-  );
-  useEffect(() => {
-    const onChange = () => setHidden(document.visibilityState === "hidden");
-    onChange();
-    document.addEventListener("visibilitychange", onChange);
-    return () => document.removeEventListener("visibilitychange", onChange);
-  }, []);
-  return hidden;
-}
-
 export interface NotificationRuntimeOptions {
   selfPubkey: string | null;
   /** Channel currently open on screen; null when none is selected. */
@@ -144,7 +133,11 @@ export function useNotificationRuntime(
     options;
   const settings = useNotificationSettings();
   const permission = useNotificationPermission();
-  const hidden = useDocumentHidden();
+  // "Looking at it" is ONE rule (pageAttention.ts): a visible but
+  // unfocused window is not being looked at, exactly as for the read
+  // marker and the toast (QA #3b).
+  const attended = usePageAttended();
+  const hidden = !attended;
 
   const [badgeCount, setBadgeCount] = useState(0);
   const [lastDecision, setLastDecision] = useState<NotifyDecision | null>(null);
@@ -227,7 +220,8 @@ export function useNotificationRuntime(
           mode: current.settings.mode,
           desktopEnabled: current.settings.desktopEnabled,
           permission: current.permission,
-          documentHidden: current.hidden,
+          // Read at arrival time, not from the last render.
+          documentHidden: !isPageAttended(),
           soundEnabled: current.settings.soundEnabled,
         });
         setLastDecision(decision);

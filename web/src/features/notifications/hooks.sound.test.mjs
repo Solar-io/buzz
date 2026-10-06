@@ -117,11 +117,12 @@ store.setFeed({
 for (const sub of subscriptions) sub.handlers.onEose?.();
 const storeSubscriptions = subscriptions.length;
 
+let activeChannelId = "elsewhere";
 function Harness() {
   useNotificationRuntime({
     selfPubkey: SELF,
     // A visible tab on some OTHER channel: sound must still play.
-    activeChannelId: "elsewhere",
+    activeChannelId,
     channels,
     onArrival: store.onArrival,
   });
@@ -225,4 +226,25 @@ test("runtime: soundEnabled off plays nothing", async () => {
   await act(async () => {
     updateNotificationSettings({ soundEnabled: true });
   });
+});
+
+test("QA #3b: the open conversation in a visible but UNFOCUSED window still notifies; focused, it is 'viewing' and does not", async () => {
+  const doc = dom.window.document;
+  activeChannelId = LOUD;
+  await act(async () => {
+    root.render(React.createElement(Harness));
+  });
+  try {
+    doc.hasFocus = () => false; // another app has focus; tab visible
+    await deliver(LOUD);
+    assert.equal(notifications.length, 1, "unfocused: not looking, notify");
+    doc.hasFocus = () => true;
+    await deliver(LOUD);
+    assert.equal(notifications.length, 0, "focused + visible: viewing");
+  } finally {
+    activeChannelId = "elsewhere";
+    await act(async () => {
+      root.render(React.createElement(Harness));
+    });
+  }
 });

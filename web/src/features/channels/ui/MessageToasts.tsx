@@ -15,6 +15,7 @@ import { readAuthorName } from "@/features/notifications/hooks";
 import { useRemindMeLater } from "@/features/reminders/ui/RemindMeLaterProvider";
 import { notify } from "@/shared/ui/notify";
 import { traceUnread } from "@/features/activity/unreadTrace.ts";
+import { isViewingConversation } from "@/features/activity/pageAttention.ts";
 import { isUnread, type ReadState } from "@/features/channels/lib/readState.ts";
 import { getChannelMarkers } from "@/features/activity/readMarkers.ts";
 
@@ -22,6 +23,11 @@ export interface MessageToastsProps {
   selfPubkey: string | null;
   /** Channel currently open (?c=); null when no conversation is open. */
   selectedId: string | null;
+  /**
+   * The conversation actually on screen (null while a web view or another
+   * page covers it). Defaults to `selectedId`.
+   */
+  shownId?: string | null;
   /** The shell's full channel list — names, types, DM participants. */
   channels: ChannelSummary[];
   /**
@@ -61,6 +67,7 @@ export interface MessageToastsProps {
 export function MessageToasts({
   selfPubkey,
   selectedId,
+  shownId,
   channels,
   onArrival,
   channelPrefs,
@@ -77,6 +84,7 @@ export function MessageToasts({
   const latest = useRef({
     selfPubkey,
     selectedId,
+    shownId: shownId === undefined ? selectedId : shownId,
     channels,
     channelPrefs,
     profiles,
@@ -89,6 +97,7 @@ export function MessageToasts({
   latest.current = {
     selfPubkey,
     selectedId,
+    shownId: shownId === undefined ? selectedId : shownId,
     channels,
     channelPrefs,
     profiles,
@@ -127,7 +136,10 @@ export function MessageToasts({
       }
       const isDm = channel.type === "dm";
       const muted = isMuted(current.channelPrefs, entry.channelId);
-      const viewing = current.selectedId === entry.channelId;
+      // Same attention rule as the read marker (pageAttention.ts): an open
+      // conversation in a hidden tab or an unfocused window is NOT being
+      // looked at, so it toasts (QA #3b).
+      const viewing = isViewingConversation(entry.channelId, current.shownId);
       if (
         !shouldToastMessage({
           isSelf,
