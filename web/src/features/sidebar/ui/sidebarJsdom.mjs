@@ -263,12 +263,33 @@ export function moreLabel(container, label) {
   );
 }
 
-/** Rest the pointer on the scrolling nav (the hold's trigger). */
-export async function pointerOnNav(container, eventName = "pointerover") {
+/**
+ * Rest the pointer on row `index` of a section (the per-row hold's
+ * trigger), as a browser does: a bubbling pointerover on the row.
+ * Returns the row's name.
+ */
+export async function pointerOnRow(container, label, index) {
+  const section = container.querySelector(`section[aria-label="${label}"]`);
+  const button = section.querySelectorAll("ul > li > button[data-active]")[
+    index
+  ];
+  await act(async () => {
+    button.dispatchEvent(
+      new dom.window.MouseEvent("pointerover", { bubbles: true }),
+    );
+  });
+  return button.querySelector("span.truncate")?.textContent ?? "";
+}
+
+/** The pointer leaves the nav entirely. */
+export async function pointerOffNav(container) {
   const nav = container.querySelector("nav");
   await act(async () => {
     nav.dispatchEvent(
-      new dom.window.Event(eventName, { bubbles: eventName === "pointerover" }),
+      new dom.window.MouseEvent("pointerout", {
+        bubbles: true,
+        relatedTarget: null,
+      }),
     );
   });
 }

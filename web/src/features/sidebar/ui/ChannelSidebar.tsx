@@ -44,15 +44,14 @@ import {
   type CollapsedSections,
 } from "@/features/sidebar/lib/collapsedSections.ts";
 import {
-  holdOrder,
   rankSection,
   type RankFacts,
 } from "@/features/sidebar/lib/sectionOrder.ts";
 import {
   noteSidebarVisit,
-  useHeldKeys,
   useOpenItemSnapshot,
   useOwnLastSent,
+  useRowHold,
 } from "@/features/sidebar/lib/useSidebarOrder.ts";
 import { SidebarSection } from "@/features/sidebar/ui/SidebarSection";
 import { SidebarNavButton } from "@/features/sidebar/ui/SidebarNavButton";
@@ -321,8 +320,8 @@ export function ChannelSidebar({
   const dmUnread = (dm: DmSummary) => dmRowUnread(dm, unreadInput);
   // Favorites, Channels and DMs: unread by recency, then the four you most
   // recently wrote in, then alphabetical (sectionOrder.ts). The open row ranks by its
-  // facts at the moment it was opened, and the whole order holds while the
-  // pointer is over the list, so nothing slides under a click.
+  // facts at the moment it was opened, and the row under the pointer (with
+  // its neighbours) holds its place, so nothing slides under a click.
   const ownLastSent = useOwnLastSent();
   const channelFacts = (channel: ChannelSummary): RankFacts => ({
     unread: rowUnread(channel),
@@ -366,7 +365,8 @@ export function ChannelSidebar({
     const dm = sections.dms.find((row) => row.channel.id === key);
     return dm ? dmFacts(dm) : undefined;
   });
-  const [pointerInList, setPointerInList] = useState(false);
+  // The row key under the pointer (SidebarSection tags each row), or null.
+  const [hoveredKey, setHoveredKey] = useState<string | null>(null);
   const liveFavorites = rankSection(
     sections.favorites,
     (item) => item.key,
@@ -382,27 +382,17 @@ export function ChannelSidebar({
   const liveDms = rankSection(sections.dms, (dm) => dm.channel.id, dmFacts, {
     frozen: openSnapshot,
   });
-  const heldFavoriteKeys = useHeldKeys(
-    liveFavorites.map((item) => item.key),
-    pointerInList,
+  const favoriteRows = useRowHold(
+    liveFavorites,
+    (item) => item.key,
+    hoveredKey,
   );
-  const heldChannelKeys = useHeldKeys(
-    liveChannels.map((channel) => channel.id),
-    pointerInList,
+  const channelRows = useRowHold(
+    liveChannels,
+    (channel) => channel.id,
+    hoveredKey,
   );
-  const heldDmKeys = useHeldKeys(
-    liveDms.map((dm) => dm.channel.id),
-    pointerInList,
-  );
-  const favoriteRows = heldFavoriteKeys
-    ? holdOrder(liveFavorites, (item) => item.key, heldFavoriteKeys)
-    : liveFavorites;
-  const channelRows = heldChannelKeys
-    ? holdOrder(liveChannels, (channel) => channel.id, heldChannelKeys)
-    : liveChannels;
-  const dmRows = heldDmKeys
-    ? holdOrder(liveDms, (dm) => dm.channel.id, heldDmKeys)
-    : liveDms;
+  const dmRows = useRowHold(liveDms, (dm) => dm.channel.id, hoveredKey);
 
   const renderChannel =
     (glyph: (channel: ChannelSummary) => ReactNode) =>
@@ -609,8 +599,14 @@ export function ChannelSidebar({
       {/* The only scrolling region: the footer below is a sibling, so the
           list scrolls above it and never under it. */}
       <nav
-        onPointerEnter={() => setPointerInList(true)}
-        onPointerLeave={() => setPointerInList(false)}
+        onPointerOver={(event) =>
+          setHoveredKey(
+            (event.target as Element)
+              .closest?.("[data-sidebar-key]")
+              ?.getAttribute("data-sidebar-key") ?? null,
+          )
+        }
+        onPointerLeave={() => setHoveredKey(null)}
         className="buzz-sidebar-scrollbar flex min-h-0 flex-1 flex-col gap-3.5 overflow-y-auto px-2.5 pt-px pb-3"
       >
         {/* Forums and Links: nav rows directly under Terminal, folded until

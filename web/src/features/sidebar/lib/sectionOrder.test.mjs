@@ -143,3 +143,34 @@ test("holdOrder keeps the held order, appends new items, drops gone ones", () =>
     "new",
   ]);
 });
+
+// ---- per-row hold (left-nav phase 3) ----
+
+test("holdAround: the pointed-at row and its neighbours keep their places; the rest follow the live order", async () => {
+  const { holdAround } = await import("./sectionOrder.ts");
+  const key = (x) => x;
+  const order = ["a", "b", "c", "d", "e", "f"];
+  // "x" became unread and ranks first; the pointer rests on "d".
+  const live = ["x", "a", "b", "c", "d", "e", "f"];
+  assert.deepEqual(holdAround(live, key, { order, anchor: "d" }), [
+    "x",
+    "a",
+    "c",
+    "d",
+    "e",
+    "b",
+    "f",
+  ]);
+});
+
+test("holdAround: a held key that left, or an anchor not in the held order, never drops or duplicates a row", async () => {
+  const { holdAround } = await import("./sectionOrder.ts");
+  const key = (x) => x;
+  const held = { order: ["a", "b", "c"], anchor: "b" };
+  // "a" left: "b" keeps its held slot (1), "c" fills the free one.
+  assert.deepEqual(holdAround(["b", "c"], key, held), ["c", "b"]);
+  assert.deepEqual(
+    holdAround(["q", "a", "b"], key, { order: ["a"], anchor: "zzz" }),
+    ["q", "a", "b"],
+  );
+});

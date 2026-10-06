@@ -73,7 +73,10 @@ export function SidebarSection<T>({
       {!collapsed && list.shown.length > 0 && (
         <ul className="flex flex-col gap-px">
           {list.shown.map((item) => (
-            <li key={getKey(item)}>{renderItem(item)}</li>
+            // The key lets the rail's per-row pointer hold find the row.
+            <li key={getKey(item)} data-sidebar-key={getKey(item)}>
+              {renderItem(item)}
+            </li>
           ))}
           {list.hasMoreRow && (
             <li>

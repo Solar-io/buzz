@@ -6,7 +6,7 @@ import {
   channel,
   dom,
   mountInRail,
-  pointerOnNav,
+  pointerOnRow,
   sectionRows,
   sidebarProps,
 } from "../ui/sidebarJsdom.mjs";
@@ -274,7 +274,7 @@ test("I1 toast ⇒ row: a live DM arrival under a resting pointer toasts, and in
       "peer-15 starts behind 'N more' (A-Z slot 16)",
     );
     // The mouse rests on the sidebar from here on.
-    await pointerOnNav(h.view.container);
+    await pointerOnRow(h.view.container, "Direct messages", 2);
 
     clearUnreadTrace();
     await h.deliver(kind9("m1", dmId(15), peer(15), 2_000));
