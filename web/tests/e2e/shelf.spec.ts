@@ -341,6 +341,14 @@ for (const theme of ["buzz", "buzz-dark"] as const) {
             .find((url) => url.startsWith(FILES_URL)),
         )
         .toContain(`path=${encodeURIComponent(`${RTS_DIR}/game-C.html`)}`);
+      // Open in Files shows the file full screen: chromeless, no Buzz sidebar.
+      await expect(page.getByTestId("web-panel-dock-unfocus")).toBeVisible();
+      await expect(
+        page.getByTestId("channel-sidebar").filter({ visible: true }),
+      ).toHaveCount(0);
+      // Escape leaves full screen first, then the page.
+      await page.keyboard.press("Escape");
+      await expect(page.getByTestId("web-panel-dock-unfocus")).toHaveCount(0);
       await page.keyboard.press("Escape");
 
       // The write-up's card opens its own tab; Jump lands on its message.

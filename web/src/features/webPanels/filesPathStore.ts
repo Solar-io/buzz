@@ -4,7 +4,7 @@ import { isFilesPath } from "./lib/openInFiles.ts";
 
 /**
  * "Open in Files" from anywhere (Shelf rows, later a message's file card):
- * `openInFiles("/abs/path")` shows the Files page on that folder. Module
+ * `openInFiles("/abs/path")` shows the Files page on that file (or folder). Module
  * scope, like the web layer's own store, so a caller needs no shell props.
  *
  * Each call is a new request (a fresh `nonce`) even for the same path: the

@@ -4,7 +4,8 @@
  *
  * stash opens on the folder a URL names: `?path=/abs/folder` (the server maps
  * it to one of its roots and refuses anything outside them), and a FILE
- * opens its containing folder. It reads the parameter once at boot and
+ * opens itself — the editor (or viewer) over the whole page, the file
+ * manager hidden until it is closed. It reads the parameter once at boot and
  * strips it from its address bar, so opening a path means loading the frame
  * with this URL — the frame host remounts the Files frame for it.
  *
