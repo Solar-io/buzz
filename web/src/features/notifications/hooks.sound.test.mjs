@@ -172,10 +172,10 @@ test("runtime: an unmuted channel message plays the channel sound", async () => 
   assert.equal(notifications[0].options.silent, true);
 });
 
-test("runtime: a muted channel notifies but plays NO sound", async () => {
+test("runtime: a muted channel raises no notification and plays NO sound (QA #6)", async () => {
   await deliver(MUTED, { mention: true });
   assert.deepEqual(played, []);
-  assert.equal(notifications.length, 1, "muted channel must still notify");
+  assert.equal(notifications.length, 0, "a muted conversation never alerts");
 });
 
 test("runtime: a mention plays the mention sound, a DM the dm sound", async () => {

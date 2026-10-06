@@ -187,7 +187,7 @@ async function boot({ channels, read }) {
               }
             : null,
         },
-        { read: getChannelMarkers(), selfPubkey: SELF },
+        { read: getChannelMarkers(), selfPubkey: SELF, prefs: PREFS },
       ),
     );
     toasts.push({

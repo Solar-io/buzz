@@ -62,19 +62,19 @@ test('mode "none" silences both outputs', () => {
   });
 });
 
-// ── Mute means "no sound" ──────────────────────────────────────────────────
-// A muted channel goes through every other gate exactly like an unmuted one;
-// only the sound is withheld. Each muted case is paired with its unmuted
-// control so a rule that kills sound for everyone cannot pass.
+// ── Mute means silent everywhere (left-nav QA #6) ─────────────────────────
+// A muted conversation raises nothing: no notification, no badge, no sound.
+// Each muted case is paired with its unmuted control so a rule that silences
+// everyone cannot pass.
 
-test("a muted channel still notifies and badges, but plays no sound", () => {
+test("a muted conversation raises no notification, no badge and no sound", () => {
   const decision = decideNotification(
     relevantMessage({ channelMuted: true }),
     grantedContext(),
   );
   assert.deepEqual(decision, {
-    notify: true,
-    badge: true,
+    notify: false,
+    badge: false,
     sound: false,
     reason: "channel-muted",
   });
@@ -88,16 +88,17 @@ test("control: the same message unmuted plays a sound", () => {
   assert.equal(decision.sound, true);
 });
 
-test("a muted @mention in mode all still notifies, silently", () => {
+test("a muted @mention in mode all raises nothing either", () => {
   const decision = decideNotification(
     relevantMessage({ channelMuted: true, mentionsSelf: true }),
     grantedContext({ mode: "all" }),
   );
-  assert.equal(decision.notify, true);
+  assert.equal(decision.notify, false);
+  assert.equal(decision.badge, false);
   assert.equal(decision.sound, false);
 });
 
-test("a muted DM notifies silently; an unmuted DM chimes", () => {
+test("a muted DM raises nothing; an unmuted DM notifies and chimes", () => {
   const muted = decideNotification(
     relevantMessage({ channelMuted: true, isDm: true, mentionsSelf: false }),
     grantedContext(),
@@ -106,8 +107,10 @@ test("a muted DM notifies silently; an unmuted DM chimes", () => {
     relevantMessage({ channelMuted: false, isDm: true, mentionsSelf: false }),
     grantedContext(),
   );
-  assert.equal(muted.notify, true);
+  assert.equal(muted.notify, false);
+  assert.equal(muted.badge, false);
   assert.equal(muted.sound, false);
+  assert.equal(unmuted.notify, true);
   assert.equal(unmuted.sound, true);
 });
 
@@ -124,10 +127,10 @@ test("a muted channel still obeys mode mentions (not addressed → nothing)", ()
   });
 });
 
-test("the muted reason says it notifies without sound", () => {
+test("the muted reason says it never alerts", () => {
   assert.equal(
     describeNotifyReason("channel-muted"),
-    "That channel is muted: it notifies without sound.",
+    "That conversation is muted: it never alerts.",
   );
 });
 

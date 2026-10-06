@@ -27,9 +27,8 @@ export interface ShouldToastMessageInput {
  *
  * - self messages never toast (you know you wrote it);
  * - the conversation on screen never toasts (you are looking at it);
- * - DMs always toast — mute is a channel-section pref, and the DM row's menu
- *   has no mute entry;
- * - channels/forums/huddles toast unless the viewer muted them.
+ * - a muted conversation never toasts — channel or DM (left-nav QA #6: mute
+ *   is one rule everywhere; a muted DM used to toast anyway).
  */
 export function shouldToastMessage(input: ShouldToastMessageInput): boolean {
   if (input.isSelf) {
@@ -37,9 +36,6 @@ export function shouldToastMessage(input: ShouldToastMessageInput): boolean {
   }
   if (input.isViewingChannel) {
     return false;
-  }
-  if (input.isDm) {
-    return true;
   }
   return !input.isMuted;
 }

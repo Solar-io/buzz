@@ -128,15 +128,21 @@ export function decideNotification(
   if (!context.documentHidden && message.isActiveChannel) {
     return { ...SKIP, reason: "viewing" };
   }
+  // Mute is one rule everywhere (left-nav QA #6, 2026-10-05): a muted
+  // conversation — channel or DM — never toasts, never pills, never raises
+  // an OS notification, never counts toward a badge and never chimes. It
+  // used to withhold only the sound, so a muted DM still interrupted.
+  if (message.channelMuted) {
+    return { ...SKIP, reason: "channel-muted" };
+  }
 
   // The badge exists to make a BACKGROUND tab show activity; a visible tab
   // shows it in the sidebar instead.
   const badge = context.documentHidden;
-  // Mute withholds the sound and nothing else. The sound deliberately ignores
-  // permission and the desktop switch: it is how a visible tab looking at a
+  // The sound deliberately ignores permission and the desktop switch: it is how a visible tab looking at a
   // different channel, or a browser that refused notifications, still
   // tells you something arrived.
-  const sound = context.soundEnabled && !message.channelMuted;
+  const sound = context.soundEnabled;
 
   if (!context.desktopEnabled) {
     return { notify: false, badge, sound, reason: "notifications-off" };
@@ -150,12 +156,7 @@ export function decideNotification(
   if (context.permission === "default") {
     return { notify: false, badge, sound, reason: "permission-default" };
   }
-  return {
-    notify: true,
-    badge,
-    sound,
-    reason: message.channelMuted ? "channel-muted" : "ok",
-  };
+  return { notify: true, badge, sound, reason: "ok" };
 }
 
 /**
@@ -174,7 +175,7 @@ export function describeNotifyReason(reason: NotifyReason): string {
     case "muted-everything":
       return "Notifications are set to nothing.";
     case "channel-muted":
-      return "That channel is muted: it notifies without sound.";
+      return "That conversation is muted: it never alerts.";
     case "not-addressed":
       return "Only mentions and DMs notify.";
     case "viewing":

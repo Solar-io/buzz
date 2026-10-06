@@ -44,15 +44,19 @@ export function channelRowUnread(
 }
 
 /**
- * DM rows keep their own activity feed and stay on lastMessage logic. Own
- * messages (e.g. sent from another device) never dot your row — parity with
- * channel rows, whose signal ignores self-authored activity.
+ * DM rows: the newest sampled message vs the marker. Own messages (e.g. sent
+ * from another device) never dot your row — parity with channel rows, whose
+ * signal ignores self-authored activity. Muted DMs never read as unread,
+ * exactly like muted channels (left-nav QA #6).
  */
 export function dmRowUnread(
   dm: DmSummary,
-  input: Pick<RowUnreadInput, "read" | "selfPubkey">,
+  input: Pick<RowUnreadInput, "read" | "selfPubkey" | "prefs">,
 ): boolean {
   const { channel, lastMessage } = dm;
+  if (isMuted(input.prefs, channel.id)) {
+    return false;
+  }
   return lastMessage && lastMessage.authorPubkey !== input.selfPubkey
     ? isUnread(input.read, channel.id, lastMessage.created_at)
     : false;

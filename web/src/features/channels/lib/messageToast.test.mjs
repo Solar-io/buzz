@@ -23,8 +23,8 @@ test("shouldToastMessage: full 16-row truth table", () => {
     [false, true, true, false, false],
     [false, true, false, true, false],
     [false, true, false, false, false],
-    // DMs always toast (mute is a channel-section pref, not a DM one).
-    [false, false, true, true, true],
+    // A muted DM is silent like a muted channel (left-nav QA #6).
+    [false, false, true, true, false],
     [false, false, true, false, true],
     // Channels/forums/huddles toast unless muted.
     [false, false, false, true, false],

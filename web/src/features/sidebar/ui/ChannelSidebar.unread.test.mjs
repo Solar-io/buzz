@@ -54,14 +54,17 @@ function dmFixture(count, { unread = [] } = {}) {
   return { read, dms, profiles };
 }
 
-function railProps({ read, dms, profiles }) {
+function railProps(
+  { read, dms, profiles },
+  { muted = [], unreadCounts = new Map() } = {},
+) {
   return sidebarProps({
     lists: { streams: [], forums: [], scratch: [], dms, visibleDms: dms },
     readState: {
-      prefs: { favorites: [], muted: [] },
+      prefs: { favorites: [], muted },
       read,
       activity: new Map(),
-      unreadCounts: new Map(),
+      unreadCounts,
     },
     dmIdentity: {
       selfPubkey: SELF,
@@ -153,4 +156,45 @@ test("I5 under the per-row hold: five DMs turn unread while the pointer pins row
   } finally {
     await view.unmount();
   }
+});
+
+test("QA #6: a muted DM with a new message shows no pill, is not bold, and is not counted on the phone tab", async () => {
+  localStorage.clear();
+  const fixture = dmFixture(8, { unread: [2, 5] });
+  const view = await mountInRail(
+    React.createElement(
+      ChannelSidebar,
+      railProps(fixture, { muted: [fixture.dms[2].channel.id] }),
+    ),
+  );
+  try {
+    const rows = sectionRows(view.container, "Direct messages");
+    assert.equal(
+      rows.find((r) => r.name === name(2)).badge,
+      null,
+      "muted: no pill",
+    );
+    assert.notEqual(
+      rows.find((r) => r.name === name(5)).badge,
+      null,
+      "control: unmuted pill",
+    );
+    const label = Array.from(
+      view.container.querySelectorAll("span.truncate"),
+    ).find((el) => el.textContent === name(2));
+    assert.equal(label.className.includes("font-semibold"), false, "not bold");
+  } finally {
+    await view.unmount();
+  }
+  const { unreadConversationCount } = await import("../lib/rowUnread.ts");
+  assert.equal(
+    unreadConversationCount([], fixture.dms, {
+      prefs: { favorites: [], muted: [fixture.dms[2].channel.id] },
+      read: fixture.read,
+      activity: new Map(),
+      selfPubkey: SELF,
+    }),
+    1,
+    "the phone badge counts only the unmuted unread DM",
+  );
 });
