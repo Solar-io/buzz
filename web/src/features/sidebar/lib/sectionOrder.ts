@@ -18,9 +18,10 @@
  *
  * 1. The OPEN item ranks by a snapshot of its facts taken when it was
  *    opened ({@link RankOptions.frozen}). Opening an unread channel clears
- *    its unread state, and writing there bumps its recency; without the
- *    snapshot it would drop out of the unread group as soon as it was
- *    clicked. It re-ranks on its live facts once the viewer navigates away.
+ *    its unread state; without the snapshot it would drop out of the unread
+ *    group as soon as it was clicked. Its own-send score stays live, so
+ *    writing there lifts it into the top four immediately. It re-ranks on
+ *    all its live facts once the viewer navigates away.
  * 2. While the pointer is over the list the previous order is held
  *    ({@link holdOrder}): whatever re-ranks meanwhile (a new unread, the
  *    previously open item un-freezing on a click) waits until the pointer
@@ -93,8 +94,13 @@ export function rankSection<T>(
   const read: Ranked<T>[] = [];
   for (const item of items) {
     const key = getKey(item);
+    const live = factsOf(item);
+    // The snapshot pins unread and recency; a send while open still counts
+    // (Sam, 2026-10-05: writing in the open channel must lift it to the top).
     const facts =
-      frozen !== null && frozen.key === key ? frozen.facts : factsOf(item);
+      frozen !== null && frozen.key === key
+        ? { ...frozen.facts, score: Math.max(frozen.facts.score, live.score) }
+        : live;
     (facts.unread ? unread : read).push({ item, key, facts });
   }
   unread.sort(byRecency);
