@@ -254,5 +254,7 @@ Spec: [LEFT_NAV_ARCHITECTURE_REVIEW.md](LEFT_NAV_ARCHITECTURE_REVIEW.md) §3–4
 - [x] Same-second arrivals: a second message in one second toasts and counts.
 - [x] Phase 3: per-row pointer hold; `tests/e2e/unread-live.spec.ts` (resting pointer + two-device hidden-B).
 - [ ] Desktop app marks the active conversation read with no visibility/focus gate (`desktop/src/features/channels/ui/useChannelOpenReadState.ts`) and publishes it over NIP-RS — still a cause-A source for every web client. Needs the same I3 gate on desktop (out of this change's scope).
-- [ ] `NotificationRuntime` (OS notifications, sound, tab badge) still runs its own since-now kind-9 REQ; fold it onto the store's `onArrival`.
-- [ ] Run the review's §5 QA table (22 scenarios) on a live client, mouse on and off the nav.
+- [x] `NotificationRuntime` (OS notifications, sound, tab badge) rides the store's `onArrival` — one feed.
+- [x] Run the review's §5 QA table (22 scenarios) as `tests/e2e/unread-scenarios.spec.ts` (42 runs, all pass), mouse on and off the nav.
+- [x] QA fixes: reconnect replay never toasts (#4); mute silent everywhere (#6); brand-new DM toasts, incremental batches (#8); DM Mark read (#19); row unread from the store count (#12b); one attention rule for markers/toasts/OS notifications (#3b); "in thread" toast copy (#11); folded DM header counts unread (#18).
+- [ ] Live check on a real client (Mac PWA + iPhone app) — not run.
