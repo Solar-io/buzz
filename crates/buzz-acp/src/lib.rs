@@ -10400,7 +10400,7 @@ mod error_outcome_emission_tests {
         let (pool, history) = run_error_outcome(
             &config,
             agent_err(
-                "weekly limit resets Oct 6 at 8am (America/Chicago)",
+                "weekly limit resets Dec 31 at 8am (America/Chicago)",
                 Some("rate_limit"),
             ),
         )
@@ -10419,7 +10419,13 @@ mod error_outcome_emission_tests {
             .collect();
         assert_eq!(lines.len(), 3); // mark_out, return_assigned, respawn attribution
         assert_eq!(lines[0]["effective"], "A");
-        assert_eq!(lines[0]["out_until"], "2026-10-06T13:00:00.000Z");
+        // The reset date has no year, so it resolves to the next Dec 31 (CST,
+        // UTC-6); pin the day and time, not a calendar year that rolls over.
+        let out_until = lines[0]["out_until"].as_str().unwrap();
+        assert!(
+            out_until.ends_with("-12-31T14:00:00.000Z"),
+            "out_until = {out_until}"
+        );
         assert_eq!(lines[1]["action"], "return_assigned");
         assert_eq!(lines[1]["effective"], "B");
         std::fs::remove_dir_all(dir).unwrap();
