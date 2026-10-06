@@ -200,9 +200,10 @@ async function boot({ channels, read }) {
       unreadRowsAtToast: rowUnreadNow.filter(Boolean).length,
     });
   };
+  let shownChannels = channels;
   const element = () =>
     React.createElement(Shell, {
-      channels,
+      channels: shownChannels,
       profiles,
       onFrame: (f) => {
         frame.current = f;
@@ -216,14 +217,16 @@ async function boot({ channels, read }) {
     socket.serverSend(["AUTH", "c"]);
     await tick(30);
   });
-  /** The kind-9 activity REQs on the wire (one per batch). */
+  /** The live socket (a reconnect makes a new one). */
+  const live = () => FakeSocket.instances.at(-1);
+  /** The kind-9 activity REQs on the live socket (one per batch). */
   const activityReqs = () =>
-    socket.sent.filter(
+    live().sent.filter(
       (m) => m[0] === "REQ" && m.slice(2).every((f) => f.kinds?.[0] === 9),
     );
-  /** Deliver to whichever activity batch carries `channelId`. */
+  /** Deliver to the newest activity batch carrying `channelId`. */
   const subFor = (channelId) =>
-    activityReqs().find((m) =>
+    activityReqs().findLast((m) =>
       m.slice(2).some((f) => f["#h"]?.includes(channelId)),
     )[1];
   // The session opens REQs a window at a time (post-AUTH replay), so keep
@@ -236,7 +239,7 @@ async function boot({ channels, read }) {
       await act(async () => {
         for (const req of pending) {
           answered.add(req[1]);
-          socket.serverSend(["EOSE", req[1]]);
+          live().serverSend(["EOSE", req[1]]);
         }
         await tick();
       });
@@ -244,9 +247,26 @@ async function boot({ channels, read }) {
   };
   const deliver = async (event) =>
     act(async () => {
-      socket.serverSend(["EVENT", subFor(event.tags[0][1]), event]);
+      live().serverSend(["EVENT", subFor(event.tags[0][1]), event]);
       await tick();
     });
+  /** Drop the socket; the session reconnects and replays every REQ. */
+  const reconnect = async () => {
+    await act(async () => {
+      live().close();
+      await tick(30);
+    });
+    await act(async () => {
+      live().emit("open");
+      live().serverSend(["AUTH", "c2"]);
+      await tick(30);
+    });
+  };
+  /** Re-render the shell with a new channel list (a DM appeared). */
+  const setChannels = async (next) => {
+    shownChannels = next;
+    await view.rerender(element());
+  };
   return {
     session,
     socket,
@@ -255,6 +275,9 @@ async function boot({ channels, read }) {
     activityReqs,
     eoseAll,
     deliver,
+    reconnect,
+    setChannels,
+    live,
     rows: () => sectionRows(view.container, "Direct messages"),
     async close() {
       await view.unmount();
@@ -505,6 +528,80 @@ test("QA #12b (I4): a foreign unread then the viewer's own newer message from an
       "1",
       "the own newer sample must not hide the still-unread message",
     );
+  } finally {
+    await h.close();
+  }
+});
+
+const nowS = () => Math.floor(Date.now() / 1_000);
+
+test("QA #4: a reconnect that replays three missed DMs pills all three and toasts none", async () => {
+  const channels = dmChannels(6);
+  const read = Object.fromEntries(channels.map((c) => [c.id, 1_000]));
+  const h = await boot({ channels, read });
+  try {
+    await h.eoseAll();
+    await h.reconnect();
+    // The replay round: each batch re-delivers its window plus what was
+    // missed while offline (created during the outage, i.e. "now").
+    for (const i of [1, 3, 5]) {
+      await h.deliver(kind9(`missed-${i}`, dmId(i), peer(i), nowS()));
+    }
+    await h.eoseAll();
+    assert.equal(h.toasts.length, 0, "no toast storm after a reconnect");
+    for (const i of [1, 3, 5]) {
+      assert.equal(h.rows().find((r) => r.name === peerName(i)).badge, "1");
+    }
+    // Live again after the replay's EOSE.
+    await h.deliver(kind9("after", dmId(2), peer(2), nowS()));
+    assert.equal(h.toasts.length, 1, "a message after the replay toasts");
+  } finally {
+    await h.close();
+  }
+});
+
+test("QA #8: a brand-new DM opens its own batch (no other REQ is touched) and its first message toasts and pills, even before that batch's EOSE", async () => {
+  const channels = dmChannels(12);
+  const read = Object.fromEntries(channels.map((c) => [c.id, 1_000]));
+  const h = await boot({ channels, read });
+  try {
+    await h.eoseAll();
+    const before = h.activityReqs().length;
+    const activityIds = new Set(h.activityReqs().map((m) => m[1]));
+    const closedActivity = () =>
+      h.live().sent.filter((m) => m[0] === "CLOSE" && activityIds.has(m[1]))
+        .length;
+    const fresh = channel("dm-new", "raw-new", "dm", {
+      participantPubkeys: [SELF, peer(40)],
+    });
+    await h.setChannels([...channels, fresh]);
+    await act(async () => {
+      await tick(250); // ADD_COALESCE_MS
+    });
+    assert.equal(h.activityReqs().length, before + 1, "one new batch");
+    assert.equal(
+      closedActivity(),
+      0,
+      "no existing batch was closed and reopened",
+    );
+    // The relay delivers the first message in the new batch's backfill.
+    await h.deliver(kind9("hello", "dm-new", peer(40), nowS()));
+    assert.equal(h.toasts.length, 1, "the first message toasts");
+    await h.eoseAll();
+    assert.equal(h.toasts.length, 1, "and only once");
+  } finally {
+    await h.close();
+  }
+});
+
+test("QA #8 control: backlog older than the feed's start is never toasted before EOSE", async () => {
+  const channels = dmChannels(2);
+  const h = await boot({ channels, read: { [dmId(0)]: 1_000 } });
+  try {
+    await h.deliver(kind9("old", dmId(0), peer(0), nowS() - 600));
+    await h.eoseAll();
+    assert.equal(h.toasts.length, 0);
+    assert.equal(h.rows().find((r) => r.name === peerName(0)).badge, "1");
   } finally {
     await h.close();
   }

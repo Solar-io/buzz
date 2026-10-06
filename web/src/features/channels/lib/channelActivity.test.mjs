@@ -781,3 +781,34 @@ test("two different messages in the SAME second both toast and count; a replay o
   assert.equal(feed.live().length, 2);
   assert.equal(feed.counts().get("ch1"), 2);
 });
+
+test("QA #4 (handlers): a replay round counts what was missed but fires nothing live until its EOSE", () => {
+  const feed = driveFeed({ ch1: 100 }, SELF);
+  feed.handlers.onEvent(relayEvent({ id: "a", created_at: 150 }));
+  feed.handlers.onEose();
+  feed.handlers.beginReplay();
+  feed.handlers.onEvent(relayEvent({ id: "a", created_at: 150 }));
+  feed.handlers.onEvent(relayEvent({ id: "missed", created_at: 160 }));
+  feed.handlers.onEose();
+  assert.equal(feed.live().length, 0, "the missed message does not toast");
+  assert.equal(feed.counts().get("ch1"), 2, "but it is counted");
+  feed.handlers.onEvent(relayEvent({ id: "next", created_at: 170 }));
+  assert.equal(feed.live().length, 1, "live again after the replay EOSE");
+});
+
+test("QA #8 (handlers): before the first EOSE, a message at/after liveSince is live; older backlog is not", () => {
+  const live = [];
+  const handlers = createChannelActivityHandlers({
+    activityRef: { current: new Map() },
+    onActivityChange: () => {},
+    onLiveArrival: (arrival) => live.push(arrival.eventId),
+    onUnreadCountsChange: () => {},
+    readMarkers: () => ({}),
+    selfPubkey: SELF,
+    liveSince: 500,
+  });
+  handlers.onEvent(relayEvent({ id: "backlog", created_at: 499 }));
+  handlers.onEvent(relayEvent({ id: "fresh", created_at: 500 }));
+  handlers.onEose();
+  assert.deepEqual(live, ["fresh"]);
+});

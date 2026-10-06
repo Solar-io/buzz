@@ -19,6 +19,7 @@
  */
 
 import {
+  MAX_FILTERS_PER_REQ,
   channelActivityFilterBatches,
   createChannelActivityHandlers,
   resetCountsForMarkerChanges,
@@ -32,7 +33,15 @@ import type { RelaySession, Unsubscribe } from "@/shared/api/relay-session";
 import type { SignedNostrEvent } from "@/shared/lib/nostr-signer";
 
 /** The slice of RelaySession the store needs. */
-export type ActivitySession = Pick<RelaySession, "subscribe">;
+export type ActivitySession = Pick<RelaySession, "subscribe"> &
+  Partial<Pick<RelaySession, "onConnectionLost">>;
+
+/**
+ * Additions after the first build are coalesced this long, so a channel
+ * list that streams in (a fresh login) opens a few packed batches instead
+ * of one REQ per new conversation.
+ */
+export const ADD_COALESCE_MS = 200;
 
 export interface ConversationActivitySnapshot {
   /** Newest sampled kind-9 per conversation (self-authored included). */
@@ -61,7 +70,11 @@ export interface ConversationActivityStore {
   subscribe(listener: () => void): () => void;
   /** Register for live arrivals (I2). Returns the unregister. */
   onArrival(handler: ArrivalHandler): () => void;
-  /** Point the feed; re-subscribes only when session, ids or viewer change. */
+  /**
+   * Point the feed. A new session or viewer rebuilds every batch; otherwise
+   * only batches holding a conversation that left reopen, and new
+   * conversations get batches of their own (coalesced, ADD_COALESCE_MS).
+   */
   setFeed(feed: ConversationFeed): void;
   /** Read markers advanced: zero, then recount, the moved conversations. */
   markersMoved(previous: ReadState, next: ReadState): void;
@@ -70,6 +83,7 @@ export interface ConversationActivityStore {
 }
 
 interface Batch {
+  ids: readonly string[];
   handlers: ChannelActivitySubscriptionHandlers;
   critical: boolean;
   settled: boolean;
@@ -81,14 +95,27 @@ export function createConversationActivityStore(options: {
   readMarkers: () => ReadState;
   /** Every raw kind-9 the feed carries (the timeline warm tap). */
   onRawEvent?: (event: SignedNostrEvent) => void;
+  /** Clock, unix ms (tests). */
+  now?: () => number;
 }): ConversationActivityStore {
+  const now = options.now ?? Date.now;
   const listeners = new Set<() => void>();
   const arrivalHandlers = new Set<ArrivalHandler>();
   const activityRef: { current: ChannelActivityMap } = { current: new Map() };
   let counts: ChannelUnreadCounts = new Map();
   let batches: Batch[] = [];
-  let feedKey: string | null = null;
+  /** Session + viewer the open batches were built for. */
   let feedSession: ActivitySession | null = null;
+  let feedSelf: string | null = null;
+  let offConnectionLost: () => void = () => {};
+  /**
+   * When this feed started listening (unix s): a message created since is
+   * news even if it reaches a batch before that batch's first EOSE.
+   */
+  let liveSince: number | undefined;
+  /** Ids waiting for the coalesced add, per group. */
+  const pending = { critical: new Set<string>(), rest: new Set<string>() };
+  let addTimer: ReturnType<typeof setTimeout> | null = null;
   let snapshot: ConversationActivitySnapshot = {
     activity: activityRef.current,
     unreadCounts: counts,
@@ -102,10 +129,13 @@ export function createConversationActivityStore(options: {
     snapshot = {
       activity: activityRef.current,
       unreadCounts: counts,
-      settled: batches.every((batch) => batch.settled),
-      criticalSettled: batches.every(
-        (batch) => !batch.critical || batch.settled,
-      ),
+      settled:
+        pending.critical.size === 0 &&
+        pending.rest.size === 0 &&
+        batches.every((batch) => batch.settled),
+      criticalSettled:
+        pending.critical.size === 0 &&
+        batches.every((batch) => !batch.critical || batch.settled),
     };
   };
   // One notification per delivered frame, then the arrivals it produced:
@@ -123,9 +153,87 @@ export function createConversationActivityStore(options: {
     }
   };
 
+  const clearPending = () => {
+    pending.critical.clear();
+    pending.rest.clear();
+    if (addTimer !== null) {
+      clearTimeout(addTimer);
+      addTimer = null;
+    }
+  };
+
   const unsubscribeAll = () => {
     for (const batch of batches) batch.unsubscribe();
     batches = [];
+    clearPending();
+    offConnectionLost();
+    offConnectionLost = () => {};
+  };
+
+  /** Open packed batches (≤10 filters each) for `ids` on the feed session. */
+  const openBatches = (ids: readonly string[], critical: boolean) => {
+    const session = feedSession;
+    if (!session || ids.length === 0) return;
+    const markers = options.readMarkers();
+    const sorted = [...ids].sort();
+    const filterBatches = channelActivityFilterBatches(sorted, markers);
+    filterBatches.forEach((filters, index) => {
+      const batch: Batch = {
+        ids: sorted.slice(
+          index * MAX_FILTERS_PER_REQ,
+          (index + 1) * MAX_FILTERS_PER_REQ,
+        ),
+        critical,
+        settled: false,
+        unsubscribe: () => {},
+        handlers: createChannelActivityHandlers({
+          activityRef,
+          onActivityChange: () => {
+            dirty = true;
+          },
+          onLiveArrival: (entry) => pendingArrivals.push(entry),
+          onUnreadCountsChange: (updater) => {
+            const next = updater(counts);
+            if (next !== counts) {
+              counts = next;
+              dirty = true;
+            }
+          },
+          readMarkers: options.readMarkers,
+          selfPubkey: feedSelf,
+          onRawEvent: options.onRawEvent,
+          liveSince,
+        }),
+      };
+      batch.unsubscribe = session.subscribe(filters, {
+        onEvent: (event) => {
+          batch.handlers.onEvent(event);
+          flush();
+        },
+        onEose: () => {
+          batch.handlers.onEose();
+          if (!batch.settled) {
+            batch.settled = true;
+            dirty = true;
+          }
+          flush();
+        },
+        priority: critical ? "critical" : undefined,
+      });
+      batches.push(batch);
+    });
+  };
+
+  const flushPendingAdds = () => {
+    addTimer = null;
+    const critical = [...pending.critical];
+    const rest = [...pending.rest];
+    pending.critical.clear();
+    pending.rest.clear();
+    openBatches(critical, true);
+    openBatches(rest, false);
+    dirty = true;
+    flush();
   };
 
   return {
@@ -143,74 +251,67 @@ export function createConversationActivityStore(options: {
       };
     },
     setFeed({ session, criticalIds, ids, selfPubkey }) {
-      const critical = uniqueSorted(criticalIds);
-      const rest = uniqueSorted(ids).filter((id) => !critical.includes(id));
-      const key = session
-        ? `${critical.join(",")}|${rest.join(",")}|${selfPubkey ?? ""}`
-        : null;
-      if (key === feedKey && session === feedSession) {
-        return;
-      }
-      unsubscribeAll();
-      feedKey = key;
-      feedSession = session;
-      // Keep what is known about conversations still in the feed: a re-REQ
-      // re-derives counts at its EOSE, and until then rows keep their state
-      // instead of flickering to read.
+      const critical = new Set(criticalIds);
+      const rest = new Set([...ids].filter((id) => !critical.has(id)));
+      const wanted = (id: string, isCritical: boolean) =>
+        isCritical ? critical.has(id) : rest.has(id);
+      // Keep what is known about conversations still in the feed.
       const keep = new Set([...critical, ...rest]);
       activityRef.current = filterMap(activityRef.current, keep);
       counts = filterMap(counts, keep);
-      if (session) {
-        const markers = options.readMarkers();
-        const groups: Array<[string[], boolean]> = [
-          [critical, true],
-          [rest, false],
-        ];
-        for (const [groupIds, isCritical] of groups) {
-          for (const filters of channelActivityFilterBatches(
-            groupIds,
-            markers,
-          )) {
-            const batch: Batch = {
-              critical: isCritical,
-              settled: false,
-              unsubscribe: () => {},
-              handlers: createChannelActivityHandlers({
-                activityRef,
-                onActivityChange: () => {
-                  dirty = true;
-                },
-                onLiveArrival: (entry) => pendingArrivals.push(entry),
-                onUnreadCountsChange: (updater) => {
-                  const next = updater(counts);
-                  if (next !== counts) {
-                    counts = next;
-                    dirty = true;
-                  }
-                },
-                readMarkers: options.readMarkers,
-                selfPubkey,
-                onRawEvent: options.onRawEvent,
-              }),
-            };
-            batch.unsubscribe = session.subscribe(filters, {
-              onEvent: (event) => {
-                batch.handlers.onEvent(event);
-                flush();
-              },
-              onEose: () => {
-                batch.handlers.onEose();
-                if (!batch.settled) {
-                  batch.settled = true;
-                  dirty = true;
-                }
-                flush();
-              },
-              priority: isCritical ? "critical" : undefined,
-            });
-            batches.push(batch);
-          }
+
+      if (session !== feedSession || selfPubkey !== feedSelf) {
+        // A new socket owner or viewer: every batch is rebuilt.
+        unsubscribeAll();
+        feedSession = session;
+        feedSelf = selfPubkey;
+        if (session) {
+          liveSince ??= Math.floor(now() / 1000);
+          offConnectionLost =
+            session.onConnectionLost?.(() => {
+              for (const batch of batches) batch.handlers.beginReplay();
+            }) ?? (() => {});
+          openBatches([...critical], true);
+          openBatches([...rest], false);
         }
+        dirty = true;
+        flush();
+        return;
+      }
+      if (!session) return;
+
+      // Same session and viewer: never touch a batch whose conversations
+      // are all still wanted (QA #8 — adding one DM used to re-subscribe
+      // every batch and push its first message into a backfill round).
+      const covered = new Set<string>();
+      const survivors: Batch[] = [];
+      for (const batch of batches) {
+        if (batch.ids.every((id) => wanted(id, batch.critical))) {
+          survivors.push(batch);
+          for (const id of batch.ids) covered.add(id);
+        } else {
+          // A conversation left (or changed group): only this batch reopens.
+          batch.unsubscribe();
+        }
+      }
+      batches = survivors;
+      for (const id of [...pending.critical]) {
+        if (!critical.has(id)) pending.critical.delete(id);
+      }
+      for (const id of [...pending.rest]) {
+        if (!rest.has(id)) pending.rest.delete(id);
+      }
+      for (const id of critical) {
+        if (!covered.has(id)) pending.critical.add(id);
+      }
+      for (const id of rest) {
+        if (!covered.has(id)) pending.rest.add(id);
+      }
+      if (
+        (pending.critical.size > 0 || pending.rest.size > 0) &&
+        addTimer === null
+      ) {
+        addTimer = setTimeout(flushPendingAdds, ADD_COALESCE_MS);
       }
       dirty = true;
       flush();
@@ -231,14 +332,10 @@ export function createConversationActivityStore(options: {
     },
     dispose() {
       unsubscribeAll();
-      feedKey = null;
       feedSession = null;
+      feedSelf = null;
     },
   };
-}
-
-function uniqueSorted(ids: readonly string[]): string[] {
-  return Array.from(new Set(ids)).sort();
 }
 
 function filterMap<V>(map: Map<string, V>, keep: Set<string>): Map<string, V> {

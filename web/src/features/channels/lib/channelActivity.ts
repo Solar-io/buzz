@@ -270,6 +270,12 @@ export interface ChannelActivityHandlerDeps {
    * — the feed's own semantics never depend on it.
    */
   onRawEvent?: (event: SignedNostrEvent) => void;
+  /**
+   * Unix seconds the feed opened. Before the first EOSE, an arrival created
+   * at or after it is live (it is new since the app started listening);
+   * anything older is backlog. Absent: nothing before EOSE is live.
+   */
+  liveSince?: number;
 }
 
 /** The SubscribeOptions-shaped pair the relay session calls into. */
@@ -285,6 +291,13 @@ export interface ChannelActivitySubscriptionHandlers {
    * seen nothing for are left untouched.
    */
   recount: (channelIds: readonly string[]) => void;
+  /**
+   * The socket dropped: the session will re-REQ this subscription and the
+   * relay will re-deliver its window plus whatever was missed. Until the
+   * next EOSE, arrivals are counted but never fired as live (no toast storm
+   * on reconnect, QA #4).
+   */
+  beginReplay: () => void;
 }
 
 /**
@@ -330,6 +343,7 @@ export function createChannelActivityHandlers(
     readMarkers,
     selfPubkey,
     onRawEvent,
+    liveSince,
   } = deps;
   const markerFor = (channelId: string): number =>
     readMarkers?.()[channelId] ?? 0;
@@ -337,6 +351,8 @@ export function createChannelActivityHandlers(
     ? new Map()
     : null;
   let backfillClosed = false;
+  // A reconnect replay round is in flight (see beginReplay).
+  let replaying = false;
   // Every distinct event seen per channel (by id, so replay rounds cannot
   // double it), bounded to the newest UNREAD_COUNT_BUFFER_MAX. Only the
   // marker-move recount reads it; counting otherwise follows the
@@ -473,16 +489,29 @@ export function createChannelActivityHandlers(
       // sample: the first message in a never-messaged conversation, or in
       // one whose window opened empty at the read marker, both dots the row
       // and toasts.
+      //
+      // Two refinements (left-nav QA #4, #8):
+      // - before the first EOSE, a message created at or after the feed
+      //   opened (`liveSince`) is news too — a conversation's first message
+      //   landing in its brand-new subscription's backfill, or a message in
+      //   the first seconds after load, toasts instead of only dotting;
+      // - during a reconnect replay round (`beginReplay` .. next EOSE)
+      //   nothing toasts: what was missed offline is counted and dotted, not
+      //   replayed as a storm of toasts.
       const wakeFloor = silentWakeFloor.get(entry.channelId);
+      const afterWake = wakeFloor === undefined || entry.createdAt > wakeFloor;
+      const counts = backfillClosed && afterWake;
       const isLiveArrival =
-        backfillClosed &&
-        (wakeFloor === undefined || entry.createdAt > wakeFloor);
+        !replaying &&
+        afterWake &&
+        (backfillClosed ||
+          (liveSince !== undefined && entry.createdAt >= liveSince));
       // Only a foreign message the viewer has not already read is news:
       // the toast fires exactly when the row turns unread.
       const isNews =
         entry.pubkey !== selfPubkey &&
         (readMarkers === null || entry.createdAt > markerFor(entry.channelId));
-      if (isLiveArrival) {
+      if (counts) {
         if (readMarkers) {
           // Live increment, same exclusion rules as the derivation.
           onUnreadCountsChange((counts) => {
@@ -517,7 +546,11 @@ export function createChannelActivityHandlers(
         onLiveArrival(entry);
       }
     },
+    beginReplay(): void {
+      replaying = true;
+    },
     onEose(): void {
+      replaying = false;
       if (backfillClosed) {
         return;
       }
