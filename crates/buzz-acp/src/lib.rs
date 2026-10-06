@@ -14,6 +14,7 @@ mod pool_guard;
 mod pool_lifecycle;
 mod queue;
 mod relay;
+mod resume;
 mod setup_mode;
 mod task_status;
 mod usage;
@@ -2216,6 +2217,13 @@ async fn tokio_main() -> Result<()> {
         auth_parking::path_for_agent(&pubkey_hex),
         auth_parking::now_secs(),
     );
+    // Turns whose session died with background work outstanding (previous
+    // process): one resume batch each, spread by per-agent jitter.
+    queue.load_resume(
+        resume::path_for_agent(&pubkey_hex),
+        auth_parking::now_secs(),
+        resume::startup_jitter(&pubkey_hex),
+    );
 
     // Online means the harness can receive work, not merely that its socket is
     // connected. Publishing after channel subscriptions gives desktop callers
@@ -2285,6 +2293,7 @@ async fn tokio_main() -> Result<()> {
             relay.rest_client(),
         ))),
         voice_stream_forced: None,
+        resume: queue.resume_journal(),
     });
 
     // D8.8: close any `running` status heads a previous process of this agent
@@ -2498,6 +2507,10 @@ async fn tokio_main() -> Result<()> {
     }
 
     loop {
+        // Sessions lost with a respawned slot (the old agent client's drop
+        // marks them): queue one resume turn per channel with background work.
+        queue.deliver_lost_resumes();
+
         // Claims-writer sync point: every `task_map` mutation in this loop
         // (dispatch insert in dispatch_pending, turn-end removal in
         // handle_prompt_result, panic recovery) happened in a previous
@@ -4167,6 +4180,7 @@ mod claim_router_tests {
             task_status_refresh: crate::task_status::STATUS_REFRESH,
             speech_sink: None,
             voice_stream_forced: None,
+            resume: Default::default(),
         }
     }
 
@@ -5622,10 +5636,21 @@ async fn shutdown_agent_pool(pool: &mut AgentPool) {
     while let Ok(mut result) = pool.result_rx_try_recv() {
         result.agent.acp.shutdown().await;
     }
-    for slot in pool.agents_mut() {
-        if let Some(mut agent) = slot.take() {
-            agent.acp.shutdown().await;
-        }
+    let mut idle: Vec<_> = pool
+        .agents_mut()
+        .iter_mut()
+        .filter_map(Option::take)
+        .collect();
+    // Read buffered between-turn updates first (all slots at once, 250 ms
+    // total), so a background task that finished while its slot was idle
+    // clears its resume entry instead of being resumed after the restart.
+    futures_util::future::join_all(
+        idle.iter_mut()
+            .map(|agent| agent.acp.drain_stale_responses(Duration::from_millis(250))),
+    )
+    .await;
+    for mut agent in idle {
+        agent.acp.shutdown().await;
     }
 }
 
@@ -9607,6 +9632,164 @@ mod error_outcome_emission_tests {
             0
         );
         std::fs::remove_file(path).unwrap();
+    }
+
+    // T5: a journal left by a dead process (one turn held open by a
+    // background subagent, one idle channel with a live background shell)
+    // yields one `CancelReason::Resume` batch each at startup, framed as a
+    // resume and naming the stopped work; once those turns complete, a
+    // further restart yields nothing.
+    #[test]
+    fn startup_resume_replays_lost_background_turns_once() {
+        use crate::resume::{BackgroundTask, ResumeJournal, TurnEnd};
+        let path = std::env::temp_dir().join(format!("resume-startup-{}.json", Uuid::new_v4()));
+        let now = auth_parking::now_secs();
+        let (held, background) = (Uuid::new_v4(), Uuid::new_v4());
+        {
+            let previous = ResumeJournal::load(Some(path.clone()));
+            previous.begin_turn(&notice_test_batch(held), now);
+            previous.subagent_started(
+                held,
+                BackgroundTask {
+                    id: "toolu_agent".into(),
+                    title: "icon concepts".into(),
+                    output_file: None,
+                    tool_call_id: Some("toolu_agent".into()),
+                },
+                now,
+            );
+            // `held` dies mid-turn; `background` finished its turn, but the
+            // shell it started is still running.
+            previous.begin_turn(&notice_test_batch(background), now);
+            previous.task_started(
+                background,
+                BackgroundTask {
+                    id: "bash-1".into(),
+                    title: "cargo build".into(),
+                    output_file: Some("/tmp/bash-1.output".into()),
+                    tool_call_id: None,
+                },
+                now,
+            );
+            previous.turn_ended(background, TurnEnd::Natural);
+        }
+
+        let mut queue = startup_event_queue(DedupMode::Queue, 300, None, now);
+        queue.load_resume(Some(path.clone()), now, Duration::ZERO);
+        let journal = queue.resume_journal();
+        let mut prompts = HashMap::new();
+        while let Some(batch) = queue.flush_next() {
+            assert_eq!(batch.cancel_reason, Some(CancelReason::Resume));
+            let sections = resume::with_resume_note(
+                queue::format_prompt(&batch, &queue::FormatPromptArgs::default()),
+                Some(&batch),
+                &journal,
+            );
+            prompts.insert(batch.channel_id, sections.join("\n"));
+            queue.mark_complete(batch.channel_id);
+        }
+        assert_eq!(prompts.len(), 2, "one resume batch per lost channel");
+        for prompt in prompts.values() {
+            assert!(prompt.contains(
+                "[What you were working on — your previous session ended before it finished]"
+            ));
+            assert!(prompt.contains("request"), "original request re-delivered");
+            assert!(prompt.contains("do nothing and post nothing"));
+        }
+        assert!(prompts[&held].contains("background subagent: icon concepts"));
+        assert!(prompts[&background].contains("cargo build (output: /tmp/bash-1.output)"));
+
+        // The resumed turns complete without leaving new work behind.
+        journal.turn_ended(held, TurnEnd::Natural);
+        journal.turn_ended(background, TurnEnd::Natural);
+        let mut restarted = startup_event_queue(DedupMode::Queue, 300, None, now);
+        restarted.load_resume(Some(path.clone()), now, Duration::ZERO);
+        assert!(
+            restarted.flush_next().is_none(),
+            "second startup yields nothing"
+        );
+        assert!(!path.exists());
+    }
+
+    // Respawn path: a dropped agent client marks its channels lost; the main
+    // loop's `deliver_lost_resumes` queues a resume that folds a live message
+    // in, and never duplicates a request the in-process requeue already holds.
+    #[test]
+    fn lost_session_resume_merges_live_message_and_skips_requeued() {
+        use crate::resume::{BackgroundTask, ResumeJournal, ResumeTracker};
+        let path = std::env::temp_dir().join(format!("resume-lost-{}.json", Uuid::new_v4()));
+        let (lost, requeued) = (Uuid::new_v4(), Uuid::new_v4());
+        let mut queue = startup_event_queue(DedupMode::Queue, 300, None, 0);
+        queue.load_resume(Some(path.clone()), auth_parking::now_secs(), Duration::ZERO);
+        let journal: ResumeJournal = queue.resume_journal();
+        let requeued_batch = notice_test_batch(requeued);
+        {
+            let mut tracker = ResumeTracker::default();
+            tracker.begin_turn(&journal, "s-lost", &notice_test_batch(lost));
+            tracker.begin_turn(&journal, "s-requeued", &requeued_batch);
+            for ch in [lost, requeued] {
+                journal.task_started(
+                    ch,
+                    BackgroundTask {
+                        id: "bash-1".into(),
+                        title: "long build".into(),
+                        output_file: None,
+                        tool_call_id: None,
+                    },
+                    auth_parking::now_secs(),
+                );
+            }
+            // The timed-out turn's batch went back to the queue in-process.
+            queue.requeue_preserve_timestamps(requeued_batch.clone());
+        } // tracker dropped = the agent process is gone
+        let live = notice_test_batch(lost);
+        queue.requeue_preserve_timestamps(live.clone());
+        queue.deliver_lost_resumes();
+
+        let mut seen = HashMap::new();
+        while let Some(batch) = queue.flush_next() {
+            seen.insert(batch.channel_id, batch.clone());
+            queue.mark_complete(batch.channel_id);
+        }
+        let merged = &seen[&lost];
+        assert_eq!(merged.cancel_reason, Some(CancelReason::Resume));
+        assert_eq!(merged.events[0].event.id, live.events[0].event.id);
+        assert_eq!(merged.cancelled_events.len(), 1);
+        let prompt = queue::format_prompt(merged, &queue::FormatPromptArgs::default()).join("\n");
+        assert!(prompt.contains("[New message — arrived after your previous session ended]"));
+        let other = &seen[&requeued];
+        assert_eq!(
+            other.cancel_reason, None,
+            "requeued batch is not doubled as a resume"
+        );
+        assert!(other.cancelled_events.is_empty());
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn startup_resume_jitter_holds_batch_back() {
+        let path = std::env::temp_dir().join(format!("resume-jitter-{}.json", Uuid::new_v4()));
+        let now = auth_parking::now_secs();
+        let ch = Uuid::new_v4();
+        {
+            let previous = crate::resume::ResumeJournal::load(Some(path.clone()));
+            previous.begin_turn(&notice_test_batch(ch), now);
+            previous.task_started(
+                ch,
+                crate::resume::BackgroundTask {
+                    id: "t".into(),
+                    title: "t".into(),
+                    output_file: None,
+                    tool_call_id: None,
+                },
+                now,
+            );
+        }
+        let mut queue = startup_event_queue(DedupMode::Queue, 300, None, now);
+        queue.load_resume(Some(path.clone()), now, Duration::from_secs(60));
+        assert!(queue.flush_next().is_none(), "jittered resume waits");
+        assert!(queue.has_undispatched_work());
+        let _ = std::fs::remove_file(path);
     }
 
     async fn notice_relay(

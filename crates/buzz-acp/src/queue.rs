@@ -71,6 +71,9 @@ pub enum CancelReason {
     /// and incorporate the message if relevant
     /// (`MultipleEventHandling::Steer`, the default mid-turn path).
     Steer,
+    /// The session died with background work outstanding; this re-delivers
+    /// the request it was answering to a fresh session (`crate::resume`).
+    Resume,
 }
 
 /// A batch of events to prompt the agent with.
@@ -138,6 +141,8 @@ pub struct FlushBatch {
 pub struct EventQueue {
     queues: HashMap<Uuid, VecDeque<QueuedEvent>>,
     auth_parking: crate::auth_parking::AuthParking,
+    /// Durable record of channels with outstanding background work.
+    resume: crate::resume::ResumeJournal,
     dispatched_batches: HashMap<Uuid, FlushBatch>,
     in_flight_channels: HashSet<Uuid>,
     /// Per-channel deadline for auto-expiring stuck in-flight entries.
@@ -179,6 +184,57 @@ impl EventQueue {
         // Requeue pushes to the front; reverse journal order to preserve it.
         for batch in self.auth_parking.restored_batches(now).into_iter().rev() {
             self.restore_auth_batch(batch);
+        }
+    }
+
+    /// Load the resume journal and queue every startup resume batch, each held
+    /// back by `delay` (fleet jitter). See [`crate::resume`].
+    pub(crate) fn load_resume(
+        &mut self,
+        path: Option<std::path::PathBuf>,
+        now: u64,
+        delay: Duration,
+    ) {
+        self.resume = crate::resume::ResumeJournal::load(path);
+        for batch in self.resume.take_startup(now) {
+            self.restore_resume(batch, delay);
+        }
+    }
+
+    /// Handle shared with prompt tasks and agent clients.
+    pub(crate) fn resume_journal(&self) -> crate::resume::ResumeJournal {
+        self.resume.clone()
+    }
+
+    /// Queue resume turns for channels whose session died with a respawned
+    /// slot. A channel whose request is already back in the queue or in
+    /// flight (the in-process requeue) is left to that path.
+    pub(crate) fn deliver_lost_resumes(&mut self) {
+        let journal = self.resume.clone();
+        let batches = journal.take_lost(crate::auth_parking::now_secs(), |ch, ids| {
+            self.in_flight_channels.contains(&ch)
+                || self
+                    .queues
+                    .get(&ch)
+                    .is_some_and(|q| q.iter().any(|e| ids.contains(&e.event.id)))
+                || self
+                    .cancelled_batches
+                    .get(&ch)
+                    .is_some_and(|c| c.iter().any(|e| ids.contains(&e.event.id)))
+        });
+        for batch in batches {
+            self.restore_resume(batch, Duration::ZERO);
+        }
+    }
+
+    /// A resume batch rides the cancelled-batch slot, so a live message for
+    /// the channel folds it in as the prior section and, with none, it is
+    /// flushed alone (both framed by `CancelReason::Resume`).
+    fn restore_resume(&mut self, batch: FlushBatch, delay: Duration) {
+        let ch = batch.channel_id;
+        self.requeue_as_cancelled(batch, CancelReason::Resume);
+        if !delay.is_zero() {
+            self.retry_after.insert(ch, Instant::now() + delay);
         }
     }
 
@@ -238,6 +294,7 @@ impl EventQueue {
         Self {
             queues: HashMap::new(),
             auth_parking: Default::default(),
+            resume: Default::default(),
             dispatched_batches: HashMap::new(),
             in_flight_channels: HashSet::new(),
             in_flight_deadlines: HashMap::new(),
@@ -1899,13 +1956,22 @@ pub fn format_prompt(batch: &FlushBatch, args: &FormatPromptArgs<'_>) -> Vec<Str
     //    - `Interrupt`: the new request *supersedes* the interrupted work.
     //    - `Steer` (default): a message arrived while the agent was working; it
     //      should *continue* its work and weave the message in if relevant.
-    let has_cancelled = !batch.cancelled_events.is_empty();
+    //    - `Resume`: the session died with background work outstanding. With
+    //      no new message the re-delivered request IS the prior section.
+    let resume_only =
+        batch.cancel_reason == Some(CancelReason::Resume) && batch.cancelled_events.is_empty();
+    let has_cancelled = !batch.cancelled_events.is_empty() || resume_only;
     let framing = MergeFraming::for_reason(batch.cancel_reason);
+    let prior_events = if resume_only {
+        &batch.events
+    } else {
+        &batch.cancelled_events
+    };
 
     // 4a. Cancelled events section.
     if has_cancelled {
         let mut s = framing.prior_header.to_string();
-        for (i, be) in batch.cancelled_events.iter().enumerate() {
+        for (i, be) in prior_events.iter().enumerate() {
             s.push_str(&format!(
                 "\n\n--- Event {} ({}) ---\n{}",
                 i + 1,
@@ -1923,7 +1989,9 @@ pub fn format_prompt(batch: &FlushBatch, args: &FormatPromptArgs<'_>) -> Vec<Str
     }
 
     // 4b. Event block(s).
-    let event_section = if batch.events.len() == 1 {
+    let event_section = if resume_only {
+        String::new()
+    } else if batch.events.len() == 1 {
         let be = &batch.events[0];
         if has_cancelled {
             format!(
@@ -1978,7 +2046,9 @@ pub fn format_prompt(batch: &FlushBatch, args: &FormatPromptArgs<'_>) -> Vec<Str
         }
         s
     };
-    sections.push(event_section);
+    if !event_section.is_empty() {
+        sections.push(event_section);
+    }
 
     // 4c. Closing note for cancel + re-prompt.
     if has_cancelled {
@@ -2029,6 +2099,21 @@ impl MergeFraming {
                 closing_note: "Note: A new message arrived while you were working. Continue your \
                      in-progress work and incorporate the new message if it's relevant; if it's \
                      unrelated, you may briefly acknowledge it and carry on.",
+            },
+            // Sam (2026-10-06): the resume turn stays silent unless it has
+            // something real to say — no "I'm back" announcement.
+            Some(CancelReason::Resume) => MergeFraming {
+                prior_header:
+                    "[What you were working on — your previous session ended before it finished]",
+                new_header_single: "[New message — arrived after your previous session ended]",
+                new_header_multi_prefix:
+                    "[New messages — arrived after your previous session ended",
+                closing_note: "Note: Your session was restarted and lost its context. Background \
+                     work still running at that point was stopped with it (listed below, if \
+                     recorded). Check the thread, your workspace and those outputs, then pick up \
+                     the outstanding work. Do not post a \"resumed\" or \"back online\" message — \
+                     post only a real result or a real question. If the result is already \
+                     delivered, do nothing and post nothing.",
             },
             Some(CancelReason::Interrupt) => MergeFraming {
                 prior_header: "[Previous request — interrupted before completion]",

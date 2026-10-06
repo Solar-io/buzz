@@ -34,15 +34,17 @@ pub(crate) fn path_for_agent(pubkey: &str) -> Option<PathBuf> {
         })
 }
 
-#[derive(Serialize, Deserialize)]
-struct SavedEvent {
-    event: nostr::Event,
+/// A batch event in durable form. Shared with the resume journal
+/// (`crate::resume`), which stores the same signed originals.
+#[derive(Clone, Serialize, Deserialize)]
+pub(crate) struct SavedEvent {
+    pub(crate) event: nostr::Event,
     prompt_tag: String,
     received_at_ms: u64,
 }
 
 impl SavedEvent {
-    fn save(event: &BatchEvent, now: u64) -> Self {
+    pub(crate) fn save(event: &BatchEvent, now: u64) -> Self {
         Self {
             event: event.event.clone(),
             prompt_tag: event.prompt_tag.clone(),
@@ -55,7 +57,7 @@ impl SavedEvent {
             ),
         }
     }
-    fn restore(&self, now: u64) -> BatchEvent {
+    pub(crate) fn restore(&self, now: u64) -> BatchEvent {
         BatchEvent {
             event: self.event.clone(),
             prompt_tag: self.prompt_tag.clone(),

@@ -876,6 +876,8 @@ pub struct PromptContext {
     /// `~/.buzz/agent-effort.json` / `BUZZ_VOICE_STREAM` fresh each `[voice]`
     /// turn; `Some` forces it without touching process state.
     pub voice_stream_forced: Option<bool>,
+    /// Resume journal (`crate::resume`); `Default` is disabled.
+    pub(crate) resume: crate::resume::ResumeJournal,
 }
 
 impl AgentPool {
@@ -2477,6 +2479,12 @@ fn send_prompt_result(
     // Backstop: the tap is normally cleared the moment the prompt resolves;
     // never let one outlive its turn into the slot's next one.
     agent.acp.clear_speech_tap();
+    if let PromptSource::Channel(channel) = &source {
+        agent.acp.resume.turn_ended(
+            *channel,
+            crate::resume::TurnEnd::from_outcome(&outcome, batch.is_some()),
+        );
+    }
     // Every classified exit records its task status here, so
     // `TurnCompletionGuard` publishes the matching terminal head.
     result_tx.outcome.set(task_state_for_outcome(&outcome));
@@ -3321,6 +3329,9 @@ pub async fn run_prompt_task(
         });
     }
 
+    let prompt_sections =
+        crate::resume::with_resume_note(prompt_sections, batch.as_ref(), &ctx.resume);
+
     // Slash-command pass-through sends the bare command as the first text
     // block (so connector detection fires), then each prompt section as its
     // own block. Per-section blocks let the observer size trimmer elide a
@@ -3376,6 +3387,12 @@ pub async fn run_prompt_task(
     // at its recreation, so no restore is needed there.
     let voice_override_guard =
         apply_voice_turn_overrides(&mut agent, &voice_turn_overrides, &session_id).await;
+
+    // Resume journal: remember this channel's request and which session
+    // answers it, so background work the turn leaves running is attributed.
+    if let Some(b) = &batch {
+        agent.acp.resume.begin_turn(&ctx.resume, &session_id, b);
+    }
 
     // Speech tap + streamer, installed last so the stream clock starts as
     // close to the prompt as possible. The streamer is detached: the slot is
@@ -7773,6 +7790,105 @@ done"#
         );
     }
 
+    // T4: a turn that leaves an AIR async task running is journaled as
+    // background work for its channel; a later prompt that reads the task's
+    // terminal update deletes the entry (and the file).
+    #[tokio::test]
+    async fn run_prompt_task_journals_background_task_until_terminal_update() {
+        // Payloads as claude-agent-acp 0.79.0 `async-tasks.js` publishes them.
+        let script = r#"count=0
+while IFS= read -r line; do
+  count=$((count + 1))
+  if [ "$count" -eq 1 ]; then
+    printf '%s\n' '{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"live-session","update":{"sessionUpdate":"async_task_spawned","asyncTaskId":"bash-1","name":"sleep 300","taskType":"Shell","description":"sleep 300","showInTranscript":true,"canStop":true,"outputFilePath":"/tmp/bash-1.output","toolCallId":"toolu_1"}}}'
+  else
+    printf '%s\n' '{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"live-session","update":{"sessionUpdate":"async_task_state_update","asyncTaskId":"bash-1","state":"completed","outputFilePath":"/tmp/bash-1.output"}}}'
+  fi
+  printf '%s\n' "{\"jsonrpc\":\"2.0\",\"id\":$((count - 1)),\"result\":{\"stopReason\":\"end_turn\"}}"
+done"#;
+        let acp = AcpClient::spawn("bash", &["-c".to_string(), script.to_string()], &[], false)
+            .await
+            .expect("spawn async-task ACP script");
+        let channel_id = Uuid::new_v4();
+        let mut agent = OwnedAgent {
+            index: 0,
+            acp,
+            state: SessionState::default(),
+            model_capabilities: None,
+            desired_model: None,
+            model_overridden: false,
+            desired_model_request_id: None,
+            desired_model_pending_ack: false,
+            startup_effort: None,
+            agent_name: "legacy-test-agent".into(),
+            goose_system_prompt_supported: None,
+            protocol_version: 1,
+        };
+        agent
+            .state
+            .sessions
+            .insert(channel_id, "live-session".into());
+        agent
+            .state
+            .deliveries
+            .insert(channel_id, ChannelDeliveryState::default());
+
+        let path = std::env::temp_dir().join(format!("buzz-resume-t4-{}.json", Uuid::new_v4()));
+        let journal = crate::resume::ResumeJournal::load(Some(path.clone()));
+        let mut ctx = make_prompt_context_no_owner();
+        ctx.resume = journal.clone();
+        let ctx = Arc::new(ctx);
+        let (result_tx, mut result_rx) = mpsc::unbounded_channel();
+
+        for turn in 1..=2 {
+            let event = EventBuilder::new(Kind::Custom(9), format!("turn-{turn}"))
+                .sign_with_keys(&Keys::generate())
+                .unwrap();
+            let batch = FlushBatch {
+                channel_id,
+                events: vec![crate::queue::BatchEvent {
+                    event,
+                    prompt_tag: "test".into(),
+                    received_at: std::time::Instant::now(),
+                }],
+                cancelled_events: vec![],
+                cancel_reason: None,
+            };
+            run_prompt_task(
+                agent,
+                Some(batch),
+                None,
+                Arc::clone(&ctx),
+                result_tx.clone(),
+                None,
+                format!("turn-{turn}"),
+            )
+            .await;
+            let result = result_rx.recv().await.expect("prompt result");
+            assert!(matches!(
+                result.outcome,
+                PromptOutcome::Ok(StopReason::EndTurn)
+            ));
+            agent = result.agent;
+            if turn == 1 {
+                let (tasks, _, durable) = journal
+                    .snapshot(channel_id)
+                    .expect("background entry for the channel");
+                assert!(durable);
+                assert_eq!(tasks.len(), 1);
+                assert_eq!(tasks[0].id, "bash-1");
+                assert_eq!(tasks[0].output_file.as_deref(), Some("/tmp/bash-1.output"));
+                assert!(path.exists(), "background work is on disk");
+            }
+        }
+        assert!(
+            journal.snapshot(channel_id).is_none(),
+            "terminal update deletes the entry"
+        );
+        assert!(!path.exists(), "no outstanding work leaves no journal file");
+        agent.acp.shutdown().await;
+    }
+
     #[tokio::test]
     async fn merged_cancel_prompt_commits_and_deduplicates_all_rendered_event_ids() {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -9963,6 +10079,7 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
             task_status_refresh: crate::task_status::STATUS_REFRESH,
             speech_sink: None,
             voice_stream_forced: None,
+            resume: Default::default(),
         }
     }
 
