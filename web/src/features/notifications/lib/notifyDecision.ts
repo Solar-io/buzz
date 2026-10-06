@@ -14,9 +14,9 @@
  * muted channel withholds. Collapsing them would make a denied permission
  * silently disable the badge and the sound too.
  *
- * MUTE MEANS "NO SOUND" (the desktop's rule, 8ca8caa35): a muted channel or
- * DM still notifies and still counts toward the badge — @mentions included —
- * it just never plays a sound.
+ * MUTE MEANS "COUNT, NEVER ALERT" (Sam, 2026-10-06): a muted channel or DM
+ * still counts toward the badge — @mentions included — but never raises an
+ * OS notification and never plays a sound.
  */
 
 /** What the viewer wants to be alerted about. */
@@ -57,7 +57,11 @@ export interface NotifyContext {
   /** Master switch for OS notifications; the badge and sound ignore it. */
   desktopEnabled: boolean;
   permission: NotificationPermissionState;
-  /** `document.visibilityState === "hidden"` at the moment of arrival. */
+  /**
+   * The page is NOT being looked at at the moment of arrival: tab hidden or
+   * window unfocused (`!isPageAttended()`, pageAttention.ts — the same rule
+   * the read marker and the toasts use).
+   */
   documentHidden: boolean;
   /** Master switch for notification sounds. */
   soundEnabled: boolean;
@@ -128,15 +132,25 @@ export function decideNotification(
   if (!context.documentHidden && message.isActiveChannel) {
     return { ...SKIP, reason: "viewing" };
   }
+  // Mute is one rule everywhere (Sam, 2026-10-06): a muted conversation —
+  // channel or DM — still counts (row pill, badge), but never toasts, never
+  // raises an OS notification and never chimes.
+  if (message.channelMuted) {
+    return {
+      notify: false,
+      badge: context.documentHidden,
+      sound: false,
+      reason: "channel-muted",
+    };
+  }
 
   // The badge exists to make a BACKGROUND tab show activity; a visible tab
   // shows it in the sidebar instead.
   const badge = context.documentHidden;
-  // Mute withholds the sound and nothing else. The sound deliberately ignores
-  // permission and the desktop switch: it is how a visible tab looking at a
+  // The sound deliberately ignores permission and the desktop switch: it is how a visible tab looking at a
   // different channel, or a browser that refused notifications, still
   // tells you something arrived.
-  const sound = context.soundEnabled && !message.channelMuted;
+  const sound = context.soundEnabled;
 
   if (!context.desktopEnabled) {
     return { notify: false, badge, sound, reason: "notifications-off" };
@@ -150,12 +164,7 @@ export function decideNotification(
   if (context.permission === "default") {
     return { notify: false, badge, sound, reason: "permission-default" };
   }
-  return {
-    notify: true,
-    badge,
-    sound,
-    reason: message.channelMuted ? "channel-muted" : "ok",
-  };
+  return { notify: true, badge, sound, reason: "ok" };
 }
 
 /**
@@ -174,7 +183,7 @@ export function describeNotifyReason(reason: NotifyReason): string {
     case "muted-everything":
       return "Notifications are set to nothing.";
     case "channel-muted":
-      return "That channel is muted: it notifies without sound.";
+      return "That conversation is muted: it counts as unread but never alerts.";
     case "not-addressed":
       return "Only mentions and DMs notify.";
     case "viewing":

@@ -6,7 +6,7 @@ import {
   OWN_MESSAGE_KINDS,
   type OwnLastSent,
 } from "./ownActivity.ts";
-import type { RankFacts } from "./sectionOrder.ts";
+import { holdAround, type RankFacts, type RowHold } from "./sectionOrder.ts";
 import {
   loadVisitScores,
   recordVisit,
@@ -92,20 +92,30 @@ export function useOpenItemSnapshot(
 }
 
 /**
- * Pointer-hold for a list's order: while `holding`, the returned keys are the
- * ones last shown before the hold began; otherwise the live keys (which also
- * become the next hold's baseline).
+ * Per-row pointer hold (sectionOrder.ts `holdAround`): while the pointer is
+ * on one of this list's rows, that row and its neighbours keep the places
+ * they had when the pointer arrived; everything else follows the live
+ * ranking. Returns the rows to render. Moving to another row re-anchors on
+ * the order then on screen; leaving the rows releases the hold.
  */
-export function useHeldKeys(
-  liveKeys: readonly string[],
-  holding: boolean,
-): readonly string[] | null {
-  const last = useRef<readonly string[]>(liveKeys);
-  if (!holding) {
-    last.current = liveKeys;
-    return null;
+export function useRowHold<T>(
+  live: readonly T[],
+  getKey: (item: T) => string,
+  hoveredKey: string | null,
+): T[] {
+  const shown = useRef<readonly string[]>(live.map(getKey));
+  const hold = useRef<RowHold | null>(null);
+  let rows: T[] = [...live];
+  if (hoveredKey !== null && live.some((item) => getKey(item) === hoveredKey)) {
+    if (hold.current?.anchor !== hoveredKey) {
+      hold.current = { order: shown.current, anchor: hoveredKey };
+    }
+    rows = holdAround(live, getKey, hold.current);
+  } else {
+    hold.current = null;
   }
-  return last.current;
+  shown.current = rows.map(getKey);
+  return rows;
 }
 
 /**

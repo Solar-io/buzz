@@ -323,6 +323,7 @@ export class RelaySession {
   private readonly backgroundSlotFallbackMs: number;
   /** Listeners for "the post-AUTH replay has drained" (once per socket). */
   private readonly replayDrainedListeners = new Set<() => void>();
+  private readonly connectionLostListeners = new Set<() => void>();
   private replayDrainedEmitted = false;
   private readonly isNativeIOS: () => boolean;
   private readonly nativeResumeRedialMs: number;
@@ -890,6 +891,19 @@ export class RelaySession {
     };
   }
 
+  /**
+   * Subscribe to "an authenticated socket was lost": every open
+   * subscription will be re-REQ'd on the next socket, and the relay will
+   * re-deliver its window plus whatever arrived meanwhile. Fires
+   * synchronously, before any replayed event. Returns an unregister fn.
+   */
+  onConnectionLost(listener: () => void): () => void {
+    this.connectionLostListeners.add(listener);
+    return () => {
+      this.connectionLostListeners.delete(listener);
+    };
+  }
+
   /** True while the socket is connected and past AUTH. */
   get isReady(): boolean {
     return this.socket !== null && this.authenticated;
@@ -1101,6 +1115,7 @@ export class RelaySession {
   };
 
   private teardownSocket(): void {
+    const wasLive = this.socket !== null && this.authenticated;
     if (this.authTimer) {
       clearTimeout(this.authTimer);
       this.authTimer = null;
@@ -1131,6 +1146,11 @@ export class RelaySession {
     // Still-active background subs are re-queued by the next replay.
     this.backgroundQueue = [];
     this.replayDrainedEmitted = false;
+    if (wasLive) {
+      for (const listener of [...this.connectionLostListeners]) {
+        listener();
+      }
+    }
     // D-042: a publish in flight when the socket drops used to fail fast and
     // LOSE the event — the tap at 20:50 9/16 sent into a dying socket and
     // evaporated. The relay answers each client message before reading the

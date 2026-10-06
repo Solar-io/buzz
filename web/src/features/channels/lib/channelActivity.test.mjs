@@ -411,21 +411,23 @@ test("live arrivals after EOSE, then a full replay, stay exactly-once", () => {
 test("replayed arrivals never re-fire live handlers; true live ones fire once", () => {
   const marker = 100;
   const feed = driveFeed({ ch1: marker }, SELF);
-  // Round 1: first sample is backfill (no live fire), 105 beats it (1 fire).
+  // Round 1 is backfill until its EOSE (I2): even 105 beating 101 is not
+  // live — it was already in the window the relay is streaming.
   for (const created_at of [101, 105]) {
     feed.handlers.onEvent(relayEvent({ created_at }));
   }
-  assert.equal(feed.live().length, 1);
-  // Live arrival post-EOSE: one more fire.
+  assert.equal(feed.live().length, 0);
+  // Live arrival post-EOSE: one fire.
   feed.handlers.onEose();
   feed.handlers.onEvent(relayEvent({ created_at: 106 }));
-  assert.equal(feed.live().length, 2);
+  assert.equal(feed.live().length, 1);
   // Replay of everything: the persisted newest sample (106) shields every
   // replayed arrival from the live path.
   for (const created_at of [101, 105, 106]) {
     feed.handlers.onEvent(relayEvent({ created_at }));
   }
-  assert.equal(feed.live().length, 2);
+  feed.handlers.onEose();
+  assert.equal(feed.live().length, 1);
 });
 
 test("self arrivals update the sample but never the count, live or replayed", () => {
@@ -676,6 +678,7 @@ test("sampling feed with a viewer pubkey: a DM wake for another member never toa
 test("sampling feed WITHOUT a viewer pubkey cannot silence a wake (why MessageToasts must pass it)", () => {
   const feed = driveFeed(null, null);
   feed.handlers.onEvent(relayEvent({ id: "base", created_at: 100 }));
+  feed.handlers.onEose();
   feed.handlers.onEvent(
     relayEvent({
       id: "wake",
@@ -688,4 +691,124 @@ test("sampling feed WITHOUT a viewer pubkey cannot silence a wake (why MessageTo
     }),
   );
   assert.equal(feed.live().length, 1);
+});
+
+// --- I2: one definition of "live" (LEFT_NAV_ARCHITECTURE_REVIEW.md) --------
+
+test("I2: the first message in a never-messaged conversation is live — it toasts AND counts", () => {
+  const feed = driveFeed({}, SELF);
+  feed.handlers.onEose(); // empty history
+  feed.handlers.onEvent(relayEvent({ id: "first", created_at: 300 }));
+  assert.equal(feed.live().length, 1, "toasts with no prior sample to beat");
+  assert.equal(feed.counts().get("ch1"), 1, "and the row counts it");
+});
+
+test("I2: a window that opened EMPTY at the read marker still toasts the next message", () => {
+  // Read up to 500 on another device; the since-window holds nothing.
+  const feed = driveFeed({ ch1: 500 }, SELF);
+  feed.handlers.onEose();
+  feed.handlers.onEvent(relayEvent({ id: "next", created_at: 600 }));
+  assert.equal(feed.live().length, 1);
+  assert.equal(feed.counts().get("ch1"), 1);
+});
+
+test("I2: self and at-or-below-marker arrivals are never news", () => {
+  const feed = driveFeed({ ch1: 100 }, SELF);
+  feed.handlers.onEose();
+  feed.handlers.onEvent(
+    relayEvent({ id: "mine", created_at: 200, pubkey: SELF }),
+  );
+  assert.equal(feed.live().length, 0, "own message: no toast");
+  feed.markers.current = { ch1: 400 };
+  feed.handlers.onEvent(relayEvent({ id: "read", created_at: 300 }));
+  assert.equal(feed.live().length, 0, "already read here: no toast");
+  assert.equal(feed.counts().get("ch1") ?? 0, 0, "and no count");
+});
+
+test("I1 (handler order): when the live handler runs, the sample already holds the arrival", () => {
+  const activityRef = { current: new Map() };
+  const seenAtFire = [];
+  const handlers = createChannelActivityHandlers({
+    activityRef,
+    onActivityChange: () => {},
+    onLiveArrival: (arrival) =>
+      seenAtFire.push(activityRef.current.get(arrival.channelId)?.createdAt),
+    onUnreadCountsChange: () => {},
+    readMarkers: () => ({ ch1: 100 }),
+    selfPubkey: SELF,
+  });
+  handlers.onEose();
+  handlers.onEvent(relayEvent({ id: "m", created_at: 150 }));
+  assert.deepEqual(seenAtFire, [150]);
+});
+
+test("only kind-9 events become a conversation's sample, whatever the sub delivered (phantom DM, 2026-09-15)", () => {
+  const feed = driveFeed({ ch1: 50 }, SELF);
+  feed.handlers.onEvent({
+    ...relayEvent({ id: "status", created_at: 200, content: "status flip" }),
+    kind: 30315,
+  });
+  feed.handlers.onEvent({
+    ...relayEvent({ id: "run", created_at: 300, content: "workflow run" }),
+    kind: 44100,
+  });
+  feed.handlers.onEvent(
+    relayEvent({ id: "real", created_at: 100, content: "real message" }),
+  );
+  feed.handlers.onEose();
+  assert.equal(feed.activity().get("ch1").preview, "real message");
+  assert.equal(feed.activity().get("ch1").createdAt, 100);
+  assert.equal(feed.counts().get("ch1"), 1);
+});
+
+test("two different messages in the SAME second both toast and count; a replay of either does neither", () => {
+  // created_at is whole seconds: an agent's two quick replies share one.
+  const feed = driveFeed({ ch1: 100 }, SELF);
+  feed.handlers.onEose();
+  feed.handlers.onEvent(relayEvent({ id: "r1", created_at: 200 }));
+  feed.handlers.onEvent(relayEvent({ id: "r2", created_at: 200 }));
+  assert.equal(feed.live().length, 2, "both toast");
+  assert.equal(feed.counts().get("ch1"), 2, "both count");
+  assert.equal(
+    feed.activity().get("ch1").eventId,
+    "r2",
+    "newest delivery is the sample",
+  );
+  // Reconnect replay of both.
+  feed.handlers.onEvent(relayEvent({ id: "r1", created_at: 200 }));
+  feed.handlers.onEvent(relayEvent({ id: "r2", created_at: 200 }));
+  feed.handlers.onEose();
+  assert.equal(feed.live().length, 2);
+  assert.equal(feed.counts().get("ch1"), 2);
+});
+
+test("QA #4 (handlers): a replay round counts what was missed but fires nothing live until its EOSE", () => {
+  const feed = driveFeed({ ch1: 100 }, SELF);
+  feed.handlers.onEvent(relayEvent({ id: "a", created_at: 150 }));
+  feed.handlers.onEose();
+  feed.handlers.beginReplay();
+  feed.handlers.onEvent(relayEvent({ id: "a", created_at: 150 }));
+  feed.handlers.onEvent(relayEvent({ id: "missed", created_at: 160 }));
+  feed.handlers.onEose();
+  assert.equal(feed.live().length, 0, "the missed message does not toast");
+  assert.equal(feed.counts().get("ch1"), 2, "but it is counted");
+  feed.handlers.onEvent(relayEvent({ id: "next", created_at: 170 }));
+  assert.equal(feed.live().length, 1, "live again after the replay EOSE");
+});
+
+test("QA #8 (handlers): before the first EOSE, a message at/after liveSince is live; older backlog is not", () => {
+  const live = [];
+  const handlers = createChannelActivityHandlers({
+    activityRef: { current: new Map() },
+    onActivityChange: () => {},
+    onLiveArrival: (arrival) => live.push(arrival.eventId),
+    onUnreadCountsChange: () => {},
+    readMarkers: () => ({}),
+    selfPubkey: SELF,
+    liveSince: 500,
+  });
+  handlers.onEvent(relayEvent({ id: "backlog", created_at: 499 }));
+  handlers.onEvent(relayEvent({ id: "fresh", created_at: 500 }));
+  handlers.onEose();
+  assert.deepEqual(live, ["fresh"]);
 });

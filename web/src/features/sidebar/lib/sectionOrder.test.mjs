@@ -110,6 +110,31 @@ test("the open item ranks by its frozen facts, not its live ones", () => {
   ]);
 });
 
+test("writing in the open item lifts it into the top four at once", () => {
+  // Opened when never written in (alphabetical tail); the viewer then sends
+  // there, so its live own-send score is the newest of all.
+  const items = [
+    item("alpha"),
+    item("w1", { score: 10 }),
+    item("w2", { score: 20 }),
+    item("w3", { score: 30 }),
+    item("w4", { score: 40 }),
+    item("zulu", { score: 99 }),
+  ];
+  const frozen = {
+    key: "zulu",
+    facts: { unread: false, score: 0, lastActivity: 0, name: "zulu" },
+  };
+  assert.deepEqual(keys(rankSection(items, keyOf, factsOf, { frozen })), [
+    "zulu",
+    "w4",
+    "w3",
+    "w2",
+    "alpha",
+    "w1",
+  ]);
+});
+
 test("holdOrder keeps the held order, appends new items, drops gone ones", () => {
   const live = [item("new"), item("c"), item("a")];
   assert.deepEqual(keys(holdOrder(live, keyOf, ["a", "b", "c"])), [
@@ -117,4 +142,35 @@ test("holdOrder keeps the held order, appends new items, drops gone ones", () =>
     "c",
     "new",
   ]);
+});
+
+// ---- per-row hold (left-nav phase 3) ----
+
+test("holdAround: the pointed-at row and its neighbours keep their places; the rest follow the live order", async () => {
+  const { holdAround } = await import("./sectionOrder.ts");
+  const key = (x) => x;
+  const order = ["a", "b", "c", "d", "e", "f"];
+  // "x" became unread and ranks first; the pointer rests on "d".
+  const live = ["x", "a", "b", "c", "d", "e", "f"];
+  assert.deepEqual(holdAround(live, key, { order, anchor: "d" }), [
+    "x",
+    "a",
+    "c",
+    "d",
+    "e",
+    "b",
+    "f",
+  ]);
+});
+
+test("holdAround: a held key that left, or an anchor not in the held order, never drops or duplicates a row", async () => {
+  const { holdAround } = await import("./sectionOrder.ts");
+  const key = (x) => x;
+  const held = { order: ["a", "b", "c"], anchor: "b" };
+  // "a" left: "b" keeps its held slot (1), "c" fills the free one.
+  assert.deepEqual(holdAround(["b", "c"], key, held), ["c", "b"]);
+  assert.deepEqual(
+    holdAround(["q", "a", "b"], key, { order: ["a"], anchor: "zzz" }),
+    ["q", "a", "b"],
+  );
 });

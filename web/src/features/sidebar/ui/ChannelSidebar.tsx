@@ -44,15 +44,14 @@ import {
   type CollapsedSections,
 } from "@/features/sidebar/lib/collapsedSections.ts";
 import {
-  holdOrder,
   rankSection,
   type RankFacts,
 } from "@/features/sidebar/lib/sectionOrder.ts";
 import {
   noteSidebarVisit,
-  useHeldKeys,
   useOpenItemSnapshot,
   useOwnLastSent,
+  useRowHold,
 } from "@/features/sidebar/lib/useSidebarOrder.ts";
 import { SidebarSection } from "@/features/sidebar/ui/SidebarSection";
 import { SidebarNavButton } from "@/features/sidebar/ui/SidebarNavButton";
@@ -61,7 +60,7 @@ import {
   SidebarLinksSection,
   useSidebarLinks,
 } from "@/features/sidebar/ui/SidebarShortcutsSection";
-import { favoriteMenuItem } from "@/features/sidebar/lib/favoriteMenuItem.ts";
+import { dmMenuItems } from "@/features/sidebar/lib/dmMenuItems.ts";
 import {
   sectionSidebar,
   type FavoriteItem,
@@ -101,21 +100,22 @@ export interface ChannelSidebarLists {
 
 /** Viewer-side state deciding which rows read as unread. */
 export interface ChannelSidebarReadState {
-  /** Favorites / muted prefs; muted rows never show an unread dot. */
+  /** Favorites / muted prefs; muted rows still count unread but never float. */
   prefs: ChannelPrefs;
   /** Per-channel read markers. */
   read: ReadState;
   /**
-   * Newest sampled kind:9 message per non-DM channel (useChannelActivity).
-   * New messages never bump `channel.updatedAt` (a 39000 metadata time), so
-   * the dot must compare the read marker against real message activity,
-   * falling back to metadata only for channels with no sample yet.
+   * Newest sampled kind:9 message per conversation, DMs included (the
+   * conversation-activity store). New messages never bump
+   * `channel.updatedAt` (a 39000 metadata time), so the dot must compare the
+   * read marker against real message activity, falling back to metadata
+   * only for channels with no sample yet.
    */
   activity: ChannelActivityMap;
   /**
-   * Live unread counts per channel (the counting activity feed). A count of
-   * 1+ upgrades the row's dot to a count badge; absent until the feed's EOSE
-   * derives the channel's window, and 0 there renders nothing unread.
+   * Live unread counts per conversation, channel and DM rows alike (I4). A
+   * count of 1+ upgrades the row's dot to a count badge; absent until the
+   * feed's EOSE derives the window, and 0 there renders nothing unread.
    */
   unreadCounts: ChannelUnreadCounts;
 }
@@ -302,12 +302,13 @@ export function ChannelSidebar({
     read: readState.read,
     activity: readState.activity,
     selfPubkey: dmIdentity.selfPubkey,
+    unreadCounts: readState.unreadCounts,
   };
   const rowUnread = (channel: ChannelSummary) =>
     channelRowUnread(channel, unreadInput);
   // The counted form of the same signal, when the counting feed has derived
-  // the channel's window. Muted rows never reach the badge: `rowUnread`
-  // already folds mute in, and the badge renders only on an unread row.
+  // the channel's window. Muted rows keep their count (mute only silences
+  // toasts and sounds), but never float to the top — see `floats` below.
   const rowUnreadCount = (channel: ChannelSummary) =>
     readState.unreadCounts.get(channel.id) ?? null;
 
@@ -320,18 +321,27 @@ export function ChannelSidebar({
   const dmUnread = (dm: DmSummary) => dmRowUnread(dm, unreadInput);
   // Favorites, Channels and DMs: unread by recency, then the four you most
   // recently wrote in, then alphabetical (sectionOrder.ts). The open row ranks by its
-  // facts at the moment it was opened, and the whole order holds while the
-  // pointer is over the list, so nothing slides under a click.
+  // facts at the moment it was opened, and the row under the pointer (with
+  // its neighbours) holds its place, so nothing slides under a click.
   const ownLastSent = useOwnLastSent();
+  // A muted row counts unread but does not jump the queue: floating to the
+  // top is an interruption, and mute exists to stop those.
+  const floats = (id: string, unread: boolean) =>
+    unread && !isMuted(readState.prefs, id);
+  // Section-level unread (lift past the cutoff, collapsed-header count):
+  // the same quiet rule, so a muted row never surfaces itself.
+  const rowFloats = (channel: ChannelSummary) =>
+    floats(channel.id, rowUnread(channel));
+  const dmFloats = (dm: DmSummary) => floats(dm.channel.id, dmUnread(dm));
   const channelFacts = (channel: ChannelSummary): RankFacts => ({
-    unread: rowUnread(channel),
+    unread: rowFloats(channel),
     score: ownLastSent.get(channel.id) ?? 0,
     lastActivity:
       readState.activity.get(channel.id)?.createdAt ?? channel.updatedAt,
     name: channel.name,
   });
   const dmFacts = (dm: DmSummary): RankFacts => ({
-    unread: dmUnread(dm),
+    unread: dmFloats(dm),
     score: ownLastSent.get(dm.channel.id) ?? 0,
     lastActivity: dm.lastMessage?.created_at ?? dm.channel.updatedAt,
     // The label the row shows (DmNavRow), so A–Z matches what you read.
@@ -365,7 +375,8 @@ export function ChannelSidebar({
     const dm = sections.dms.find((row) => row.channel.id === key);
     return dm ? dmFacts(dm) : undefined;
   });
-  const [pointerInList, setPointerInList] = useState(false);
+  // The row key under the pointer (SidebarSection tags each row), or null.
+  const [hoveredKey, setHoveredKey] = useState<string | null>(null);
   const liveFavorites = rankSection(
     sections.favorites,
     (item) => item.key,
@@ -381,27 +392,17 @@ export function ChannelSidebar({
   const liveDms = rankSection(sections.dms, (dm) => dm.channel.id, dmFacts, {
     frozen: openSnapshot,
   });
-  const heldFavoriteKeys = useHeldKeys(
-    liveFavorites.map((item) => item.key),
-    pointerInList,
+  const favoriteRows = useRowHold(
+    liveFavorites,
+    (item) => item.key,
+    hoveredKey,
   );
-  const heldChannelKeys = useHeldKeys(
-    liveChannels.map((channel) => channel.id),
-    pointerInList,
+  const channelRows = useRowHold(
+    liveChannels,
+    (channel) => channel.id,
+    hoveredKey,
   );
-  const heldDmKeys = useHeldKeys(
-    liveDms.map((dm) => dm.channel.id),
-    pointerInList,
-  );
-  const favoriteRows = heldFavoriteKeys
-    ? holdOrder(liveFavorites, (item) => item.key, heldFavoriteKeys)
-    : liveFavorites;
-  const channelRows = heldChannelKeys
-    ? holdOrder(liveChannels, (channel) => channel.id, heldChannelKeys)
-    : liveChannels;
-  const dmRows = heldDmKeys
-    ? holdOrder(liveDms, (dm) => dm.channel.id, heldDmKeys)
-    : liveDms;
+  const dmRows = useRowHold(liveDms, (dm) => dm.channel.id, hoveredKey);
 
   const renderChannel =
     (glyph: (channel: ChannelSummary) => ReactNode) =>
@@ -457,7 +458,7 @@ export function ChannelSidebar({
       <DmNavRow
         selected={channel.id === shownId}
         channelId={channel.id}
-        lastSeenAt={readState.read[channel.id] ?? null}
+        unreadCount={readState.unreadCounts.get(channel.id) ?? null}
         unread={dmUnread(dm)}
         participants={channel.participantPubkeys}
         selfPubkey={dmIdentity.selfPubkey}
@@ -469,16 +470,12 @@ export function ChannelSidebar({
           .map((pk) => dmIdentity.presence.get(pk))
           .find((entry) => entry != null)}
         onSelect={() => actions.onSelectChannel(channel.id)}
-        menuItems={[
-          favoriteMenuItem(dmFavorite, () =>
-            actions.onSetFavorite(dmRef, !dmFavorite),
-          ),
-          {
-            label: "Remove from list",
-            danger: true,
-            onSelect: () => actions.onHideDm(channel.id),
-          },
-        ]}
+        menuItems={dmMenuItems(dm, {
+          favorite: dmFavorite,
+          newestActivityAt: readState.activity.get(channel.id)?.createdAt,
+          onToggleFavorite: () => actions.onSetFavorite(dmRef, !dmFavorite),
+          onHide: () => actions.onHideDm(channel.id),
+        })}
       />
     );
   };
@@ -505,9 +502,9 @@ export function ChannelSidebar({
     switch (item.kind) {
       case "channel":
       case "forum":
-        return rowUnread(item.channel);
+        return rowFloats(item.channel);
       case "dm":
-        return dmUnread(item.dm);
+        return dmFloats(item.dm);
       case "link":
         return false;
     }
@@ -608,8 +605,14 @@ export function ChannelSidebar({
       {/* The only scrolling region: the footer below is a sibling, so the
           list scrolls above it and never under it. */}
       <nav
-        onPointerEnter={() => setPointerInList(true)}
-        onPointerLeave={() => setPointerInList(false)}
+        onPointerOver={(event) =>
+          setHoveredKey(
+            (event.target as Element)
+              .closest?.("[data-sidebar-key]")
+              ?.getAttribute("data-sidebar-key") ?? null,
+          )
+        }
+        onPointerLeave={() => setHoveredKey(null)}
         className="buzz-sidebar-scrollbar flex min-h-0 flex-1 flex-col gap-3.5 overflow-y-auto px-2.5 pt-px pb-3"
       >
         {/* Forums and Links: nav rows directly under Terminal, folded until
@@ -626,7 +629,7 @@ export function ChannelSidebar({
               getKey={(channel) => channel.id}
               renderItem={forumRow}
               isSelected={channelSelected}
-              isUnread={rowUnread}
+              isUnread={rowFloats}
               collapsed={isCollapsed(collapsed, NAV_FORUMS_ID)}
               onToggleCollapsed={() => toggle(NAV_FORUMS_ID)}
             />
@@ -664,7 +667,7 @@ export function ChannelSidebar({
             getKey={(channel) => channel.id}
             renderItem={scratchRow}
             isSelected={channelSelected}
-            isUnread={rowUnread}
+            isUnread={rowFloats}
             collapsed={isCollapsed(collapsed, "scratch")}
             onToggleCollapsed={() => toggle("scratch")}
           />
@@ -689,7 +692,7 @@ export function ChannelSidebar({
           getKey={(channel) => channel.id}
           renderItem={channelRow}
           isSelected={channelSelected}
-          isUnread={rowUnread}
+          isUnread={rowFloats}
           collapsed={isCollapsed(collapsed, "channels")}
           onToggleCollapsed={() => toggle("channels")}
           onAdd={() => dialogs.onNewChannelOpenChange(true)}
@@ -707,7 +710,7 @@ export function ChannelSidebar({
           getKey={(dm) => dm.channel.id}
           renderItem={renderDm}
           isSelected={(dm) => dm.channel.id === shownId}
-          isUnread={dmUnread}
+          isUnread={dmFloats}
           collapsed={isCollapsed(collapsed, "dms")}
           onToggleCollapsed={() => toggle("dms")}
           onAdd={() => dialogs.onNewDmOpenChange(true)}

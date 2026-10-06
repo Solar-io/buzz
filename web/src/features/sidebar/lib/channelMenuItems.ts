@@ -18,13 +18,7 @@ import {
   type ChannelPrefs,
 } from "@/features/channels/lib/channelPrefs.ts";
 import { favoriteMenuItem } from "@/features/sidebar/lib/favoriteMenuItem.ts";
-import {
-  forgetChannel as forgetChannelRead,
-  markSeen,
-  saveReadState,
-  type ReadState,
-} from "@/features/channels/lib/readState.ts";
-import { notifyReadStateLocalChange } from "@/features/channels/lib/readStateSync.ts";
+import { forgetMarker, markSeen } from "@/features/activity/readMarkers.ts";
 import { evictTimelineCache } from "@/features/channels/lib/timelineCache.ts";
 import type { ChannelSummary } from "@/features/channels/useChannels";
 import type { RelaySession } from "@/shared/api/relay-session";
@@ -37,8 +31,12 @@ export interface ChannelMenuDeps {
   /** Viewer-side favorites / muted prefs. */
   channelPrefs: ChannelPrefs;
   setChannelPrefs: Dispatch<SetStateAction<ChannelPrefs>>;
-  /** Read markers — "Mark read" writes one. */
-  setReadState: Dispatch<SetStateAction<ReadState>>;
+  /**
+   * Newest message seen in a conversation (the activity store's sample),
+   * so "Mark read" reads everything there is — not just up to the channel's
+   * metadata time, which new messages never bump. Absent: metadata only.
+   */
+  newestActivityAt?: (channelId: string) => number | undefined;
   /** Re-REQ the channel list after a relay mutation lands. */
   refreshChannels: () => void;
   /** Evict a relay-confirmed deleted channel from the list state + seed. */
@@ -58,20 +56,10 @@ export interface ChannelMenuDeps {
  */
 export function evictDeletedChannel(
   channelId: string,
-  deps: Pick<
-    ChannelMenuDeps,
-    "setChannelPrefs" | "setReadState" | "onChannelDeleted"
-  >,
+  deps: Pick<ChannelMenuDeps, "setChannelPrefs" | "onChannelDeleted">,
 ): void {
   deps.setChannelPrefs((prefs) => forgetChannel(prefs, channelId));
-  deps.setReadState((previous) => {
-    const next = forgetChannelRead(previous, channelId);
-    if (next !== previous) {
-      saveReadState(next);
-      notifyReadStateLocalChange();
-    }
-    return next;
-  });
+  forgetMarker(channelId);
   clearDraft(channelId);
   evictTimelineCache(channelId);
   deps.onChannelDeleted(channelId);
@@ -84,7 +72,7 @@ export function channelMenuItems(
     session,
     channelPrefs,
     setChannelPrefs,
-    setReadState,
+    newestActivityAt,
     refreshChannels,
     onChannelDeleted,
     selectedId,
@@ -102,14 +90,11 @@ export function channelMenuItems(
     {
       label: "Mark read",
       onSelect: () => {
-        setReadState((previous) => {
-          const next = markSeen(previous, channel.id, channel.updatedAt);
-          if (next !== previous) {
-            saveReadState(next);
-            notifyReadStateLocalChange();
-          }
-          return next;
-        });
+        markSeen(
+          channel.id,
+          Math.max(channel.updatedAt, newestActivityAt?.(channel.id) ?? 0),
+          "menu",
+        );
       },
     },
     {
@@ -177,7 +162,6 @@ export function channelMenuItems(
             toast.success(`Deleted #${channel.name}`);
             evictDeletedChannel(channel.id, {
               setChannelPrefs,
-              setReadState,
               onChannelDeleted,
             });
             if (selectedId === channel.id) {

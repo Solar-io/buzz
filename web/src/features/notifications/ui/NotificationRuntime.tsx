@@ -1,4 +1,5 @@
 import { useNavigate, useRouterState } from "@tanstack/react-router";
+import type { ConversationActivityStore } from "@/features/activity/conversationActivity.ts";
 import type { ChannelSummary } from "@/features/channels/useChannels";
 import { useNotificationRuntime } from "../hooks";
 
@@ -7,12 +8,16 @@ export interface NotificationRuntimeProps {
   selfPubkey: string | null;
   /** The shell's channel list — see the hook for why it is not fetched here. */
   channels: ChannelSummary[];
+  /** The conversation-activity store's live arrivals. */
+  onArrival: ConversationActivityStore["onArrival"];
+  /** The conversation on screen (null while a web view covers it). */
+  shownId?: string | null;
 }
 
 /**
  * The notification runtime, mounted as an invisible component.
  *
- * It renders nothing — it exists so the subscription, the OS notification and
+ * It renders nothing — it exists so the arrival handler, the OS notification and
  * the tab-title badge have a React lifetime to live in. It reads the open
  * channel from the router rather than taking it as a prop, so it can be
  * mounted anywhere inside the app shell without new wiring.
@@ -24,6 +29,8 @@ export interface NotificationRuntimeProps {
 export function NotificationRuntime({
   selfPubkey,
   channels,
+  onArrival,
+  shownId,
 }: NotificationRuntimeProps) {
   const navigate = useNavigate();
   const activeChannelId = useRouterState({
@@ -36,7 +43,8 @@ export function NotificationRuntime({
   useNotificationRuntime({
     selfPubkey,
     channels,
-    activeChannelId,
+    onArrival,
+    activeChannelId: shownId === undefined ? activeChannelId : shownId,
     onOpenChannel: (channelId) => {
       void navigate({ to: "/repos", search: { c: channelId } });
     },

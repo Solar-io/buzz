@@ -46,8 +46,9 @@ export function useShellWebView(navKey: string): {
       panelId: pickFilesPanel(filesIds ? filesIds.split("\n") : [], mounted),
     });
   }, [show, filesIds, mounted]);
-  // "Open in Files" (`openInFiles`): each request brings Files up; the frame
-  // host loads that Files frame on the requested folder.
+  // "Open in Files" (`openInFiles`): each request brings Files up inside
+  // Buzz (sidebar stays — never full screen); the frame host loads that
+  // Files frame on the requested file.
   // A request made before this shell mounted is not a new one.
   const pathNonce = useFilesPathRequest()?.nonce ?? 0;
   const handledNonce = useRef(pathNonce);

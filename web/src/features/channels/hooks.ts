@@ -310,16 +310,11 @@ export {
 } from "./useForum.ts";
 
 /**
- * The activity feed lives in `./useChannelActivity.ts` (same ceiling; it
- * grew a counting mode for the sidebar's live unread badges). Re-exported
- * so every existing `from "@/features/channels/hooks"` import keeps working.
+ * The activity feed moved to the conversation-activity store
+ * (`features/activity`, left-nav phase 1): one subscription family for
+ * every conversation, DMs included. The arrival shape keeps its name here.
  */
-export {
-  useChannelActivity,
-  type ChannelActivityCounting,
-  type ChannelActivityEvent,
-  type UseChannelActivityResult,
-} from "./useChannelActivity.ts";
+export type { ChannelActivity as ChannelActivityEvent } from "./lib/channelActivity.ts";
 
 export interface ChannelMember {
   pubkey: string;

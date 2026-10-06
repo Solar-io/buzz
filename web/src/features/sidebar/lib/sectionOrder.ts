@@ -18,9 +18,10 @@
  *
  * 1. The OPEN item ranks by a snapshot of its facts taken when it was
  *    opened ({@link RankOptions.frozen}). Opening an unread channel clears
- *    its unread state, and writing there bumps its recency; without the
- *    snapshot it would drop out of the unread group as soon as it was
- *    clicked. It re-ranks on its live facts once the viewer navigates away.
+ *    its unread state; without the snapshot it would drop out of the unread
+ *    group as soon as it was clicked. Its own-send score stays live, so
+ *    writing there lifts it into the top four immediately. It re-ranks on
+ *    all its live facts once the viewer navigates away.
  * 2. While the pointer is over the list the previous order is held
  *    ({@link holdOrder}): whatever re-ranks meanwhile (a new unread, the
  *    previously open item un-freezing on a click) waits until the pointer
@@ -93,8 +94,13 @@ export function rankSection<T>(
   const read: Ranked<T>[] = [];
   for (const item of items) {
     const key = getKey(item);
+    const live = factsOf(item);
+    // The snapshot pins unread and recency; a send while open still counts
+    // (Sam, 2026-10-05: writing in the open channel must lift it to the top).
     const facts =
-      frozen !== null && frozen.key === key ? frozen.facts : factsOf(item);
+      frozen !== null && frozen.key === key
+        ? { ...frozen.facts, score: Math.max(frozen.facts.score, live.score) }
+        : live;
     (facts.unread ? unread : read).push({ item, key, facts });
   }
   unread.sort(byRecency);
@@ -105,6 +111,57 @@ export function rankSection<T>(
   const frequent = new Set(used);
   const rest = read.filter((entry) => !frequent.has(entry)).sort(byName);
   return [...unread, ...used, ...rest].map((entry) => entry.item);
+}
+
+/** A per-row hold: the order on screen when the pointer reached `anchor`. */
+export interface RowHold {
+  /** Keys in the order they were displayed when the hold began. */
+  order: readonly string[];
+  /** The row under the pointer. */
+  anchor: string;
+}
+
+/** Rows each side of the pointed-at row that also keep their place. */
+export const ROW_HOLD_RADIUS = 1;
+
+/**
+ * Per-row hold (left-nav phase 3): only the row under the pointer and its
+ * immediate neighbours keep the positions they had when the pointer got
+ * there; every other row takes its live rank around them. A click can never
+ * land on a row that just slid into place, while new unread rows still rise
+ * — the old whole-list hold froze everything the moment the pointer rested
+ * anywhere on the nav, which is how a newly unread DM stayed buried
+ * (LEFT_NAV_ARCHITECTURE_REVIEW.md, cause B). Truncation then still lifts
+ * any unread row the slice would hide (I5).
+ */
+export function holdAround<T>(
+  items: readonly T[],
+  getKey: (item: T) => string,
+  hold: RowHold,
+  radius = ROW_HOLD_RADIUS,
+): T[] {
+  const anchorAt = hold.order.indexOf(hold.anchor);
+  if (anchorAt < 0) {
+    return [...items];
+  }
+  const byKey = new Map(items.map((item) => [getKey(item), item]));
+  const pinned = new Map<number, T>();
+  const lo = Math.max(0, anchorAt - radius);
+  const hi = Math.min(hold.order.length - 1, anchorAt + radius);
+  for (let index = lo; index <= hi; index += 1) {
+    const item = byKey.get(hold.order[index] as string);
+    if (item !== undefined && index < items.length) {
+      pinned.set(index, item);
+    }
+  }
+  const pinnedItems = new Set(pinned.values());
+  const rest = items.filter((item) => !pinnedItems.has(item));
+  const out: T[] = [];
+  for (let index = 0; index < items.length; index += 1) {
+    const item = pinned.get(index) ?? rest.shift();
+    if (item !== undefined) out.push(item);
+  }
+  return out;
 }
 
 /**

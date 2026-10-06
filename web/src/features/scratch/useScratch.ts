@@ -55,10 +55,7 @@ export interface UseScratchOptions {
   /** Re-REQ the channel list — a new 39000 has no live fan-out. */
   refreshChannels: () => void;
   /** What a confirmed delete must evict, shared with "Delete channel". */
-  evict: Pick<
-    ChannelMenuDeps,
-    "setChannelPrefs" | "setReadState" | "onChannelDeleted"
-  >;
+  evict: Pick<ChannelMenuDeps, "setChannelPrefs" | "onChannelDeleted">;
 }
 
 interface PendingExit {

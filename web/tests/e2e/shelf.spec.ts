@@ -342,6 +342,11 @@ for (const theme of ["buzz", "buzz-dark"] as const) {
             .find((url) => url.startsWith(FILES_URL)),
         )
         .toContain(`path=${encodeURIComponent(`${RTS_DIR}/game-C.html`)}`);
+      // Open in Files stays inside Buzz: the sidebar stays, never full screen.
+      await expect(
+        page.getByTestId("channel-sidebar").filter({ visible: true }),
+      ).toHaveCount(1);
+      await expect(page.getByTestId("web-panel-dock-unfocus")).toHaveCount(0);
       await page.keyboard.press("Escape");
 
       // The write-up's card opens its own tab; Jump lands on its message.
