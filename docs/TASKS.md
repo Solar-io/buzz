@@ -243,3 +243,16 @@ Plan: `~/.buzz/PLANS/VOICE_STREAMED_REPLIES_2026-10-04.md`.
 - [x] Step 5: `speakStream` in the player, 24820 subscription and stream routing in `useHuddleAgentSpeech`.
 - [ ] Steps 1-3 (buzz-acp harness side) — separate coder.
 - [ ] Step 6 live acceptance: baseline with harness switch off, then Kaiya on; read `window.__buzzVoiceLatency`.
+
+## Left-nav unread redesign (2026-10-05)
+
+Spec: [LEFT_NAV_ARCHITECTURE_REVIEW.md](LEFT_NAV_ARCHITECTURE_REVIEW.md) §3–4 (Sam chose the full redesign, option b).
+
+- [x] Phase 0: I5 unread lift + "N more · K unread"; I3 markSeen gated on visible + focused + shown (iOS app: visibility only); `window.__buzzUnreadTrace` ring (200) with marker sources.
+- [x] Phase 1: one conversation-activity store (`features/activity/conversationActivity.ts`) for every conversation, DMs included; `useDms` is a selector; `MessageToasts` registers `onArrival`; `useChannelActivity`, the DM sampler, the DM toast twin and `useUnreadCount` deleted; I2 live rule.
+- [x] Phase 2: one read-marker store (`features/activity/readMarkers.ts`); NIP-RS merges/publishes through it; window event removed; other tabs merge via `storage`; "Mark read" uses the newest message.
+- [x] Same-second arrivals: a second message in one second toasts and counts.
+- [x] Phase 3: per-row pointer hold; `tests/e2e/unread-live.spec.ts` (resting pointer + two-device hidden-B).
+- [ ] Desktop app marks the active conversation read with no visibility/focus gate (`desktop/src/features/channels/ui/useChannelOpenReadState.ts`) and publishes it over NIP-RS — still a cause-A source for every web client. Needs the same I3 gate on desktop (out of this change's scope).
+- [ ] `NotificationRuntime` (OS notifications, sound, tab badge) still runs its own since-now kind-9 REQ; fold it onto the store's `onArrival`.
+- [ ] Run the review's §5 QA table (22 scenarios) on a live client, mouse on and off the nav.
