@@ -1483,6 +1483,103 @@ impl AcpClient {
         }
     }
 
+    /// Read what an IDLE agent wrote between turns, so the resume journal
+    /// stays current while no prompt is in flight.
+    ///
+    /// claude-agent-acp self-wakes an idle session when a background shell
+    /// finishes after `end_turn`: Claude Code runs an unprompted turn and
+    /// streams `session/update`s (`async_task_state_update`,
+    /// `async_task_spawned`, …) that nobody reads until the next prompt. The
+    /// main loop calls this on every idle slot on a short tick.
+    ///
+    /// Reads until the agent has been quiet for `quiet` (the already-buffered
+    /// lines arrive back-to-back, so they are all consumed), capped at
+    /// `max_total` so a slot that streams continuously cannot hold the main
+    /// loop; the rest is read on the next tick. Dispatch is the same policy as
+    /// [`read_until_response`](Self::read_until_response): `session/update`
+    /// feeds the journal, `session/request_permission` is answered with
+    /// `allow_once` (else `reject_once`), and any other request gets -32601 so
+    /// the agent never hangs on a reply. Messages with an `id` and no `method`
+    /// are late responses and are ignored, as before.
+    ///
+    /// Returns the number of lines consumed, or the error that ended the read
+    /// (agent exited, oversized line, failed reply write). Callers log it;
+    /// the dead slot is found by the ordinary turn/respawn paths.
+    pub async fn drain_idle_updates(
+        &mut self,
+        quiet: std::time::Duration,
+        max_total: std::time::Duration,
+    ) -> Result<usize, AcpError> {
+        let hard = tokio::time::Instant::now() + max_total;
+        let mut consumed = 0usize;
+        loop {
+            let remaining = hard.saturating_duration_since(tokio::time::Instant::now());
+            if remaining.is_zero() {
+                return Ok(consumed);
+            }
+            let line = match tokio::time::timeout(quiet.min(remaining), self.reader.next()).await {
+                Err(_) => return Ok(consumed),
+                Ok(None) => return Err(AcpError::AgentExited),
+                Ok(Some(Err(LinesCodecError::MaxLineLengthExceeded))) => {
+                    return Err(AcpError::Protocol(
+                        "agent stdout line exceeded 10MB limit".into(),
+                    ));
+                }
+                Ok(Some(Err(e))) => return Err(AcpError::Io(std::io::Error::other(e))),
+                Ok(Some(Ok(line))) => line,
+            };
+            consumed += 1;
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            tracing::debug!(target: "acp::wire", "← (idle) {trimmed}");
+            let Ok(msg) = serde_json::from_str::<serde_json::Value>(trimmed) else {
+                tracing::warn!(target: "acp::wire", "idle drain: unparseable line skipped");
+                continue;
+            };
+            self.observe("acp_read", msg.clone());
+            let Some(method) = msg.get("method").and_then(|v| v.as_str()) else {
+                // A late response to a timed-out request: nothing waits on it.
+                continue;
+            };
+            match method {
+                "session/update" => {
+                    let _ = self.handle_session_update(&msg);
+                }
+                "_goose/unstable/session/update" => self.handle_goose_usage_update(&msg),
+                "session/request_permission" => {
+                    if let Err(e) = self.handle_permission_request(&msg).await {
+                        // A turn would fail here and `cancel_with_cleanup`
+                        // would answer `cancelled`; between turns there is no
+                        // cleanup, so answer it now or the agent hangs.
+                        let Some(id) = msg.get("id").cloned() else {
+                            return Err(e);
+                        };
+                        tracing::warn!(
+                            target: "acp::permission",
+                            "idle permission request id={id} unanswerable ({e}) — cancelling it"
+                        );
+                        self.write_ndjson(&permission_response_cancelled(&id))
+                            .await?;
+                        self.pending_permission_id = None;
+                    }
+                }
+                other => {
+                    if msg.get("id").is_some() {
+                        let err_resp = serde_json::json!({
+                            "jsonrpc": "2.0",
+                            "id": msg["id"],
+                            "error": {"code": -32601, "message": format!("Method not found: {other}")}
+                        });
+                        self.write_ndjson(&err_resp).await?;
+                    }
+                    tracing::debug!(target: "acp::wire", "idle drain: ignoring method {other}");
+                }
+            }
+        }
+    }
+
     /// Send a JSON-RPC **notification** — no `id` field, no response expected.
     ///
     /// Used for `session/cancel`. The absence of `id` is the JSON-RPC 2.0
