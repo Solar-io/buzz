@@ -30,7 +30,7 @@ export function useShellWebView(navKey: string): {
 } {
   const web = useActiveWebView();
   const files = useWebPanelDock();
-  const { show, hide, setFocus } = web;
+  const { show, hide } = web;
   const lastNavKey = useRef(navKey);
   useEffect(() => {
     if (lastNavKey.current !== navKey) {
@@ -46,9 +46,9 @@ export function useShellWebView(navKey: string): {
       panelId: pickFilesPanel(filesIds ? filesIds.split("\n") : [], mounted),
     });
   }, [show, filesIds, mounted]);
-  // "Open in Files" (`openInFiles`): each request brings Files up full screen
-  // (no sidebar, no Work strip — the file is there to be read or edited);
-  // the frame host loads that Files frame on the requested file.
+  // "Open in Files" (`openInFiles`): each request brings Files up inside
+  // Buzz (sidebar stays — never full screen); the frame host loads that
+  // Files frame on the requested file.
   // A request made before this shell mounted is not a new one.
   const pathNonce = useFilesPathRequest()?.nonce ?? 0;
   const handledNonce = useRef(pathNonce);
@@ -58,9 +58,8 @@ export function useShellWebView(navKey: string): {
     if (pathNonce !== handledNonce.current) {
       handledNonce.current = pathNonce;
       openFilesRef.current();
-      setFocus(true);
     }
-  }, [pathNonce, setFocus]);
+  }, [pathNonce]);
   const openLink = useCallback(
     (linkId: string) => show({ kind: "link", panelId: linkId }),
     [show],
