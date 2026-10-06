@@ -9,11 +9,7 @@ import { openInFiles } from "@/features/webPanels/filesPathStore";
 import { cn } from "@/shared/lib/cn";
 import { publicAppOrigin } from "@/shared/lib/relay-url";
 import { useFileTabs } from "../FileTabsProvider";
-import {
-  diskTrusted,
-  editedSinceShared,
-  reasonText,
-} from "../lib/diskDocument.ts";
+import { editedSinceShared, reasonText } from "../lib/diskDocument.ts";
 import { cleanQuote } from "../lib/fileComment.ts";
 import {
   fileKind,
@@ -35,6 +31,7 @@ import {
 import { useShelf } from "../ShelfProvider";
 import { useFileComments } from "../useFileComments.ts";
 import { useDiskDocument } from "../useDiskDocument.ts";
+import { useDiskTrusted } from "../useDiskTrusted.ts";
 import { type FileContent, useFileContent } from "../useFileContent.ts";
 import { useShareNames } from "../useShareNames.ts";
 import { AgentBox, FileThread } from "./FileComments";
@@ -162,11 +159,9 @@ export function FilePreview({
     [file.authorPubkey, comments],
   );
   const names = useShareNames(people);
-  const disk = useDiskDocument(
-    path,
-    filesUrl,
-    diskTrusted(file.authorPubkey, names.selfPubkey, names.isAgent),
-  );
+  // Registry-only trust for disk access — NOT names.isAgent (useDiskTrusted.ts).
+  const trusted = useDiskTrusted(file.authorPubkey);
+  const disk = useDiskDocument(path, filesUrl, trusted);
   const [viewShared, setViewShared] = useState(false);
   const live =
     disk.state.phase === "live" && disk.state.live ? disk.state.live : null;

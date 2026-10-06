@@ -69,13 +69,13 @@ test("a trusted share does ask stash (the spy can see requests)", async () => {
   assert.equal(state.reason, "signed-out");
 });
 
-test("diskTrusted: the viewer's own share or an agent's, nobody else", () => {
-  const agents = new Set(["agent"]);
-  const isAgent = (pubkey) => agents.has(pubkey);
-  assert.equal(diskTrusted("self", "self", isAgent), true);
-  assert.equal(diskTrusted("SELF", "self", isAgent), true);
-  assert.equal(diskTrusted("agent", "self", isAgent), true);
-  assert.equal(diskTrusted("human", "self", isAgent), false);
-  assert.equal(diskTrusted(null, "self", isAgent), false);
-  assert.equal(diskTrusted("human", null, isAgent), false);
+test("diskTrusted: the viewer's own share or a REGISTERED agent's, nobody else", () => {
+  const registered = new Set(["agent"]);
+  assert.equal(diskTrusted("self", "self", registered), true);
+  assert.equal(diskTrusted("SELF", "self", registered), true);
+  assert.equal(diskTrusted("agent", "self", registered), true);
+  assert.equal(diskTrusted("AGENT", "self", registered), true);
+  assert.equal(diskTrusted("human", "self", registered), false);
+  assert.equal(diskTrusted(null, "self", registered), false);
+  assert.equal(diskTrusted("human", null, registered), false);
 });

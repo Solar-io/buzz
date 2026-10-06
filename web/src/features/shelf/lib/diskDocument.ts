@@ -100,20 +100,23 @@ export function reasonText(reason: ReadonlyReason, host = "crichton"): string {
  * CONFUSED-DEPUTY GATE (security review, 2026-10-05). The disk path comes
  * from the share event, which any channel member can author, and disk mode
  * reads and writes that path with the VIEWER's stash session. So disk mode
- * is offered only for a share the viewer wrote, or one an agent of this
- * community wrote; anything else stays the snapshot and never reaches stash.
+ * is offered only for a share the viewer wrote, or one by an agent in the
+ * viewer's own owner-signed kind-30177 registry (`registered`, lowercase).
+ * Never the general agent set, which also trusts unverified observer frames.
+ * Anything else stays the snapshot and never reaches stash.
  */
 export function diskTrusted(
   authorPubkey: string | null | undefined,
   selfPubkey: string | null | undefined,
-  isAgent: (pubkey: string) => boolean,
+  registered: ReadonlySet<string>,
 ): boolean {
   if (!authorPubkey) {
     return false;
   }
+  const author = authorPubkey.toLowerCase();
   return (
-    (!!selfPubkey && authorPubkey.toLowerCase() === selfPubkey.toLowerCase()) ||
-    isAgent(authorPubkey)
+    (!!selfPubkey && author === selfPubkey.toLowerCase()) ||
+    registered.has(author)
   );
 }
 
