@@ -51,6 +51,8 @@ export default defineConfig({
         "**/new-channel.spec.ts",
         "**/sidebar-appearance.spec.ts",
         "**/sidebar-order.spec.ts",
+        "**/unread-live.spec.ts",
+        "**/unread-scenarios.spec.ts",
         "**/shortcut-bar.spec.ts",
         "**/work-shell.spec.ts",
         "**/work-status.spec.ts",

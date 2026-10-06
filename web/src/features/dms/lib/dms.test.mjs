@@ -8,12 +8,8 @@ import {
   extractOpenDmChannelId,
   parsePubkeyInput,
 } from "./dmInput.ts";
-import {
-  applyDmActivityEvent,
-  dmActivityFromEvents,
-  compareDmRecency,
-  dmActivityFilterBatches,
-} from "./dmActivity.ts";
+import { compareDmRecency, dmSummaries } from "./dmActivity.ts";
+import { createChannelActivityHandlers } from "../../channels/lib/channelActivity.ts";
 
 const SELF = "aa".repeat(32);
 const SAM = "bb".repeat(32);
@@ -171,9 +167,42 @@ test("extractOpenDmChannelId reads the relay response envelope", () => {
   assert.equal(extractOpenDmChannelId('{"accepted":true}'), null);
 });
 
-test("dmActivityFromEvents tracks the newest message per DM", () => {
+/**
+ * The DM list's samples come from the conversation-activity store's
+ * handlers now (left-nav phase 1): feed them events exactly as the relay
+ * would, then read the DM view through the shipped selector.
+ */
+function dmsFromEvents(events, dmIds = ["dm-1", "dm-2"], selfPubkey = SELF) {
+  const activityRef = { current: new Map() };
+  const handlers = createChannelActivityHandlers({
+    activityRef,
+    onActivityChange: () => {},
+    onLiveArrival: () => {},
+    onUnreadCountsChange: () => {},
+    readMarkers: () => ({}),
+    selfPubkey,
+  });
+  for (const ev of events) handlers.onEvent(ev);
+  handlers.onEose();
+  const channels = dmIds.map((id) => ({
+    id,
+    name: id,
+    type: "dm",
+    updatedAt: 1,
+    participantPubkeys: [SELF, SAM],
+  }));
+  return new Map(
+    dmSummaries(channels, activityRef.current).map((dm) => [
+      dm.channel.id,
+      dm.lastMessage,
+    ]),
+  );
+}
+
+test("DM samples track the newest message per DM", () => {
   const events = [
     event({
+      id: "a1",
       kind: 9,
       created_at: 100,
       pubkey: SAM,
@@ -181,6 +210,7 @@ test("dmActivityFromEvents tracks the newest message per DM", () => {
       tags: [["h", "dm-1"]],
     }),
     event({
+      id: "a2",
       kind: 9,
       created_at: 300,
       pubkey: SELF,
@@ -188,6 +218,7 @@ test("dmActivityFromEvents tracks the newest message per DM", () => {
       tags: [["h", "dm-1"]],
     }),
     event({
+      id: "a3",
       kind: 9,
       created_at: 200,
       pubkey: EVIE,
@@ -195,12 +226,13 @@ test("dmActivityFromEvents tracks the newest message per DM", () => {
       tags: [["h", "dm-2"]],
     }),
     event({
+      id: "a4",
       kind: 9,
       created_at: 400,
       tags: [], // no h tag — ignored, not a crash
     }),
   ];
-  const activity = dmActivityFromEvents(events);
+  const activity = dmsFromEvents(events);
   const dm1 = activity.get("dm-1");
   assert.equal(dm1.created_at, 300);
   assert.equal(dm1.authorPubkey, SELF);
@@ -208,7 +240,6 @@ test("dmActivityFromEvents tracks the newest message per DM", () => {
   const dm2 = activity.get("dm-2");
   assert.equal(dm2.created_at, 200);
   assert.equal(dm2.excerpt, "📷 image");
-  assert.equal(activity.size, 2);
 });
 
 test("compareDmRecency: a real message beats a newer metadata touch", () => {
@@ -262,62 +293,6 @@ test("compareDmRecency: ties break by name", () => {
   );
 });
 
-test("dmActivityFilterBatches: one limit-1 filter per DM, max 10 per REQ", () => {
-  const ids = Array.from({ length: 23 }, (_, i) => `dm-${i}`);
-  const batches = dmActivityFilterBatches(ids);
-  assert.deepEqual(
-    batches.map((batch) => batch.length),
-    [10, 10, 3],
-  );
-  const flat = batches.flat();
-  for (const [index, filter] of flat.entries()) {
-    assert.deepEqual(filter, { kinds: [9], "#h": [`dm-${index}`], limit: 1 });
-  }
-});
-
-test("dmActivityFilterBatches: empty and small inputs", () => {
-  assert.deepEqual(dmActivityFilterBatches([]), []);
-  assert.deepEqual(dmActivityFilterBatches(["only"]), [
-    [{ kinds: [9], "#h": ["only"], limit: 1 }],
-  ]);
-});
-
-// --- activity kind discipline (D-025 phantom DM, 2026-09-15) --------------
-
-import { DM_ACTIVITY_KIND } from "./dmActivity.ts";
-
-const H = (id) => [["h", id]];
-
-test("only kind-9 events count as DM activity, whatever the sub delivered", () => {
-  // The phantom: a non-message event carrying the DM's own h tag — status
-  // text as content, workflow-run output, anything — used to become the
-  // DM's ordering key AND its sidebar preview. The sampler's filter asks
-  // for kind 9; the reader must not trust the delivery to have honored it.
-  const map = dmActivityFromEvents([
-    { kind: 30315, created_at: 200, content: "status flip", tags: H("dm-a") },
-    {
-      kind: 44100,
-      created_at: 300,
-      content: "workflow run text",
-      tags: H("dm-a"),
-    },
-    { kind: 9, created_at: 100, content: "real message", tags: H("dm-a") },
-    { kind: 9, created_at: 250, content: "newest real", tags: H("dm-b") },
-  ]);
-  assert.equal(map.size, 2);
-  assert.equal(map.get("dm-a").excerpt, "real message");
-  assert.equal(map.get("dm-a").created_at, 100);
-  assert.equal(map.get("dm-b").excerpt, "newest real");
-  assert.equal(DM_ACTIVITY_KIND, 9);
-});
-
-test("an event with no h tag never lands on any DM", () => {
-  const map = dmActivityFromEvents([
-    { kind: 9, created_at: 10, content: "no channel", tags: [["p", "x"]] },
-  ]);
-  assert.equal(map.size, 0);
-});
-
 // ---- silent scheduled wakes in DMs (Sam 2026-09-30) ----
 
 /** buzz-services reminder identity — the wake sender. */
@@ -346,25 +321,19 @@ const dmWake = (target) =>
     ],
   });
 
-test("applyDmActivityEvent: a wake for another DM member never becomes the DM's sample", () => {
-  const previous = [dmHuman()];
-  const next = applyDmActivityEvent(previous, dmWake(EVIE), SELF);
-  assert.equal(next, previous);
-  const sample = dmActivityFromEvents(next).get("dm-1");
+test("a wake for another DM member never becomes the DM's sample", () => {
+  const sample = dmsFromEvents([dmHuman(), dmWake(EVIE)], ["dm-1"]).get("dm-1");
   assert.equal(sample.created_at, 100);
   assert.equal(sample.authorPubkey, SAM);
 });
 
-test("applyDmActivityEvent: a wake that p-tags the viewer becomes the sample like any message", () => {
-  const next = applyDmActivityEvent([dmHuman()], dmWake(SELF), SELF);
-  const sample = dmActivityFromEvents(next).get("dm-1");
+test("a wake that p-tags the viewer becomes the DM's sample like any message", () => {
+  const sample = dmsFromEvents([dmHuman(), dmWake(SELF)], ["dm-1"]).get("dm-1");
   assert.equal(sample.created_at, 110);
   assert.equal(sample.authorPubkey, WAKE_SERVICE);
-  assert.equal(next.length, 1);
 });
 
-test("applyDmActivityEvent: newest-wins per DM, stale arrivals return the same list", () => {
-  const previous = [dmHuman()];
+test("DM samples are newest-wins: a stale arrival changes nothing", () => {
   const stale = event({
     id: "stale",
     kind: 9,
@@ -372,7 +341,6 @@ test("applyDmActivityEvent: newest-wins per DM, stale arrivals return the same l
     pubkey: EVIE,
     tags: [["h", "dm-1"]],
   });
-  assert.equal(applyDmActivityEvent(previous, stale, SELF), previous);
   const newer = event({
     id: "newer",
     kind: 9,
@@ -380,8 +348,12 @@ test("applyDmActivityEvent: newest-wins per DM, stale arrivals return the same l
     pubkey: EVIE,
     tags: [["h", "dm-1"]],
   });
-  assert.deepEqual(
-    applyDmActivityEvent(previous, newer, SELF).map((e) => e.id),
-    ["newer"],
+  assert.equal(
+    dmsFromEvents([dmHuman(), stale], ["dm-1"]).get("dm-1").created_at,
+    100,
+  );
+  assert.equal(
+    dmsFromEvents([dmHuman(), stale, newer], ["dm-1"]).get("dm-1").created_at,
+    120,
   );
 });

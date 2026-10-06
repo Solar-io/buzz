@@ -110,6 +110,15 @@ export interface MockRelay {
   remove: (drop: (event: MockEvent) => boolean) => void;
   /** What a REQ would be served right now. */
   served: () => readonly MockEvent[];
+  /** Cut every open socket (a dropped/throttled connection); the client redials. */
+  dropConnections: () => void;
+  /**
+   * Relay-side CLOSED for every open subscription whose filters pass `pick`
+   * (a rate-limited batch). The relay forgets it; nothing more is sent.
+   */
+  closeSubs: (pick: (filters: Filter[]) => boolean, reason?: string) => number;
+  /** Wire volume the mock served: REQs seen, EVENT frames and bytes sent. */
+  stats: { reqs: number; eventFrames: number; bytes: number };
 }
 
 export interface MockRelayOptions {
@@ -149,8 +158,10 @@ export async function installMockRelay(
   /** Open subscriptions per socket, for {@link MockRelay.push}. */
   const sockets: Array<{
     send: (frame: string) => void;
+    close: () => void;
     subs: Map<string, Filter[]>;
   }> = [];
+  const stats = { reqs: 0, eventFrames: 0, bytes: 0 };
   const handle: MockRelay = {
     published,
     add: (...more: MockEvent[]) => {
@@ -176,11 +187,46 @@ export async function installMockRelay(
       served = served.filter((event) => !drop(event));
     },
     served: () => [...served],
+    stats,
+    dropConnections: () => {
+      for (const socket of sockets.splice(0)) {
+        try {
+          socket.close();
+        } catch {
+          // Already closed.
+        }
+      }
+    },
+    closeSubs: (pick, reason = "rate-limited: too many REQs") => {
+      let closed = 0;
+      for (const socket of sockets) {
+        for (const [subId, filters] of [...socket.subs]) {
+          if (pick(filters)) {
+            socket.subs.delete(subId);
+            try {
+              socket.send(JSON.stringify(["CLOSED", subId, reason]));
+            } catch {
+              // Closed socket.
+            }
+            closed += 1;
+          }
+        }
+      }
+      return closed;
+    },
   };
 
   await page.routeWebSocket(/.*/, (ws) => {
     const subs = new Map<string, Filter[]>();
-    sockets.push({ send: (frame) => ws.send(frame), subs });
+    sockets.push({
+      send: (frame) => {
+        stats.bytes += frame.length;
+        if (frame.startsWith('["EVENT"')) stats.eventFrames += 1;
+        ws.send(frame);
+      },
+      close: () => ws.close(),
+      subs,
+    });
     ws.onMessage((raw) => {
       if (typeof raw !== "string") {
         return;
@@ -200,9 +246,13 @@ export async function installMockRelay(
         const subId = String(message[1]);
         const filters = message.slice(2) as Filter[];
         subs.set(subId, filters);
+        stats.reqs += 1;
         for (const event of served) {
           if (filters.some((filter) => matches(filter, event))) {
-            ws.send(JSON.stringify(["EVENT", subId, event]));
+            const frame = JSON.stringify(["EVENT", subId, event]);
+            stats.eventFrames += 1;
+            stats.bytes += frame.length;
+            ws.send(frame);
           }
         }
         ws.send(JSON.stringify(["EOSE", subId]));

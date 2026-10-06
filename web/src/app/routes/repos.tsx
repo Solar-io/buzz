@@ -2,11 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useAuth } from "@/features/auth/ui/AuthProvider";
 import { LoginPage } from "@/features/auth/ui/LoginPage";
-import {
-  useChannelActivity,
-  useChannelMessages,
-  useProfiles,
-} from "@/features/channels/hooks";
+import { useChannelMessages, useProfiles } from "@/features/channels/hooks";
 import {
   useChannels,
   type ChannelSummary,
@@ -22,14 +18,11 @@ import { replyCounts } from "@/features/channels/lib/messageBuffer.ts";
 import { timelineReplyCounts } from "@/features/channels/lib/threadSummaryEvent.ts";
 import { unreactToMessage } from "@/features/channels/lib/unreact.ts";
 import { useOwnPubkey } from "@/shared/lib/useOwnPubkey";
-import {
-  loadReadState,
-  markSeen,
-  saveReadState,
-  type ReadState,
-} from "@/features/channels/lib/readState.ts";
-import { notifyReadStateLocalChange } from "@/features/channels/lib/readStateSync.ts";
 import { useReadStateSync } from "@/features/channels/lib/useReadStateSync.ts";
+import { useMarkShownSeen } from "@/features/activity/useMarkShownSeen.ts";
+import { markSeen } from "@/features/activity/readMarkers.ts";
+import { useChannelMarkers } from "@/features/activity/useReadMarkers.ts";
+import { useShellConversationActivity } from "@/features/activity/useConversationActivity.ts";
 import { useFavoritesSync } from "@/features/channels/lib/useFavoritesSync.ts";
 import { activeTyping } from "@/features/channels/lib/typing.ts";
 import { usePermalinkCleanup } from "@/features/channels/lib/usePermalinkCleanup.ts";
@@ -80,7 +73,6 @@ import { useObserverStore } from "@/features/agents/ObserverProvider";
 import { useAgentRegistry } from "@/features/agents/useAgentRegistry";
 import { useDmAgentActivity } from "@/features/agents/useDmAgentActivity.ts";
 import { AgentPortraitOverlay } from "@/features/agents/ui/AgentPortraitOverlay";
-import { useDms } from "@/features/dms/hooks";
 import { dmDisplayName } from "@/features/dms/lib/dmNaming.ts";
 import { useHiddenDms } from "@/features/dms/useHiddenDms.ts";
 import { channelMenuItems } from "@/features/sidebar/lib/channelMenuItems.ts";
@@ -130,28 +122,27 @@ function ChannelBrowser() {
   const current = channels.find((channel) => channel.id === selectedId) ?? null;
 
   const selfPubkey = useOwnPubkey();
-  // DMs ride the same kind:39000 list (relay `t` tag); they get their own
-  // sidebar section and participant-based names.
+  const { session, status: relayStatus } = useRelaySession();
+  // Read state: THE read-marker store (features/activity/readMarkers.ts) —
+  // opening a channel marks its newest message seen; badges and the
+  // timeline unread divider derive from the marker; NIP-RS merges into it.
+  const readState = useChannelMarkers();
+  // THE conversation-activity feed (features/activity): every conversation,
+  // DMs included, on one subscription family, so a row, its pill and its
+  // toast read one state (left-nav review, phase 1). DMs ride the same
+  // kind:39000 list (relay `t` tag) and get their own sidebar section.
   const {
+    store: activityStore,
+    state: channelActivity,
     dms,
     channelsWithoutDms: unfilteredChannels,
-    dmSamplingSettled,
-  } = useDms(channels, selfPubkey);
-  // Newest-message feed over every non-DM channel the sidebar can show:
-  // the shell owns it ONCE so the unread dots and the message toasts read
-  // the same subscription (archived channels hide from the sidebar, so they
-  // stay out of the REQ — same filter NotificationRuntime applies).
-  const channelActivityIds = useMemo(
-    () =>
-      unfilteredChannels
-        .filter((channel) => !channel.archived)
-        .map((channel) => channel.id),
-    [unfilteredChannels],
-  );
-  const dmChannelIds = useMemo(
-    () => dms.map(({ channel }) => channel.id),
-    [dms],
-  );
+  } = useShellConversationActivity({
+    session,
+    channels,
+    selfPubkey,
+    readMarkers: readState,
+  });
+  const dmSamplingSettled = channelActivity.criticalSettled;
   const dmParticipantPubkeys = useMemo(
     () =>
       dms.flatMap((dm) =>
@@ -163,7 +154,6 @@ function ChannelBrowser() {
   const dmName = (participantPubkeys: string[]): string =>
     dmDisplayName(participantPubkeys, selfPubkey ?? "", dmProfiles);
 
-  const { session, status: relayStatus } = useRelaySession();
   const huddleSession = useHuddleSession();
   const channelId = current?.id ?? "";
   const {
@@ -176,17 +166,6 @@ function ChannelBrowser() {
     historyExhausted,
     forgetOwnReaction,
   } = useChannelMessages(current?.id ?? null);
-  // Read state: opening a channel marks its newest message seen; badges and
-  // the timeline unread divider derive from the marker.
-  const [readState, setReadState] = useState<ReadState>(() => loadReadState());
-  // Counting activity feed: newest samples PLUS live unread counts. Lives
-  // after readState/selfPubkey because it consumes both — a marker move
-  // re-opens the counting windows at the new `since`, and a locked key
-  // (selfPubkey null) transiently over-counts until identity lands.
-  const channelActivity = useChannelActivity(channelActivityIds, {
-    readMarkers: readState,
-    selfPubkey,
-  });
   // Idle-prefetch the most recent conversations into the timeline store so
   // switching to one paints from memory (background-sync plan §4.3).
   useTimelinePrefetch({
@@ -195,27 +174,15 @@ function ChannelBrowser() {
     openId: current?.id ?? null,
   });
   const newestMessageAt = messages[messages.length - 1]?.createdAt ?? 0;
-  useEffect(() => {
-    if (channelId === "" || newestMessageAt === 0) {
-      return;
-    }
-    setReadState((previous) => {
-      const next = markSeen(previous, channelId, newestMessageAt);
-      if (next !== previous) {
-        saveReadState(next);
-        notifyReadStateLocalChange();
-      }
-      return next;
-    });
-  }, [channelId, newestMessageAt]);
-  // Cross-browser sync (NIP-RS): boot-merge the relay's markers in, and let
-  // the debounced publisher carry every local persist above to other
-  // browsers. Strictly additive — see readStateSync.ts.
-  useReadStateSync({
-    session,
-    selfPubkey,
-    onSynced: () => setReadState(loadReadState()),
-  });
+  const markOpenSeen = useCallback((id: string, at: number) => {
+    markSeen(id, at, "open");
+  }, []);
+  // Cross-device sync (NIP-RS): boot-merge the relay's markers into the
+  // store, and let the debounced publisher carry every local move to the
+  // other devices. Strictly additive — see readStateSync.ts.
+  useReadStateSync({ session, selfPubkey });
+  const newestActivityAt = (id: string) =>
+    channelActivity.activity.get(id)?.createdAt;
   // React / edit / delete / share / typing / send for the open channel.
   const messageActions = useMessageActions({
     session,
@@ -359,6 +326,14 @@ function ChannelBrowser() {
   const { web, openFiles, openLink, activeTitle, layerMode } = useShellWebView(
     `${selectedId ?? ""}|${view ?? ""}`,
   );
+  // I3: only a conversation actually on screen is marked seen.
+  const conversationShown = view === undefined && web.state.active === null;
+  useMarkShownSeen({
+    channelId,
+    newestMessageAt,
+    shown: conversationShown,
+    markSeen: markOpenSeen,
+  });
   // Sidebar + buttons: section-header plus buttons open the create dialogs.
   const [newChannelOpen, setNewChannelOpen] = useState(false);
   const [newDmOpen, setNewDmOpen] = useState(false);
@@ -379,7 +354,6 @@ function ChannelBrowser() {
     refreshChannels,
     evict: {
       setChannelPrefs,
-      setReadState,
       onChannelDeleted: forgetChannelFromList,
     },
   });
@@ -504,7 +478,7 @@ function ChannelBrowser() {
             session,
             channelPrefs,
             setChannelPrefs,
-            setReadState,
+            newestActivityAt,
             refreshChannels,
             onChannelDeleted: forgetChannelFromList,
             selectedId,
@@ -668,8 +642,8 @@ function ChannelBrowser() {
       }}
       toasts={{
         selectedId: selectedId ?? null,
-        channelLiveEvents: channelActivity.onLiveEvent,
-        dmChannelIds,
+        shownId: conversationShown ? (selectedId ?? null) : null,
+        onArrival: activityStore.onArrival,
         channelPrefs,
         profiles: dmProfiles,
         onOpenChannel: selectChannel,
@@ -690,6 +664,7 @@ function ChannelBrowser() {
                   read: readState,
                   activity: channelActivity.activity,
                   selfPubkey,
+                  unreadCounts: channelActivity.unreadCounts,
                 },
               )}
               onOpenView={openView}
@@ -803,7 +778,7 @@ function ChannelBrowser() {
                       session,
                       channelPrefs,
                       setChannelPrefs,
-                      setReadState,
+                      newestActivityAt,
                       refreshChannels,
                       onChannelDeleted: forgetChannelFromList,
                       selectedId,

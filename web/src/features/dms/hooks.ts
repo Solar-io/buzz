@@ -1,173 +1,38 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo } from "react";
 import type { RelaySession } from "@/shared/api/relay-session";
-import { useRelaySession } from "@/shared/api/RelaySessionProvider";
-import type { SignedNostrEvent } from "@/shared/lib/nostr-signer";
 import { signNostrEvent } from "@/shared/lib/nostr-signer";
 import type { ChannelSummary } from "@/features/channels/lib/channelFromEvent.ts";
-import {
-  applyDmActivityEvent,
-  dmActivityFromEvents,
-  compareDmRecency,
-  dmActivityFilterBatches,
-  DM_ACTIVITY_KIND,
-  type DmLastMessage,
-} from "./lib/dmActivity.ts";
+import type { ChannelActivityMap } from "@/features/channels/lib/channelActivity.ts";
+import { type DmSummary, dmSummaries } from "./lib/dmActivity.ts";
 import { extractOpenDmChannelId } from "./lib/dmInput.ts";
-import {
-  timelineStore,
-  warmTap,
-} from "@/features/channels/lib/timelineStore.ts";
 
-const warmFromDms = warmTap(timelineStore, "dms");
-
-export interface DmSummary {
-  channel: ChannelSummary;
-  /** Last kind:9 timestamp seen for this DM (0 = never sampled). */
-  lastActivity: number;
-  /** Newest sampled message (author + excerpt) for the sidebar preview row. */
-  lastMessage: DmLastMessage | null;
-}
+export type { DmSummary } from "./lib/dmActivity.ts";
 
 /**
  * Split the channel list into DMs (relay `t` tag) with activity ordering.
- * One subscription's worth of recency (see useDmActivity) drives the sort;
- * channels with no sampled activity fall back to metadata recency.
+ *
+ * A pure selector over the conversation-activity store's samples
+ * (features/activity): DMs ride the same subscription family as every other
+ * conversation, so the row, its pill and its toast can never read different
+ * feeds again (LEFT_NAV_ARCHITECTURE_REVIEW.md, phase 1 — this hook used to
+ * own a twin per-DM sampler).
  */
 export function useDms(
   channels: ChannelSummary[],
-  /** Viewer's key — lets the sampler skip wakes addressed to someone else. */
-  selfPubkey: string | null,
+  activity: ChannelActivityMap,
 ): {
   dms: DmSummary[];
   channelsWithoutDms: ChannelSummary[];
-  /** True when every per-DM sampling batch hit EOSE (or no DMs exist). */
-  dmSamplingSettled: boolean;
 } {
-  const dmIds = useMemo(
-    () => channels.filter((c) => c.type === "dm").map((c) => c.id),
-    [channels],
+  const dms = useMemo(
+    () => dmSummaries(channels, activity),
+    [channels, activity],
   );
-  const { activity, settled } = useDmActivity(dmIds, selfPubkey);
-  const dms = useMemo(() => {
-    const list = channels
-      .filter((c) => c.type === "dm")
-      .map((channel) => ({
-        channel,
-        lastActivity: activity.get(channel.id)?.created_at ?? 0,
-        lastMessage: activity.get(channel.id) ?? null,
-      }));
-    // Most recent ACTIVITY first: a real message beats a metadata touch,
-    // and only never-messaged DMs fall back to their creation time
-    // (Sam 2026-09-02: "they should sort based on most recent activity").
-    list.sort((a, b) =>
-      compareDmRecency(
-        {
-          lastActivity: a.lastActivity,
-          updatedAt: a.channel.updatedAt,
-          name: a.channel.name,
-        },
-        {
-          lastActivity: b.lastActivity,
-          updatedAt: b.channel.updatedAt,
-          name: b.channel.name,
-        },
-      ),
-    );
-    return list;
-  }, [channels, activity]);
   const channelsWithoutDms = useMemo(
     () => channels.filter((c) => c.type !== "dm"),
     [channels],
   );
-  return { dms, channelsWithoutDms, dmSamplingSettled: settled };
-}
-
-/**
- * Recency sample across every known DM: ONE kind:9 subscription with an
- * #h filter over all DM ids. Resubscribes only when the DM id SET changes
- * (joined key), so a growing DM list stays cheap. Also reports when the
- * durable window has settled (EOSE across every batch) — the default-open
- * pick waits on that signal so a cold start does not decide before the
- * samples exist (D-025 round 3).
- */
-function useDmActivity(
-  dmIds: string[],
-  selfPubkey: string | null,
-): {
-  activity: Map<string, DmLastMessage>;
-  settled: boolean;
-} {
-  const { session } = useRelaySession();
-  const [events, setEvents] = useState<SignedNostrEvent[]>([]);
-  const [settled, setSettled] = useState(false);
-  /**
-   * Live-updating recency. History (pre-EOSE) and live arrivals share one
-   * path: both come from THIS hook's own per-DM `#h`-scoped subscriptions,
-   * and that wire was verified clean end to end on 2026-09-15 (frame-level
-   * capture with literal sub prefixes: per-DM filters never received
-   * foreign events), so every event here is the DM's own traffic and will
-   * appear in that DM's own history. The phantom-DM incident's app-side
-   * consumption defect was consuming a DIFFERENT feed's channel-scoped
-   * events as DM keys — nothing here reads those.
-   *
-   * (Until 2026-09-17 events after EOSE were dropped wholesale — a
-   * containment whose deliberate cost, "a new DM message does not re-sort
-   * the sidebar until reload", read as a live defect: the toast feed still
-   * fired, so messages arrived with no re-sort AND no unread dot on the
-   * row, both of which derive from this map. The freeze is lifted; the
-   * settled signal remains EOSE-based for the default-open gate.)
-   */
-  // Pubkeys are comma-free, so the join is a lossless set key.
-  const idsKey = useMemo(
-    () => Array.from(new Set(dmIds)).sort().join(","),
-    [dmIds],
-  );
-  useEffect(() => {
-    const ids = idsKey ? idsKey.split(",") : [];
-    if (ids.length === 0) {
-      setEvents([]);
-      setSettled(true);
-      return;
-    }
-    setEvents([]);
-    setSettled(false);
-    // Exact per-DM sampling (a shared limit starves quiet DMs) packed into
-    // multi-filter REQs so mount does not fire one REQ per DM — the burst
-    // tripped the relay's concurrency limiter and sibling subs (profiles!)
-    // got refused, blanking sidebar names/photos.
-    const batches = dmActivityFilterBatches(ids);
-    let awaitingEose = batches.length;
-    const unsubscribes = batches.map((filters) =>
-      session.subscribe(filters, {
-        onEvent: (event) => {
-          if (event.kind !== DM_ACTIVITY_KIND) return;
-          // Warm tap: the newest DM message lands in the timeline store, so
-          // opening the DM paints it without waiting on the network.
-          warmFromDms(event);
-          // Newest-wins per DM; a wake for someone else never becomes the
-          // sample (applyDmActivityEvent), so it cannot dot or re-sort a row.
-          setEvents((previous) =>
-            applyDmActivityEvent(previous, event, selfPubkey),
-          );
-        },
-        onEose: () => {
-          awaitingEose -= 1;
-          if (awaitingEose <= 0) {
-            setSettled(true);
-          }
-        },
-        // The default-conversation pick waits on these batches' EOSE.
-        priority: "critical",
-      }),
-    );
-    return () => {
-      for (const unsubscribe of unsubscribes) {
-        unsubscribe();
-      }
-    };
-  }, [session, idsKey, selfPubkey]);
-  const activity = useMemo(() => dmActivityFromEvents(events), [events]);
-  return { activity, settled };
+  return { dms, channelsWithoutDms };
 }
 
 export interface OpenDmResult {

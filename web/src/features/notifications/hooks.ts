@@ -1,13 +1,15 @@
 import {
   useCallback,
   useEffect,
-  useMemo,
   useRef,
   useState,
   useSyncExternalStore,
 } from "react";
-import { useRelaySession } from "@/shared/api/RelaySessionProvider";
-import type { SignedNostrEvent } from "@/shared/lib/nostr-signer";
+import type { ConversationActivityStore } from "@/features/activity/conversationActivity.ts";
+import {
+  isPageAttended,
+  usePageAttended,
+} from "@/features/activity/pageAttention.ts";
 import { loadSeed } from "@/shared/lib/localSeed";
 import { loadChannelPrefs } from "@/features/channels/lib/channelPrefs.ts";
 import type { Profile } from "@/features/channels/hooks";
@@ -33,9 +35,6 @@ import {
 } from "./lib/settingsStore.ts";
 import { playNotificationSound, soundSlotFor } from "./lib/sound.ts";
 import { formatTitleBadge, stripTitleBadge } from "./lib/titleBadge.ts";
-
-/** Chat messages. Reactions, typing and system rows never notify. */
-const KIND_CHAT_MESSAGE = 9;
 
 // PROFILE_SEED_KEY ("profiles:v1") is imported from channels/hooks — this
 // file only reads the seed for notification names, and the storage contract
@@ -79,27 +78,6 @@ export function useNotificationPermission(): NotificationPermissionState {
   return permission;
 }
 
-/** True while the tab is backgrounded. */
-export function useDocumentHidden(): boolean {
-  const [hidden, setHidden] = useState(
-    () =>
-      typeof document !== "undefined" && document.visibilityState === "hidden",
-  );
-  useEffect(() => {
-    const onChange = () => setHidden(document.visibilityState === "hidden");
-    onChange();
-    document.addEventListener("visibilitychange", onChange);
-    return () => document.removeEventListener("visibilitychange", onChange);
-  }, []);
-  return hidden;
-}
-
-/**
- * Explicit `#h` values the relay accepts in one REQ.
- * `MAX_EXPLICIT_CHANNEL_VALUES` in `crates/buzz-relay/src/handlers/req.rs`.
- */
-const MAX_CHANNELS_PER_REQ = 128;
-
 export interface NotificationRuntimeOptions {
   selfPubkey: string | null;
   /** Channel currently open on screen; null when none is selected. */
@@ -112,6 +90,12 @@ export interface NotificationRuntimeOptions {
    * itself would open a second kind:39000 REQ duplicating the shell's.
    */
   channels: ChannelSummary[];
+  /**
+   * Live arrivals from the shell's conversation-activity store — the same
+   * feed the rows and toasts read (left-nav QA #9: this runtime used to
+   * open its own since-now kind-9 REQ, a second definition of "new").
+   */
+  onArrival: ConversationActivityStore["onArrival"];
 }
 
 export interface NotificationRuntimeState {
@@ -133,43 +117,27 @@ function readAuthorName(pubkey: string): string {
 export { readAuthorName };
 
 /**
- * The whole browser-side notification job: one live kind:9 subscription, the
- * OS notification, and the tab-title badge.
- *
- * ## Why the subscription is scoped by `#h`
- *
- * The obvious filter for "notify me about mentions and DMs" is
- * `{kinds:[9], "#p":[self]}` — no channel list needed, and the relay answers
- * it correctly for STORED events. It is nonetheless wrong, and wrong in the
- * silent way: it returns history and then never delivers another message.
- *
- * `SubscriptionRegistry::fan_out_scoped`
- * (`crates/buzz-relay/src/subscription.rs:387`) branches on the event's
- * channel: an event WITH a channel id is matched only against the
- * channel-keyed indexes, and the global `(kind, #p)` index is consulted only
- * for channel-less events — "Channel-scoped subscriptions are never in these
- * indexes, preserving the scoping invariant". A kind:9 always carries `h`, so
- * a globally-scoped subscription is never a live fan-out candidate for one.
- * Measured against the dev relay: the `#p`-only filter received EOSE and then
- * nothing when a matching message was published; adding `#h` delivered it.
- *
- * So the filter carries `#h` for every channel worth alerting about, and adds
- * `#p` on top in "mentions" mode — which keeps the relay doing the mention
- * filtering while staying inside the channel index.
- *
- * `since: now` makes it live-only: no backfill, so opening the app never
- * fires a burst of notifications for messages already read. A reconnect
- * replays the REQ with that same `since` and can redeliver, so seen event ids
- * are remembered (capped) and repeats are dropped.
+ * The whole browser-side notification job: the OS notification, the sound
+ * and the tab-title badge, driven by the conversation-activity store's live
+ * arrivals (`onArrival`). The store's REQs are `#h`-scoped (a global `#p`
+ * filter never receives a channel event live, `fan_out_scoped` in
+ * buzz-relay), its arrivals are already live-only, deduped across
+ * reconnect replays and silent during a replay round, and wakes for other
+ * members never arrive. "Mentions" mode filters here, from the message's
+ * `p` tags.
  */
 export function useNotificationRuntime(
   options: NotificationRuntimeOptions,
 ): NotificationRuntimeState {
-  const { selfPubkey, activeChannelId, onOpenChannel, channels } = options;
-  const { session } = useRelaySession();
+  const { selfPubkey, activeChannelId, onOpenChannel, channels, onArrival } =
+    options;
   const settings = useNotificationSettings();
   const permission = useNotificationPermission();
-  const hidden = useDocumentHidden();
+  // "Looking at it" is ONE rule (pageAttention.ts): a visible but
+  // unfocused window is not being looked at, exactly as for the read
+  // marker and the toast (QA #3b).
+  const attended = usePageAttended();
+  const hidden = !attended;
 
   const [badgeCount, setBadgeCount] = useState(0);
   const [lastDecision, setLastDecision] = useState<NotifyDecision | null>(null);
@@ -193,8 +161,6 @@ export function useNotificationRuntime(
     onOpenChannel,
     channels,
   };
-
-  const seenIds = useRef<Set<string>>(new Set());
 
   const clearBadge = useCallback(() => setBadgeCount(0), []);
 
@@ -220,53 +186,24 @@ export function useNotificationRuntime(
     };
   }, [badgeCount, settings.titleBadgeEnabled]);
 
-  const mode = settings.mode;
-  // Channels worth watching: every live channel, MUTED ONES INCLUDED. Mute
-  // means "no sound", not "no notification", so a muted channel must still
-  // reach the decision — which reads the mute from prefs on arrival and
-  // withholds only the sound. Leaving muted ids out of the REQ (as this did
-  // before) would silently turn mute back into "never tell me".
-  const watchedIds = useMemo(
+  useEffect(
     () =>
-      channels
-        .filter((channel) => !channel.archived)
-        .map((channel) => channel.id)
-        .sort(),
-    [channels],
-  );
-  // Channel ids are UUIDs, so a joined string is a lossless set key: the REQ
-  // reopens when the SET changes, not on every channel-list re-render.
-  const watchedKey = watchedIds.join(",");
-
-  useEffect(() => {
-    const ids = watchedKey ? watchedKey.split(",") : [];
-    if (mode === "none" || !selfPubkey || ids.length === 0) {
-      return;
-    }
-    const since = Math.floor(Date.now() / 1000);
-    // The relay refuses a REQ carrying more than MAX_EXPLICIT_CHANNEL_VALUES
-    // (128) explicit #h values — it answers CLOSED "restricted: too many
-    // explicit channels". Unchunked, an account in 129 channels loses
-    // notifications entirely and silently, which is the worst possible
-    // failure for a feature whose whole job is to tell you something happened.
-    const chunks: string[][] = [];
-    for (let i = 0; i < ids.length; i += MAX_CHANNELS_PER_REQ) {
-      chunks.push(ids.slice(i, i + MAX_CHANNELS_PER_REQ));
-    }
-
-    const handlers = {
-      onEvent: (event: SignedNostrEvent) => {
-        if (seenIds.current.has(event.id)) {
+      onArrival((entry) => {
+        const current = latest.current;
+        if (current.settings.mode === "none" || !current.selfPubkey) {
           return;
         }
-        seenIds.current.add(event.id);
-        if (seenIds.current.size > 500) {
-          // Cheapest possible bound: the set only exists to survive a
-          // reconnect replay, so dropping the oldest half is harmless.
-          seenIds.current = new Set(Array.from(seenIds.current).slice(-250));
-        }
-
-        const current = latest.current;
+        const event = {
+          id: entry.eventId ?? "",
+          kind: 9,
+          pubkey: entry.pubkey,
+          content: entry.preview,
+          created_at: entry.createdAt,
+          tags: [
+            ["h", entry.channelId],
+            ...(entry.mentions ?? []).map((pubkey) => ["p", pubkey]),
+          ],
+        };
         const prefs = loadChannelPrefs();
         const { channelId, message } = classifyMessage(event, {
           selfPubkey: current.selfPubkey,
@@ -276,8 +213,6 @@ export function useNotificationRuntime(
             .filter((channel) => channel.type === "dm")
             .map((channel) => channel.id),
         });
-        // Every REQ is #h-scoped, so a channel-less event cannot arrive; if
-        // one ever does there is nothing to navigate to, so it alerts nothing.
         if (channelId === null) {
           return;
         }
@@ -285,7 +220,8 @@ export function useNotificationRuntime(
           mode: current.settings.mode,
           desktopEnabled: current.settings.desktopEnabled,
           permission: current.permission,
-          documentHidden: current.hidden,
+          // Read at arrival time, not from the last render.
+          documentHidden: !isPageAttended(),
           soundEnabled: current.settings.soundEnabled,
         });
         setLastDecision(decision);
@@ -302,14 +238,12 @@ export function useNotificationRuntime(
           return;
         }
 
-        const entry = current.channels.find(
-          (channel) => channel.id === channelId,
-        );
+        const channel = current.channels.find((c) => c.id === channelId);
         const copy = notificationCopy({
-          authorName: readAuthorName(event.pubkey),
-          channelName: entry?.name ?? "",
+          authorName: readAuthorName(entry.pubkey),
+          channelName: channel?.name ?? "",
           isDm: message.isDm,
-          content: event.content,
+          content: entry.preview,
           channelId,
         });
         try {
@@ -317,8 +251,7 @@ export function useNotificationRuntime(
             body: copy.body,
             tag: copy.tag,
             icon: "/assets/icons/icon-192.png",
-            // Ours is the sound (or, for a muted channel, the silence); the
-            // OS must not stack its own chime on top.
+            // Ours is the sound; the OS must not stack its own chime on top.
             silent: true,
           });
           notification.onclick = () => {
@@ -331,28 +264,9 @@ export function useNotificationRuntime(
           // service worker (mobile Chrome). Nothing to recover: the badge
           // has already counted the message.
         }
-      },
-    };
-
-    const unsubscribes = chunks.map((chunk) =>
-      session.subscribe(
-        mode === "mentions"
-          ? {
-              kinds: [KIND_CHAT_MESSAGE],
-              "#h": chunk,
-              "#p": [selfPubkey],
-              since,
-            }
-          : { kinds: [KIND_CHAT_MESSAGE], "#h": chunk, since },
-        handlers,
-      ),
-    );
-    return () => {
-      for (const unsubscribe of unsubscribes) {
-        unsubscribe();
-      }
-    };
-  }, [session, mode, selfPubkey, watchedKey]);
+      }),
+    [onArrival],
+  );
 
   return { badgeCount, lastDecision, clearBadge };
 }

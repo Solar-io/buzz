@@ -12,10 +12,16 @@
 export interface SidebarListOptions {
   /** Rows an open section shows before the "N more" row. */
   visibleItems: number;
+  /**
+   * Unread rows past the cutoff that are still rendered (I5). Beyond this
+   * they are counted in "N more · K unread" instead.
+   */
+  maxUnreadLift: number;
 }
 
 export const SIDEBAR_LIST_OPTIONS: SidebarListOptions = {
   visibleItems: 6,
+  maxUnreadLift: 20,
 };
 
 /** What an open section renders. */
@@ -37,6 +43,12 @@ export interface TruncatedSection<T> {
  *   take the same space as the row it hides.
  * - The selected row always stays visible: if it falls past the cutoff it is
  *   appended after the first `limit` rows.
+ * - Unread is never hidden (invariant I5, LEFT_NAV_ARCHITECTURE_REVIEW.md):
+ *   every unread row past the cutoff is appended the same way, up to
+ *   `maxUnreadLift` of them. The order may be held (pointer hold, open-item
+ *   snapshot) so a newly unread row can sit anywhere — it is lifted, not
+ *   left behind "N more" with no indicator. Unread rows that still do not
+ *   fit are counted in the label: "N more · K unread".
  * - `expanded` (the user clicked "N more") shows everything with a
  *   "Show less" row.
  */
@@ -45,11 +57,16 @@ export function truncateSection<T>({
   limit,
   expanded,
   isSelected,
+  isUnread,
+  maxUnreadLift = SIDEBAR_LIST_OPTIONS.maxUnreadLift,
 }: {
   items: readonly T[];
   limit: number;
   expanded: boolean;
   isSelected?: (item: T) => boolean;
+  isUnread?: (item: T) => boolean;
+  /** Most unread rows appended past the cutoff. */
+  maxUnreadLift?: number;
 }): TruncatedSection<T> {
   if (items.length <= limit + 1) {
     return {
@@ -68,22 +85,40 @@ export function truncateSection<T>({
     };
   }
   const shown = items.slice(0, limit);
-  const selected = isSelected ? items.find(isSelected) : undefined;
-  if (selected !== undefined && !shown.includes(selected)) {
-    shown.push(selected);
+  let lifted = 0;
+  let hiddenUnread = 0;
+  for (const item of items.slice(limit)) {
+    if (isSelected?.(item)) {
+      shown.push(item);
+    } else if (isUnread?.(item)) {
+      if (lifted < maxUnreadLift) {
+        shown.push(item);
+        lifted += 1;
+      } else {
+        hiddenUnread += 1;
+      }
+    }
   }
   const hiddenCount = items.length - shown.length;
   return {
     shown,
     hiddenCount,
     hasMoreRow: hiddenCount > 0,
-    moreLabel: `${hiddenCount} more`,
+    moreLabel:
+      hiddenUnread > 0
+        ? `${hiddenCount} more · ${hiddenUnread} unread`
+        : `${hiddenCount} more`,
   };
 }
 
 /** What a section header shows beside its label. */
 export interface SectionHeaderState {
-  /** Item count, shown only while collapsed. */
+  /**
+   * Shown only while collapsed. With `count: "unread"` (the conversation
+   * sections) it is the UNREAD count when anything inside is unread (QA
+   * #18 — a folded DM section read "24" for two new messages), otherwise
+   * the item count; the nav disclosures keep the item count.
+   */
   count: number | null;
   /** Accent dot: collapsed and something inside is unread. */
   unreadDot: boolean;
@@ -93,14 +128,18 @@ export function sectionHeaderState<T>({
   items,
   collapsed,
   isUnread,
+  count = "items",
 }: {
   items: readonly T[];
   collapsed: boolean;
   isUnread?: (item: T) => boolean;
+  /** What the folded number counts. */
+  count?: "items" | "unread";
 }): SectionHeaderState {
   if (!collapsed) return { count: null, unreadDot: false };
+  const unread = isUnread ? items.filter(isUnread).length : 0;
   return {
-    count: items.length,
-    unreadDot: isUnread ? items.some(isUnread) : false,
+    count: count === "unread" && unread > 0 ? unread : items.length,
+    unreadDot: unread > 0,
   };
 }

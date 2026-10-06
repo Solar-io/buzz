@@ -2,10 +2,11 @@ import assert from "node:assert/strict";
 import { after, test } from "node:test";
 import { JSDOM } from "jsdom";
 
-// Background-sync plan §4.1 item 0.3 (T4): a read-marker move must NOT
-// re-REQ the unread windows. Before the fix every subscribed channel's
-// marker move re-subscribed EVERY batch (measured ~1.1 MB per channel
-// switch, twice per switch).
+// Background-sync plan §4.1 item 0.3 (T4), ported from useChannelActivity
+// to the conversation-activity store that replaced it (left-nav phase 1): a
+// read-marker move must NOT re-REQ the unread windows. Before the fix every
+// subscribed channel's marker move re-subscribed EVERY batch (measured
+// ~1.1 MB per channel switch, twice per switch).
 
 const dom = new JSDOM("<!doctype html><html><body></body></html>", {
   url: "https://web.test/",
@@ -14,7 +15,6 @@ const originals = {
   window: globalThis.window,
   document: globalThis.document,
   act: globalThis.IS_REACT_ACT_ENVIRONMENT,
-  stubs: globalThis.__BUZZ_TEST_MODULE_STUBS__,
 };
 globalThis.window = dom.window;
 globalThis.document = dom.window.document;
@@ -31,31 +31,27 @@ const fakeSession = {
     };
   },
 };
-globalThis.__BUZZ_TEST_ACTIVITY_SESSION__ = fakeSession;
-globalThis.__BUZZ_TEST_MODULE_STUBS__ = {
-  ...(originals.stubs ?? {}),
-  "@/shared/api/RelaySessionProvider": `
-    export function useRelaySession() {
-      return { session: globalThis.__BUZZ_TEST_ACTIVITY_SESSION__ };
-    }
-  `,
-};
 
 const React = (await import("react")).default;
 const { act } = await import("react");
 const { createRoot } = await import("react-dom/client");
-const { useChannelActivity } = await import("./useChannelActivity.ts");
+const { useConversationActivity, useConversationActivityFeed } = await import(
+  "./useConversationActivity.ts"
+);
 
 const SELF = "a".repeat(64);
 const OTHER = "b".repeat(64);
 const IDS = ["ch-a", "ch-b", "ch-c"];
 
 function Probe({ markers, onResult }) {
-  const result = useChannelActivity(IDS, {
-    readMarkers: markers,
+  const store = useConversationActivityFeed({
+    session: fakeSession,
+    dmIds: [],
+    channelIds: IDS,
     selfPubkey: SELF,
+    readMarkers: markers,
   });
-  onResult(result);
+  onResult(useConversationActivity(store));
   return null;
 }
 
@@ -103,7 +99,6 @@ after(() => {
     window: originals.window,
     document: originals.document,
     IS_REACT_ACT_ENVIRONMENT: originals.act,
-    __BUZZ_TEST_MODULE_STUBS__: originals.stubs,
   });
 });
 

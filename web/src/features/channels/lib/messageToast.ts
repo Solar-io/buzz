@@ -27,9 +27,8 @@ export interface ShouldToastMessageInput {
  *
  * - self messages never toast (you know you wrote it);
  * - the conversation on screen never toasts (you are looking at it);
- * - DMs always toast — mute is a channel-section pref, and the DM row's menu
- *   has no mute entry;
- * - channels/forums/huddles toast unless the viewer muted them.
+ * - a muted conversation never toasts — channel or DM (left-nav QA #6: mute
+ *   is one rule everywhere; a muted DM used to toast anyway).
  */
 export function shouldToastMessage(input: ShouldToastMessageInput): boolean {
   if (input.isSelf) {
@@ -37,9 +36,6 @@ export function shouldToastMessage(input: ShouldToastMessageInput): boolean {
   }
   if (input.isViewingChannel) {
     return false;
-  }
-  if (input.isDm) {
-    return true;
   }
   return !input.isMuted;
 }
@@ -55,6 +51,8 @@ export interface MessageToastInput {
   senderName: string;
   /** Message text (already markdown-stripped by the activity feed). */
   preview: string;
+  /** A thread reply: the meta line says so ("DM · in thread"). */
+  inThread?: boolean;
 }
 
 export interface MessageToastCopy {
@@ -85,7 +83,7 @@ export function buildMessageToast(input: MessageToastInput): MessageToastCopy {
 export interface MessageToastParts {
   /** Bold lead: who wrote it. */
   sender: string;
-  /** Mono meta line: "#channel" or "DM". */
+  /** Mono meta line: "#channel" or "DM", plus " · in thread" for replies. */
   context: string;
   /** Up to two lines of body. */
   preview: string;
@@ -101,10 +99,21 @@ export function messageToastParts(input: MessageToastInput): MessageToastParts {
   const sender = input.senderName.trim();
   return {
     sender: sender || (input.isDm ? channel : "") || "New message",
-    context: input.isDm ? "DM" : channel ? `#${channel}` : "",
+    context: withThread(
+      input.isDm ? "DM" : channel ? `#${channel}` : "",
+      input.inThread === true,
+    ),
     preview:
       truncate(input.preview, MESSAGE_TOAST_PREVIEW_MAX) || "Sent a message",
   };
+}
+
+/** Exact meta suffix for a thread reply (QA #11). */
+export const IN_THREAD = "in thread";
+
+function withThread(context: string, inThread: boolean): string {
+  if (!inThread) return context;
+  return context ? `${context} · ${IN_THREAD}` : IN_THREAD;
 }
 
 /** Collapse whitespace, then cut to `max` chars with an ellipsis. */

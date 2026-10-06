@@ -113,6 +113,57 @@ export function rankSection<T>(
   return [...unread, ...used, ...rest].map((entry) => entry.item);
 }
 
+/** A per-row hold: the order on screen when the pointer reached `anchor`. */
+export interface RowHold {
+  /** Keys in the order they were displayed when the hold began. */
+  order: readonly string[];
+  /** The row under the pointer. */
+  anchor: string;
+}
+
+/** Rows each side of the pointed-at row that also keep their place. */
+export const ROW_HOLD_RADIUS = 1;
+
+/**
+ * Per-row hold (left-nav phase 3): only the row under the pointer and its
+ * immediate neighbours keep the positions they had when the pointer got
+ * there; every other row takes its live rank around them. A click can never
+ * land on a row that just slid into place, while new unread rows still rise
+ * — the old whole-list hold froze everything the moment the pointer rested
+ * anywhere on the nav, which is how a newly unread DM stayed buried
+ * (LEFT_NAV_ARCHITECTURE_REVIEW.md, cause B). Truncation then still lifts
+ * any unread row the slice would hide (I5).
+ */
+export function holdAround<T>(
+  items: readonly T[],
+  getKey: (item: T) => string,
+  hold: RowHold,
+  radius = ROW_HOLD_RADIUS,
+): T[] {
+  const anchorAt = hold.order.indexOf(hold.anchor);
+  if (anchorAt < 0) {
+    return [...items];
+  }
+  const byKey = new Map(items.map((item) => [getKey(item), item]));
+  const pinned = new Map<number, T>();
+  const lo = Math.max(0, anchorAt - radius);
+  const hi = Math.min(hold.order.length - 1, anchorAt + radius);
+  for (let index = lo; index <= hi; index += 1) {
+    const item = byKey.get(hold.order[index] as string);
+    if (item !== undefined && index < items.length) {
+      pinned.set(index, item);
+    }
+  }
+  const pinnedItems = new Set(pinned.values());
+  const rest = items.filter((item) => !pinnedItems.has(item));
+  const out: T[] = [];
+  for (let index = 0; index < items.length; index += 1) {
+    const item = pinned.get(index) ?? rest.shift();
+    if (item !== undefined) out.push(item);
+  }
+  return out;
+}
+
 /**
  * Keep `heldKeys`' order for the items still present; items not in it (new
  * since the hold began) follow in their incoming order. Items that left are

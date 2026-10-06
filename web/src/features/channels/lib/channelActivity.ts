@@ -77,6 +77,25 @@ export interface ChannelActivity {
    * Optional: samples built before it existed, and synthetic ones, have none.
    */
   eventId?: string;
+  /** A reply inside a thread (NIP-10 root/reply `e` tag), not a top-level message. */
+  inThread?: boolean;
+  /** p-tagged pubkeys (the notification runtime's "mentions" mode). */
+  mentions?: string[];
+}
+
+/** The pubkeys a message p-tags (mentions; a wake's addressee). */
+function mentionsOf(event: SignedNostrEvent): { mentions?: string[] } {
+  const mentions = event.tags
+    .filter((tag) => tag[0] === "p" && typeof tag[1] === "string")
+    .map((tag) => tag[1] as string);
+  return mentions.length > 0 ? { mentions } : {};
+}
+
+/** NIP-10: a thread reply carries an `e` tag marked "root" or "reply". */
+function isThreadReply(event: SignedNostrEvent): boolean {
+  return event.tags.some(
+    (tag) => tag[0] === "e" && (tag[3] === "reply" || tag[3] === "root"),
+  );
 }
 
 export type ChannelActivityMap = Map<string, ChannelActivity>;
@@ -149,6 +168,8 @@ export function channelActivityFromEvent(
     pubkey: event.pubkey,
     preview: plainPreview(event.content),
     eventId: event.id,
+    ...(isThreadReply(event) ? { inThread: true } : {}),
+    ...mentionsOf(event),
   };
 }
 
@@ -245,7 +266,11 @@ export interface ChannelActivityHandlerDeps {
   activityRef: { current: ChannelActivityMap };
   /** Publish the mutated sample map (the hook's setActivity). */
   onActivityChange: (map: ChannelActivityMap) => void;
-  /** A LIVE strictly-newer arrival that beat a known sample (toast path). */
+  /**
+   * A LIVE arrival (I2): after the first EOSE, strictly newer than the
+   * sample, foreign, not a wake for others, newer than the read marker.
+   * Called after the sample map has moved (toast path).
+   */
   onLiveArrival: (entry: ChannelActivity) => void;
   /** Functional count update (the hook's setUnreadCounts). */
   onUnreadCountsChange: (
@@ -266,6 +291,12 @@ export interface ChannelActivityHandlerDeps {
    * — the feed's own semantics never depend on it.
    */
   onRawEvent?: (event: SignedNostrEvent) => void;
+  /**
+   * Unix seconds the feed opened. Before the first EOSE, an arrival created
+   * at or after it is live (it is new since the app started listening);
+   * anything older is backlog. Absent: nothing before EOSE is live.
+   */
+  liveSince?: number;
 }
 
 /** The SubscribeOptions-shaped pair the relay session calls into. */
@@ -281,6 +312,13 @@ export interface ChannelActivitySubscriptionHandlers {
    * seen nothing for are left untouched.
    */
   recount: (channelIds: readonly string[]) => void;
+  /**
+   * The socket dropped: the session will re-REQ this subscription and the
+   * relay will re-deliver its window plus whatever was missed. Until the
+   * next EOSE, arrivals are counted but never fired as live (no toast storm
+   * on reconnect, QA #4).
+   */
+  beginReplay: () => void;
 }
 
 /**
@@ -326,6 +364,7 @@ export function createChannelActivityHandlers(
     readMarkers,
     selfPubkey,
     onRawEvent,
+    liveSince,
   } = deps;
   const markerFor = (channelId: string): number =>
     readMarkers?.()[channelId] ?? 0;
@@ -333,6 +372,8 @@ export function createChannelActivityHandlers(
     ? new Map()
     : null;
   let backfillClosed = false;
+  // A reconnect replay round is in flight (see beginReplay).
+  let replaying = false;
   // Every distinct event seen per channel (by id, so replay rounds cannot
   // double it), bounded to the newest UNREAD_COUNT_BUFFER_MAX. Only the
   // marker-move recount reads it; counting otherwise follows the
@@ -369,6 +410,8 @@ export function createChannelActivityHandlers(
   // cannot dot, count or reorder), but it proves the channel had traffic up
   // to that instant — a baseline for the live-arrival decision in onEvent.
   const silentWakeFloor = new Map<string, number>();
+  // Event ids delivered in the current sample's second, per channel.
+  const sameSecond = new Map<string, Set<string>>();
   const noteSilentWake = (event: SignedNostrEvent): void => {
     const channelId = event.tags.find((tag) => tag[0] === "h")?.[1];
     if (typeof channelId !== "string" || channelId.length === 0) {
@@ -408,9 +451,14 @@ export function createChannelActivityHandlers(
       // Every delivered kind-9 — including replays and at-or-below-sample
       // arrivals the sample map drops below — is a message the timeline
       // store may not have yet; the store's own rules decide what sticks.
-      if (event.kind === 9) {
-        onRawEvent?.(event);
+      if (event.kind !== KIND_CHAT_MESSAGE) {
+        // The filters ask for kind 9, but the reader must not trust the
+        // delivery: a status flip carrying a DM's h tag once became that
+        // DM's sample and preview (the 2026-09-15 phantom DM). DMs ride
+        // this feed now, so the guard the DM sampler had lives here.
+        return;
       }
+      onRawEvent?.(event);
       // A scheduled wake addressed to another member is machinery the viewer
       // is a bystander to: the timeline keeps the row (tapped above), but it
       // must not become the channel's sample, a counted unread or a live
@@ -435,21 +483,56 @@ export function createChannelActivityHandlers(
         window.set(entry.channelId, samples.slice(-UNREAD_COUNT_BUFFER_MAX));
       }
       const previous = activityRef.current.get(entry.channelId);
-      // Strictly newer wins: stale, duplicate and reconnect-replayed
-      // events (same created_at as the stored sample) are dropped here.
-      if (previous && previous.createdAt >= entry.createdAt) {
+      // Newer wins: stale, duplicate and reconnect-replayed events are
+      // dropped here. created_at is in whole seconds, so a DIFFERENT event in
+      // the sample's own second is new too (an agent's two quick replies
+      // used to lose the second one's toast and count); the same event
+      // replayed is not.
+      const tie =
+        previous !== undefined &&
+        previous.createdAt === entry.createdAt &&
+        previous.eventId !== entry.eventId &&
+        !(sameSecond.get(entry.channelId)?.has(event.id) ?? false);
+      if (previous && previous.createdAt >= entry.createdAt && !tie) {
         return;
       }
-      // A message is a live arrival when it beats a known sample — or, in a
-      // channel whose only delivered traffic so far was a silent wake, when
-      // it is newer than that wake. Without the second arm a channel read up
-      // to a wake (or a limit-1 DM sample that IS a wake) has no baseline,
-      // and the woken agent's reply would arrive unseen: no count, no toast.
+      if (tie) {
+        sameSecond.get(entry.channelId)?.add(event.id);
+      } else {
+        sameSecond.set(entry.channelId, new Set([event.id]));
+      }
+      // I2 (LEFT_NAV_ARCHITECTURE_REVIEW.md): ONE definition of "live",
+      // shared by the toast and the row. Live = delivered after this
+      // subscription's first EOSE (and strictly newer than the sample, above
+      // — which is what keeps reconnect replays out), and newer than any
+      // silent wake seen for the channel (a message older than a wake is
+      // backfill that arrived late). It no longer has to BEAT a prior
+      // sample: the first message in a never-messaged conversation, or in
+      // one whose window opened empty at the read marker, both dots the row
+      // and toasts.
+      //
+      // Two refinements (left-nav QA #4, #8):
+      // - before the first EOSE, a message created at or after the feed
+      //   opened (`liveSince`) is news too — a conversation's first message
+      //   landing in its brand-new subscription's backfill, or a message in
+      //   the first seconds after load, toasts instead of only dotting;
+      // - during a reconnect replay round (`beginReplay` .. next EOSE)
+      //   nothing toasts: what was missed offline is counted and dotted, not
+      //   replayed as a storm of toasts.
       const wakeFloor = silentWakeFloor.get(entry.channelId);
+      const afterWake = wakeFloor === undefined || entry.createdAt > wakeFloor;
+      const counts = backfillClosed && afterWake;
       const isLiveArrival =
-        previous !== undefined ||
-        (wakeFloor !== undefined && entry.createdAt > wakeFloor);
-      if (isLiveArrival) {
+        !replaying &&
+        afterWake &&
+        (backfillClosed ||
+          (liveSince !== undefined && entry.createdAt >= liveSince));
+      // Only a foreign message the viewer has not already read is news:
+      // the toast fires exactly when the row turns unread.
+      const isNews =
+        entry.pubkey !== selfPubkey &&
+        (readMarkers === null || entry.createdAt > markerFor(entry.channelId));
+      if (counts) {
         if (readMarkers) {
           // Live increment, same exclusion rules as the derivation.
           onUnreadCountsChange((counts) => {
@@ -466,13 +549,34 @@ export function createChannelActivityHandlers(
             return next;
           });
         }
+      }
+      if (tie) {
+        // Same second: the later delivery becomes the sample (its preview
+        // is the one a toast quotes).
+        activityRef.current = new Map(activityRef.current).set(
+          entry.channelId,
+          entry,
+        );
+      } else {
+        activityRef.current = applyChannelActivity(activityRef.current, entry);
+      }
+      onActivityChange(activityRef.current);
+      // After the sample moved, so a handler reading the feed sees the
+      // conversation it is being told about as unread (I1).
+      if (isLiveArrival && isNews) {
         onLiveArrival(entry);
       }
-      activityRef.current = applyChannelActivity(activityRef.current, entry);
-      onActivityChange(activityRef.current);
+    },
+    beginReplay(): void {
+      replaying = true;
     },
     onEose(): void {
-      if (!readMarkers || !window || backfillClosed) {
+      replaying = false;
+      if (backfillClosed) {
+        return;
+      }
+      if (!readMarkers || !window) {
+        backfillClosed = true;
         return;
       }
       // Derive each buffered channel's count from its backfill window.

@@ -59,8 +59,12 @@ export function useTimelinePrefetch(input: {
     for (const [id, activity] of channelActivity) {
       list.push({ id, at: activity.createdAt });
     }
+    // DMs ride the same activity feed now; a DM already sampled there must
+    // not be listed twice.
     for (const dm of dms) {
-      list.push({ id: dm.channel.id, at: dm.lastActivity });
+      if (!channelActivity.has(dm.channel.id)) {
+        list.push({ id: dm.channel.id, at: dm.lastActivity });
+      }
     }
     return list;
   }, [channelActivity, dms]);

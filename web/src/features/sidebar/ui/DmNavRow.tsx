@@ -13,7 +13,6 @@ import { AuthorAvatar } from "@/features/channels/ui/ChannelTimeline";
 import { dmDisplayName } from "@/features/dms/lib/dmNaming.ts";
 import { focusToken } from "@/features/user-status/lib/focusLine.ts";
 import type { UserStatus } from "@/features/user-status/lib/statusEvent.ts";
-import { useUnreadCount } from "@/features/sidebar/lib/useUnreadCount.ts";
 import { DmTimerPill } from "@/features/sidebar/ui/DmTimerPill";
 import { GroupAvatar } from "@/features/sidebar/ui/GroupAvatar";
 import { useDrawerClose } from "@/shared/layout/AppShell";
@@ -32,8 +31,11 @@ export interface DmNavRowProps {
   selected: boolean;
   unread: boolean;
   channelId: string | null;
-  /** Read marker (unix seconds) for the unread count, when known. */
-  lastSeenAt: number | null;
+  /**
+   * Live unread count from the conversation-activity store — the same
+   * number a channel row's pill reads (I4). null until the window derives.
+   */
+  unreadCount: number | null;
   participants: string[];
   selfPubkey: string | null;
   profiles: Map<string, Profile>;
@@ -64,8 +66,7 @@ export interface DmNavRowProps {
 export function DmNavRow({
   selected,
   unread,
-  channelId,
-  lastSeenAt,
+  unreadCount,
   participants,
   selfPubkey,
   profiles,
@@ -89,7 +90,6 @@ export function DmNavRow({
   const now = Math.floor(Date.now() / 1000);
   const active = agentRecentlyActive(rowFrames, now);
   useTick(active);
-  const unreadCount = useUnreadCount(channelId, lastSeenAt, selfPubkey);
   // Focus token from the same module the roster uses — text only, no emoji,
   // no age (this row already carries its own times on the right; Sam,
   // 2026-09-06). One staleness implementation for both surfaces. `now` is
