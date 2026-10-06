@@ -5365,6 +5365,15 @@ mod agent_draft_prompt_tests {
     }
 
     #[test]
+    fn shared_base_prompt_teaches_file_trailer_requests() {
+        let prompt = include_str!("base_prompt.md");
+        assert!(prompt.contains("ends with `[file: <name> · <host>:<path>]`"));
+        assert!(prompt.contains("Re-read the file from disk first"));
+        assert!(prompt.contains("edit it in place, then reply in that thread"));
+        assert!(prompt.contains("Don't re-share it unless asked"));
+    }
+
+    #[test]
     fn shared_base_prompt_teaches_real_newlines_for_multiline_messages() {
         let prompt = include_str!("base_prompt.md");
         assert!(prompt.contains("pass real newline bytes through stdin"));
