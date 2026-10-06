@@ -237,6 +237,7 @@ export function openFileOf(share: Share, file: ShareFile): OpenFile {
     rootId: share.rootId,
     replyToId: share.replyToId,
     path: file.path ? `${file.path.host}:${file.path.path}` : null,
+    sha256: file.sha256,
   };
 }
 

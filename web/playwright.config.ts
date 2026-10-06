@@ -63,6 +63,7 @@ export default defineConfig({
         "**/items.spec.ts",
         "**/item-attachments.spec.ts",
         "**/shelf.spec.ts",
+        "**/canvas-file-edit.spec.ts",
         "**/favorites-sync.spec.ts",
         "**/owner-admin-presence.spec.ts",
         "**/channel-sheet.spec.ts",

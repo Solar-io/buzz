@@ -190,22 +190,23 @@ for (const theme of ["buzz", "buzz-dark"] as const) {
       );
       await preview.getByTestId("file-view-preview").click();
 
-      // A comment is a thread reply to the share, and wakes its author.
+      // The agent box: a thread reply to the share that wakes the agent who
+      // shared it, ending in the `[file: …]` trailer (canvas edit D9–D11).
       const box = preview.getByTestId("file-comment-input");
+      await expect(box).toHaveAttribute(
+        "placeholder",
+        "Ask Gilfoyle to change this document…",
+      );
       await box.fill("Score C again with the audio fix.");
       await box.press("Enter");
-      await expect
-        .poll(() =>
-          relay.published.find(
-            (event) =>
-              event.kind === 9 &&
-              event.content === "Score C again with the audio fix.",
-          ),
-        )
-        .toBeTruthy();
-      const sent = relay.published.find(
-        (event) => event.content === "Score C again with the audio fix.",
-      ) as MockEvent;
+      const isSent = (event: MockEvent) =>
+        event.kind === 9 &&
+        event.content.startsWith("Score C again with the audio fix.");
+      await expect.poll(() => relay.published.find(isSent)).toBeTruthy();
+      const sent = relay.published.find(isSent) as MockEvent;
+      expect(sent.content).toBe(
+        `Score C again with the audio fix.\n\n[file: bakeoff-results.md · crichton:${RTS_DIR}/bakeoff-results.md]`,
+      );
       expect(sent.tags).toContainEqual(["h", fixture.channels["dm-gilfoyle"]]);
       // A top-level share is its own thread root: one reply marker.
       expect(sent.tags).toContainEqual(["e", shares.results.id, "", "reply"]);

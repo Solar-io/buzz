@@ -3,10 +3,14 @@ import test from "node:test";
 
 import { parseDelimited } from "./csv.ts";
 import {
+  agentRequest,
   cleanQuote,
   commentTree,
+  fileTrailer,
   quotedComment,
+  splitAgentRequest,
   splitQuotedComment,
+  stripFileTrailer,
 } from "./fileComment.ts";
 import { fileSourceOf, openFileFromSource, sourcePath } from "./fileSource.ts";
 
@@ -84,7 +88,7 @@ test("a tile's file source pairs its paths and keys its tab by message", () => {
     replyToId: null,
     imetaByUrl: new Map([
       ["https://r/1", {}],
-      ["https://r/2", {}],
+      ["https://r/2", { x: "ab".repeat(32) }],
     ]),
     shelf: { paths: ["crichton:/x/a.md", "crichton:/x/b.html"] },
   };
@@ -103,6 +107,15 @@ test("a tile's file source pairs its paths and keys its tab by message", () => {
   });
   assert.equal(open.key, "m|https://r/2");
   assert.equal(open.path, "crichton:/x/b.html");
+  assert.equal(
+    open.sha256,
+    "abababababababababababababababababababababababababababababababab",
+  );
+  assert.equal(
+    openFileFromSource(source, { href: "https://r/1", filename: "a.md" })
+      .sha256,
+    null,
+  );
   // A row cached before Phase 6 has no `shelf`: not a share, no paths.
   const cached = fileSourceOf({ ...message, shelf: undefined });
   assert.equal(cached.shelf, false);
@@ -111,5 +124,47 @@ test("a tile's file source pairs its paths and keys its tab by message", () => {
   assert.equal(
     openFileFromSource(null, { href: "u", filename: "f" }).key,
     "-|u",
+  );
+});
+
+test("trailer built and stripped", () => {
+  const ctx = {
+    filename: "report.md",
+    path: "crichton:/Users/sam/docs/report.md",
+    editedSinceShared: false,
+  };
+  const content = agentRequest("Q3 table", "  Fix the dates. ", ctx);
+  assert.equal(
+    content,
+    "> Q3 table\n\nFix the dates.\n\n[file: report.md · crichton:/Users/sam/docs/report.md]",
+  );
+  assert.equal(
+    fileTrailer({ ...ctx, editedSinceShared: true }),
+    "[file: report.md · crichton:/Users/sam/docs/report.md · edited by you since shared]",
+  );
+  assert.equal(
+    fileTrailer({
+      filename: "notes.txt",
+      path: null,
+      editedSinceShared: false,
+    }),
+    "[file: notes.txt]",
+  );
+  assert.deepEqual(splitAgentRequest(content), {
+    quote: "Q3 table",
+    body: "Fix the dates.",
+  });
+  // A trailer-shaped line anywhere but last is the person's text.
+  const mid = "see [file: x]\n[file: x]\nthen fix it";
+  assert.equal(stripFileTrailer(mid), mid);
+  assert.equal(
+    stripFileTrailer("[file: x] is the name"),
+    "[file: x] is the name",
+  );
+  assert.equal(stripFileTrailer("plain\n\n[file: a.md]"), "plain");
+  // A name with brackets cannot break the shape.
+  assert.equal(
+    fileTrailer({ filename: "a]b.md", path: null, editedSinceShared: false }),
+    "[file: a b.md]",
   );
 });

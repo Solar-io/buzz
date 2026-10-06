@@ -30,6 +30,12 @@ export interface OpenFile {
   replyToId: string | null;
   /** Raw `path` tag value (`crichton:/abs`), when the share carried one. */
   path: string | null;
+  /**
+   * The shared bytes' SHA-256 (`imeta x`), for "Edited since shared". Tabs
+   * opened before this field existed lack it: read with `?? null` and heal
+   * from the Shelf (FilePreview), as `path` is healed.
+   */
+  sha256?: string | null;
 }
 
 export interface FileTabsState {

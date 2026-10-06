@@ -10,13 +10,18 @@ import { useRelaySession } from "@/shared/api/RelaySessionProvider";
 import { cn } from "@/shared/lib/cn";
 import { HexAvatar, HumanAvatar } from "@/shared/ui/HexAvatar";
 import { notify } from "@/shared/ui/notify";
-import { commentThreadRef } from "../lib/shareEvent.ts";
+import { mentionsFor } from "../lib/agentTarget.ts";
 import {
+  type AgentRequestContext,
+  agentRequest,
   type CommentNode,
   commentTree,
   quotedComment,
-  splitQuotedComment,
+  splitAgentRequest,
+  stripFileTrailer,
 } from "../lib/fileComment.ts";
+import { commentThreadRef } from "../lib/shareEvent.ts";
+import { useAgentTargets } from "../useAgentTargets.ts";
 
 const NO_MENTIONS: ReadonlySet<string> = new Set();
 
@@ -41,7 +46,8 @@ function Comment({
   node: CommentNode<TimelineMessage>;
   names: Names;
 }) {
-  const { quote, body } = splitQuotedComment(node.comment.content);
+  // The `[file: …]` trailer is for the agent; the document is right here.
+  const { quote, body } = splitAgentRequest(node.comment.content);
   return (
     <article
       data-testid="file-comment"
@@ -80,7 +86,7 @@ function Comment({
             </b>{" "}
             <span className="[&_.message-prose]:inline [&_p]:inline">
               <MarkdownContent
-                content={reply.content}
+                content={stripFileTrailer(reply.content)}
                 mentionNames={NO_MENTIONS}
                 compact
               />
@@ -92,8 +98,11 @@ function Comment({
   );
 }
 
-/** The comments under a preview (Shelf artboard): notes, replies folded in. */
-export function FileCommentList({
+/**
+ * The thread under a preview: requests to the agent (and notes), with the
+ * replies made to each folded under it.
+ */
+export function FileThread({
   comments,
   names,
 }: {
@@ -106,12 +115,12 @@ export function FileCommentList({
   }
   return (
     <section
-      aria-label="Comments"
+      aria-label="Agent thread"
       data-testid="file-comments"
       className="flex flex-col gap-2 px-4 pb-4"
     >
       <h3 className="text-2xs font-semibold uppercase tracking-[0.06em] text-muted-foreground">
-        {tree.length === 1 ? "1 comment" : `${tree.length} comments`}
+        Agent thread · {tree.length}
       </h3>
       {tree.map((node) => (
         <Comment key={node.comment.id} node={node} names={names} />
@@ -121,16 +130,23 @@ export function FileCommentList({
 }
 
 /**
- * The comment box at the foot of the pane. A comment is a thread reply to
- * the share (root rule from AGENTS.md), and it notifies whoever shared the
- * file — a mention is the only wake path an agent has. Text selected in the
- * preview first rides along as the comment's highlight.
+ * The box at the foot of the pane: a message TO THE AGENT about this
+ * document (canvas edit plan D9–D12). Transport is unchanged — a thread reply
+ * to the share (AGENTS.md root rule) with a mention, the only wake path an
+ * agent has — but it now names the agent it goes to, carries a `[file: …]`
+ * trailer so the agent knows which file on disk to edit, and offers to save
+ * an unsaved draft first so the agent does not edit under it.
  */
-export function FileCommentBox({
+export function AgentBox({
   share,
   quote,
   onClearQuote,
   selfPubkey,
+  names,
+  comments,
+  context,
+  dirty = false,
+  saveDraft,
   className,
 }: {
   share: {
@@ -143,29 +159,47 @@ export function FileCommentBox({
   quote: string | null;
   onClearQuote: () => void;
   selfPubkey: string | null;
+  names: Names;
+  comments: readonly { authorPubkey: string }[];
+  /** The `[file: …]` trailer's facts; null sends no trailer. */
+  context: AgentRequestContext | null;
+  /** The pane has an unsaved edit of this file. */
+  dirty?: boolean;
+  /** Save that edit; resolves true when the disk holds it. */
+  saveDraft?: () => Promise<boolean>;
   className?: string;
 }) {
   const { session } = useRelaySession();
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
+  const [askSave, setAskSave] = useState(false);
   const retry = useRef<() => unknown>(() => undefined);
+  const { target, pick } = useAgentTargets({
+    channelId: share.channelId,
+    authorPubkey: share.authorPubkey,
+    selfPubkey,
+    isAgent: names.isAgent,
+    comments,
+  });
+  const agentName = target.target ? names.person(target.target) : null;
+  const toAgent = target.mode !== "note";
+  const canSend =
+    !sending &&
+    text.trim() !== "" &&
+    (target.mode !== "picker" || !!target.target);
 
-  const send = async () => {
-    const body = text.trim();
-    if (body === "" || sending) {
-      return;
-    }
-    setSending(true);
+  const publish = async (body: string) => {
     const run = () =>
       sendChannelMessage(session, {
         channelId: share.channelId,
-        content: quotedComment(quote, body),
-        mentionPubkeys:
-          share.authorPubkey !== selfPubkey ? [share.authorPubkey] : [],
+        content: toAgent
+          ? agentRequest(quote, body, context)
+          : quotedComment(quote, body),
+        mentionPubkeys: mentionsFor(target, share.authorPubkey, selfPubkey),
         threadRef: commentThreadRef(share),
         onSigned: (event) => recordOwnSend(event.id),
       });
-    retry.current = () => void send();
+    retry.current = () => void send(false);
     try {
       const result = await run();
       if (result.ok) {
@@ -181,15 +215,94 @@ export function FileCommentBox({
       }
     } catch (error) {
       notify.sendFailure(error, retry);
+    }
+  };
+
+  /** `saveFirst`: null = ask when dirty; true / false = the person chose. */
+  const send = async (saveFirst: boolean | null = null) => {
+    const body = text.trim();
+    if (body === "" || sending) {
+      return;
+    }
+    if (target.mode === "picker" && !target.target) {
+      return;
+    }
+    if (toAgent && dirty && saveFirst === null && saveDraft) {
+      setAskSave(true);
+      return;
+    }
+    setAskSave(false);
+    setSending(true);
+    try {
+      if (saveFirst === true && saveDraft) {
+        // The disk must hold the draft BEFORE the agent is asked (D12).
+        const saved = await saveDraft();
+        if (!saved) {
+          return;
+        }
+      }
+      await publish(body);
     } finally {
       setSending(false);
     }
   };
 
+  const placeholder = !toAgent
+    ? quote
+      ? "Add a note on the highlight…"
+      : "Add a note on this file…"
+    : agentName
+      ? quote
+        ? `Ask ${agentName} to change the highlight…`
+        : `Ask ${agentName} to change this document…`
+      : "Choose an agent, then ask for a change…";
+  const sendLabel = toAgent
+    ? agentName
+      ? `Send to ${agentName}`
+      : "Choose an agent first"
+    : "Post note";
+
   return (
     <div
       className={cn("border-t border-border px-3.5 pt-2.5 pb-3.5", className)}
     >
+      <div className="mb-2 flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
+        {target.mode === "author" ? (
+          <span
+            data-testid="agent-box-target"
+            className="inline-flex min-w-0 items-center gap-1.5 rounded-full bg-chip px-2 py-0.5 text-foreground"
+          >
+            <span className="text-muted-foreground">To</span>
+            <b className="truncate font-semibold">{agentName}</b>
+          </span>
+        ) : target.mode === "picker" ? (
+          <label className="inline-flex min-w-0 items-center gap-1.5">
+            <span>To</span>
+            <select
+              data-testid="agent-box-target"
+              aria-label="Agent to ask"
+              value={target.target ?? ""}
+              onChange={(event) => pick(event.target.value)}
+              className="min-h-11 min-w-0 truncate rounded-lg border border-line-2 bg-card px-2 text-xs font-semibold text-foreground md:min-h-7"
+            >
+              {target.target ? null : (
+                <option value="" disabled>
+                  Choose an agent
+                </option>
+              )}
+              {target.options.map((pubkey) => (
+                <option key={pubkey} value={pubkey}>
+                  {names.person(pubkey)}
+                </option>
+              ))}
+            </select>
+          </label>
+        ) : (
+          <span data-testid="agent-box-target">
+            No agent here — this posts a note on the file
+          </span>
+        )}
+      </div>
       {quote ? (
         <div
           data-testid="file-comment-quote"
@@ -210,10 +323,51 @@ export function FileCommentBox({
           </button>
         </div>
       ) : null}
+      {askSave ? (
+        <div
+          data-testid="agent-box-save-first"
+          role="alert"
+          className="mb-2 flex flex-wrap items-center gap-2 rounded-lg border border-line-2 bg-card px-2.5 py-2 text-xs"
+        >
+          <span className="min-w-0 flex-1">
+            You have unsaved edits to this file.
+          </span>
+          <button
+            type="button"
+            data-testid="agent-box-save-and-send"
+            onClick={() => void send(true)}
+            className="min-h-11 rounded-lg bg-primary px-3 font-semibold text-primary-foreground md:min-h-7"
+          >
+            Save and send
+          </button>
+          <button
+            type="button"
+            data-testid="agent-box-send-unsaved"
+            onClick={() => void send(false)}
+            className="min-h-11 rounded-lg border border-line-2 px-3 font-semibold md:min-h-7"
+          >
+            Send without saving
+          </button>
+          <button
+            type="button"
+            aria-label="Cancel sending"
+            onClick={() => setAskSave(false)}
+            className="grid size-11 place-items-center rounded-lg text-muted-foreground hover:bg-accent md:size-7"
+          >
+            <X aria-hidden className="size-3.5" />
+          </button>
+        </div>
+      ) : null}
       <div className="flex items-end gap-2 rounded-[10px] border border-line-2 bg-card py-1.5 pr-1.5 pl-3 focus-within:border-ring">
         <textarea
           data-testid="file-comment-input"
-          aria-label="Comment on this file"
+          aria-label={
+            toAgent
+              ? agentName
+                ? `Message ${agentName} about this file`
+                : "Message an agent about this file"
+              : "Note on this file"
+          }
           rows={1}
           value={text}
           disabled={sending}
@@ -228,17 +382,15 @@ export function FileCommentBox({
               void send();
             }
           }}
-          placeholder={
-            quote
-              ? "Comment on the highlight…"
-              : "Comment on this file, or select text first…"
-          }
+          placeholder={placeholder}
           className="field-sizing-content max-h-32 min-h-6 flex-1 resize-none bg-transparent py-0.5 text-sm text-foreground outline-hidden placeholder:text-muted-foreground"
         />
         <button
           type="button"
-          aria-label="Send comment"
-          disabled={sending || text.trim() === ""}
+          data-testid="agent-box-send"
+          aria-label={sendLabel}
+          title={sendLabel}
+          disabled={!canSend}
           onClick={() => void send()}
           className="grid size-7 shrink-0 place-items-center rounded-lg bg-primary text-primary-foreground transition-opacity disabled:opacity-40"
         >

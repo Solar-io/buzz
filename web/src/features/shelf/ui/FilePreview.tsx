@@ -1,4 +1,4 @@
-import { Download, FolderOpen, Link2, RotateCw, X } from "lucide-react";
+import { Download, FolderOpen, Link2, Pencil, RotateCw, X } from "lucide-react";
 import { type ReactNode, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 
@@ -9,6 +9,7 @@ import { openInFiles } from "@/features/webPanels/filesPathStore";
 import { cn } from "@/shared/lib/cn";
 import { publicAppOrigin } from "@/shared/lib/relay-url";
 import { useFileTabs } from "../FileTabsProvider";
+import { editedSinceShared, reasonText } from "../lib/diskDocument.ts";
 import { cleanQuote } from "../lib/fileComment.ts";
 import {
   fileKind,
@@ -16,6 +17,7 @@ import {
   kindLabel,
   previewMode,
   readMinutes,
+  readsText,
   sourceLanguage,
 } from "../lib/fileKind.ts";
 import type { OpenFile } from "../lib/fileTabs.ts";
@@ -28,9 +30,11 @@ import {
 } from "../lib/shareEvent.ts";
 import { useShelf } from "../ShelfProvider";
 import { useFileComments } from "../useFileComments.ts";
-import { useFileContent } from "../useFileContent.ts";
+import { useDiskDocument } from "../useDiskDocument.ts";
+import { type FileContent, useFileContent } from "../useFileContent.ts";
 import { useShareNames } from "../useShareNames.ts";
-import { FileCommentBox, FileCommentList } from "./FileComments";
+import { AgentBox, FileThread } from "./FileComments";
+import { FileEditor } from "./FileEditor";
 import { FilePreviewBody } from "./FilePreviewBody";
 
 function ActionButton({
@@ -79,11 +83,34 @@ function useSharePath(file: OpenFile): SharePath | null {
 }
 
 /**
+ * The shared bytes' sha256, from the tab or — for a tab opened before the
+ * field existed, or a tile on a cached message — the Shelf's copy (healed
+ * like `path`, AGENTS.md "heal in the same commit").
+ */
+function useShareSha256(file: OpenFile): string | null {
+  const shelf = useShelf();
+  return useMemo(() => {
+    const own = file.sha256 ?? null;
+    if (own || !file.messageId) {
+      return own;
+    }
+    const share = shelf?.byId.get(file.messageId);
+    return share?.files.find((entry) => entry.url === file.url)?.sha256 ?? null;
+  }, [file.sha256, file.messageId, file.url, shelf]);
+}
+
+/**
  * A file open beside the conversation (Preview and Shelf artboards): what it
  * is and where it came from, Preview / Source, the actions (Jump to message,
  * Open in Files when the share carried a path on the Files host, Download,
- * Copy link), the preview, and the comments — thread replies to the share —
- * with a comment box at the foot.
+ * Copy link), the preview, and the agent thread — thread replies to the
+ * share — with the agent box at the foot.
+ *
+ * Canvas edit (`~/.buzz/PLANS/CANVAS_EDIT_AGENT_BOX.md`): when the share's
+ * path is on the Files host and stash lets this browser read it, the pane
+ * previews the DISK file ("Live · crichton"), offers Edit, and follows the
+ * agent's later edits; otherwise it is the shared snapshot, read-only, with
+ * the reason. The relay blob is never edited.
  *
  * `variant`: the docked tab, the tab expanded over the row, or the phone's
  * full-screen sheet (which brings its own close).
@@ -107,7 +134,20 @@ export function FilePreview({
   const content = useFileContent(file.url, mode, file.size, reload);
   const { download } = useFileDownload(file.url, file.filename);
   const path = useSharePath(file);
-  const filesPath = filesTarget(path, getConfiguredFilesUrl());
+  const filesUrl = getConfiguredFilesUrl();
+  const filesPath = filesTarget(path, filesUrl);
+  const sha256 = useShareSha256(file);
+  const disk = useDiskDocument(path, filesUrl);
+  const [viewShared, setViewShared] = useState(false);
+  const live =
+    disk.state.phase === "live" && disk.state.live ? disk.state.live : null;
+  const showingLive = live !== null && !viewShared;
+  const shown: FileContent =
+    showingLive && readsText(mode)
+      ? { phase: "text", text: live.content }
+      : content;
+  const edited = editedSinceShared(live?.digest, sha256);
+  const editing = disk.state.editing !== null;
   const share =
     file.messageId && file.channelId && file.authorPubkey
       ? {
@@ -135,8 +175,8 @@ export function FilePreview({
   const meta = [
     file.size !== null ? formatFileSize(file.size) : null,
     kindLabel(kind).toLowerCase(),
-    mode === "markdown" && content.phase === "text"
-      ? `${readMinutes(content.text)} min read`
+    mode === "markdown" && shown.phase === "text"
+      ? `${readMinutes(shown.text)} min read`
       : null,
   ].filter(Boolean);
   const leave = () => {
@@ -225,6 +265,87 @@ export function FilePreview({
                 {path.host}: {displayPath(path.path)}
               </p>
             ) : null}
+            {disk.state.phase !== "off" ? (
+              <div className="mt-1.5 flex flex-wrap items-center gap-1.5 text-2xs">
+                <span
+                  data-testid="file-version-chip"
+                  className={cn(
+                    "rounded-full px-2 py-0.5 font-semibold",
+                    showingLive
+                      ? "bg-info-soft text-info-ink"
+                      : "bg-chip text-muted-foreground",
+                  )}
+                >
+                  {showingLive && path
+                    ? `Live · ${path.host}`
+                    : disk.state.phase === "locating"
+                      ? "Checking Files…"
+                      : "Shared snapshot"}
+                </span>
+                {edited ? (
+                  <>
+                    <span
+                      data-testid="file-edited-since-shared"
+                      className="rounded-full bg-honey-wash px-2 py-0.5 font-semibold text-honey-ink"
+                    >
+                      Edited since shared
+                    </span>
+                    {editing ? null : (
+                      <button
+                        type="button"
+                        data-testid="file-view-shared"
+                        onClick={() => setViewShared((value) => !value)}
+                        className="min-h-11 font-semibold text-info-ink hover:underline md:min-h-0"
+                      >
+                        {viewShared
+                          ? "View live version"
+                          : "View shared version"}
+                      </button>
+                    )}
+                  </>
+                ) : null}
+              </div>
+            ) : null}
+            {disk.state.phase === "readonly" && disk.state.reason ? (
+              <p
+                data-testid="file-readonly-reason"
+                className="mt-1 text-xs text-muted-foreground"
+              >
+                {reasonText(disk.state.reason, path?.host)}
+                {disk.state.reason === "signed-out" && filesPath ? (
+                  <>
+                    {" · "}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        leave();
+                        openInFiles(filesPath);
+                      }}
+                      className="font-semibold text-info-ink hover:underline"
+                    >
+                      Open Files
+                    </button>
+                  </>
+                ) : null}
+                {disk.state.orphanDraft !== null ? (
+                  <>
+                    {" · "}
+                    <button
+                      type="button"
+                      data-testid="file-copy-orphan-draft"
+                      onClick={() =>
+                        void navigator.clipboard
+                          ?.writeText(disk.state.orphanDraft ?? "")
+                          .then(() => toast.success("Draft copied"))
+                      }
+                      className="font-semibold text-info-ink hover:underline"
+                    >
+                      Copy my unsaved draft
+                    </button>
+                  </>
+                ) : null}
+              </p>
+            ) : null}
           </div>
           {variant === "sheet" ? (
             <button
@@ -238,7 +359,7 @@ export function FilePreview({
           ) : null}
         </div>
         <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
-          {hasSourceView(mode) ? (
+          {hasSourceView(mode) && !editing ? (
             <fieldset className="flex rounded-lg bg-chip p-0.5">
               <legend className="sr-only">View</legend>
               {(["preview", "source"] as const).map((option) => (
@@ -272,6 +393,15 @@ export function FilePreview({
             </button>
           ) : null}
           <span className="ml-auto" />
+          {showingLive && !editing ? (
+            <ActionButton
+              compact={compact}
+              testId="file-edit"
+              label="Edit"
+              icon={<Pencil aria-hidden className="size-3.5" />}
+              onClick={disk.edit}
+            />
+          ) : null}
           {filesPath ? (
             <ActionButton
               compact={compact}
@@ -316,31 +446,62 @@ export function FilePreview({
             variant !== "dock" && "mx-auto w-full max-w-5xl",
           )}
         >
-          <FilePreviewBody
-            content={content}
-            mode={mode}
-            view={view}
-            filename={file.filename}
-            language={
-              view === "source" || mode === "code"
-                ? sourceLanguage(file.filename)
-                : ""
-            }
-            fit={variant === "dock" ? "dock" : "fill"}
-            reloadKey={reload}
-            onDownload={download}
-          />
+          {editing ? (
+            <FileEditor
+              disk={disk}
+              canPreview={hasSourceView(mode)}
+              compact={compact}
+              renderPreview={(draft) => (
+                <FilePreviewBody
+                  content={{ phase: "text", text: draft }}
+                  mode={mode}
+                  view="preview"
+                  filename={file.filename}
+                  language={
+                    mode === "code" ? sourceLanguage(file.filename) : ""
+                  }
+                  fit={variant === "dock" ? "dock" : "fill"}
+                  reloadKey={reload}
+                  onDownload={download}
+                />
+              )}
+            />
+          ) : (
+            <FilePreviewBody
+              content={shown}
+              mode={mode}
+              view={view}
+              filename={file.filename}
+              language={
+                view === "source" || mode === "code"
+                  ? sourceLanguage(file.filename)
+                  : ""
+              }
+              fit={variant === "dock" ? "dock" : "fill"}
+              reloadKey={reload}
+              onDownload={download}
+            />
+          )}
         </div>
         <div className={cn(variant !== "dock" && "mx-auto w-full max-w-5xl")}>
-          <FileCommentList comments={comments} names={names} />
+          <FileThread comments={comments} names={names} />
         </div>
       </div>
       {share ? (
-        <FileCommentBox
+        <AgentBox
           share={share}
           quote={quote}
           onClearQuote={() => setQuote(null)}
           selfPubkey={names.selfPubkey}
+          names={names}
+          comments={comments}
+          context={{
+            filename: file.filename,
+            path: path ? `${path.host}:${path.path}` : null,
+            editedSinceShared: edited,
+          }}
+          dirty={disk.dirty}
+          saveDraft={disk.save}
           className={cn(
             variant === "sheet" &&
               "pb-[max(0.875rem,env(safe-area-inset-bottom))]",

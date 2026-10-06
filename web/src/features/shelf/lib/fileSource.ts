@@ -25,6 +25,8 @@ export interface FileSource {
   urls: readonly string[];
   /** Raw `path` tag values, in imeta order. */
   paths: readonly string[];
+  /** `imeta x` per URL (absent = unknown). */
+  sha256ByUrl?: ReadonlyMap<string, string>;
 }
 
 /** The fields of a timeline message this reads (kept structural for tests). */
@@ -51,6 +53,12 @@ export function fileSourceOf(message: FileSourceMessage): FileSource {
     shelf: message.shelf != null,
     urls: [...message.imetaByUrl.keys()],
     paths: message.shelf?.paths ?? [],
+    sha256ByUrl: new Map(
+      [...message.imetaByUrl.entries()].flatMap(([url, entry]) => {
+        const x = (entry as { x?: unknown } | null)?.x;
+        return typeof x === "string" ? [[url, x] as [string, string]] : [];
+      }),
+    ),
   };
 }
 
@@ -88,5 +96,6 @@ export function openFileFromSource(
     rootId: source?.rootId ?? null,
     replyToId: source?.replyToId ?? null,
     path: path ? `${path.host}:${path.path}` : null,
+    sha256: source?.sha256ByUrl?.get(file.href) ?? null,
   };
 }

@@ -248,6 +248,12 @@ test("a file tab carries the share's thread markers and its path", () => {
   assert.equal(open.key, `${"a".repeat(64)}|${HTML}`);
   assert.equal(open.messageId, "a".repeat(64));
   assert.equal(open.path, `crichton:${DIR}/game-C.html`);
+  // W9: the shared bytes' sha256 rides on the tab (null when imeta has no x).
+  assert.equal(open.sha256, null);
+  assert.equal(
+    openFileOf(share, share.files[0]).sha256,
+    "1111111111111111111111111111111111111111111111111111111111111111",
+  );
 });
 
 test("the timeline marks a share and keeps its path tags; a plain message is not one", () => {

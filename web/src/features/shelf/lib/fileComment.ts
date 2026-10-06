@@ -33,6 +33,67 @@ export function quotedComment(quote: string | null, body: string): string {
   return `> ${quote}\n\n${text}`;
 }
 
+/**
+ * The file a request to the agent is about (canvas edit plan D11): the last
+ * line of the message reads `[file: report.md · crichton:/abs/report.md]`,
+ * plus `· edited by you since shared` when the disk copy differs from the
+ * share. The agent's prompt shows thread context as content only, so this is
+ * how it learns which file on disk to edit. With no path: `[file: name]`.
+ */
+export interface AgentRequestContext {
+  filename: string;
+  /** The share's raw `host:/abs` path value (already validated), or null. */
+  path: string | null;
+  editedSinceShared: boolean;
+}
+
+/** One trailer line; brackets/newlines in a name are flattened away. */
+export function fileTrailer(ctx: AgentRequestContext): string {
+  const clean = (value: string) => value.replace(/[\]\n\r]/g, " ").trim();
+  const parts = [clean(ctx.filename) || "file"];
+  if (ctx.path) {
+    parts.push(clean(ctx.path));
+  }
+  if (ctx.editedSinceShared) {
+    parts.push("edited by you since shared");
+  }
+  return `[file: ${parts.join(" · ").slice(0, 300)}]`;
+}
+
+/** `> quote\n\nbody\n\n[file: …]` — the message the agent box sends. */
+export function agentRequest(
+  quote: string | null,
+  body: string,
+  ctx: AgentRequestContext | null,
+): string {
+  const text = quotedComment(quote, body);
+  return ctx ? `${text}\n\n${fileTrailer(ctx)}` : text;
+}
+
+/** A final line of exactly the trailer's shape (and nothing else). */
+const TRAILER = /^\[file: [^\]\n]{1,300}\]$/;
+
+/**
+ * Strip the trailer for display: only when the LAST line matches exactly.
+ * A trailer-shaped line anywhere else is the person's text and stays.
+ */
+export function stripFileTrailer(content: string): string {
+  const lines = content.replace(/\s+$/, "").split("\n");
+  const last = lines[lines.length - 1] ?? "";
+  if (lines.length === 0 || !TRAILER.test(last)) {
+    return content;
+  }
+  return lines.slice(0, -1).join("\n").replace(/\s+$/, "");
+}
+
+/** {@link splitQuotedComment} after the trailer is taken off. */
+export function splitAgentRequest(content: string): {
+  quote: string | null;
+  body: string;
+} {
+  return splitQuotedComment(stripFileTrailer(content));
+}
+
 /** Split a comment back into its highlight and its words. */
 export function splitQuotedComment(content: string): {
   quote: string | null;
