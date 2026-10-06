@@ -2,6 +2,7 @@ import * as React from "react";
 
 import { getThreadReference } from "@/features/messages/lib/threading";
 import type { RelayEvent } from "@/shared/api/types";
+import { isReadAttended, useReadAttention } from "@/shared/lib/readAttention";
 
 type MarkChannelRead = (
   channelId: string,
@@ -63,9 +64,12 @@ export function useHuddleReadMarker({
     ? new Date(latestHuddleTranscriptMessage.created_at * 1_000).toISOString()
     : activeReadAt;
   const lastHuddleReadKeyRef = React.useRef<string | null>(null);
+  // I3: same attention gate as useChannelOpenReadState.
+  const attended = useReadAttention();
 
   React.useEffect(() => {
     if (!activeChannelId || activeChannelIsMember === false) return;
+    if (!attended || !isReadAttended()) return;
     const huddleReadKey = hasFlattenedHuddleReplies
       ? `${activeChannelId}:${huddleReadAt}`
       : null;
@@ -82,6 +86,7 @@ export function useHuddleReadMarker({
   }, [
     activeChannelId,
     activeChannelIsMember,
+    attended,
     hasFlattenedHuddleReplies,
     huddleReadAt,
     markChannelRead,

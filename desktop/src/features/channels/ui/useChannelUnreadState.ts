@@ -24,6 +24,7 @@ import {
 } from "@/features/messages/lib/unreadMarker";
 import type { TimelineMessage } from "@/features/messages/types";
 import { isConversationalUnreadKind } from "@/shared/constants/kinds";
+import { isReadAttended, useReadAttention } from "@/shared/lib/readAttention";
 
 import { useWelcomeInitialUnreadSuppression } from "./useWelcomeInitialUnreadSuppression";
 
@@ -82,6 +83,7 @@ export function useChannelUnreadState({
   // open", not the post-open frontier. Keyed per channel and recomputed only
   // when the channel id changes, never when the frontier advances, or the
   // divider would vanish the moment the open marks the channel read.
+  const attended = useReadAttention();
   const openFrontierRef = React.useRef(new Map<string, number | null>());
   if (activeChannelId && !openFrontierRef.current.has(activeChannelId)) {
     openFrontierRef.current.set(
@@ -272,13 +274,23 @@ export function useChannelUnreadState({
   // deliberate reversal of #1118's whole-subtree-on-open). Each revealed reply
   // gets its own msg:<id> marker advanced to its createdAt; a NEWER reply
   // re-raises the badge because the predicate is strictly createdAt > read.
+  //
+  // I3: only while the window is visible and focused — a reply landing in an
+  // open thread nobody is looking at stays unread until attention returns.
   React.useEffect(() => {
     if (!openThreadHeadId) return;
     if (isThreadMuted(openThreadHeadId)) return;
+    if (!attended || !isReadAttended()) return;
     for (const entry of threadMessages) {
       markMessageRead(entry.message.id, entry.message.createdAt);
     }
-  }, [openThreadHeadId, threadMessages, markMessageRead, isThreadMuted]);
+  }, [
+    attended,
+    openThreadHeadId,
+    threadMessages,
+    markMessageRead,
+    isThreadMuted,
+  ]);
   // In-thread "New" divider position. Reads the open-time snapshot (frozen
   // before the mark-read effect above), so the divider does not collapse the
   // instant open marks the revealed replies read. A reply absent from the
