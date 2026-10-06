@@ -5346,6 +5346,23 @@ fn dispatch_heartbeat(
 
 #[cfg(test)]
 mod agent_draft_prompt_tests {
+    /// F3 (harness auto-wake plan): a fresh session after a restart must own
+    /// the earlier work in its own channel instead of attributing it to
+    /// "a different session of you".
+    #[test]
+    fn shared_base_prompt_gives_earlier_channel_work_to_the_current_session() {
+        let prompt = include_str!("base_prompt.md");
+        assert!(
+            !prompt.contains("leave execution with the owning session"),
+            "old session-model text must be gone"
+        );
+        assert!(!prompt.contains("belongs to a different session of you"));
+        assert!(prompt.contains("Earlier work in this channel is yours."));
+        assert!(prompt.contains("this session owns it now"));
+        assert!(prompt
+            .contains("Work started in a different channel belongs to that channel's session"));
+    }
+
     #[test]
     fn shared_base_prompt_teaches_portable_agent_drafts() {
         let prompt = include_str!("base_prompt.md");
