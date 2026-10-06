@@ -98,6 +98,9 @@ const {
 } = await import("./readStateSync.ts");
 const { loadReadState, saveReadState } = await import("./readState.ts");
 const { loadInboxReadState } = await import("../../home/lib/inboxReadState.ts");
+const { clearUnreadTrace, readUnreadTrace } = await import(
+  "../../activity/unreadTrace.ts"
+);
 
 const signerCtl = globalThis.__RS_TEST_SIGNER__;
 let eventSeq = 0;
@@ -406,6 +409,41 @@ test("live: foreign read marker arriving AFTER EOSE advances the store and notif
     win.syncedEventCount(),
     1,
     "the two-event burst coalesced into one notification",
+  );
+});
+
+test("trace (I3): every marker an NIP-RS merge advances is recorded with the install that sent it", async (t) => {
+  const pubkey = "9".repeat(64);
+  freshHarness(pubkey);
+  t.after(() => disposeReadStateSync());
+  saveReadState({ chOld: 500, chSame: 900 });
+  clearUnreadTrace();
+  const session = fakeSession();
+  initReadStateSync({ session, selfPubkey: pubkey });
+  session.eose();
+  await sleep(20);
+  clearUnreadTrace();
+
+  session.emit(
+    foreignEvent(pubkey, {
+      createdAt: 3_000,
+      slotId: "c".repeat(32),
+      content: signerCtl.seal({
+        v: 1,
+        client_id: "phone1",
+        contexts: { chOld: 700, chSame: 900, chNew: 42 },
+      }),
+    }),
+  );
+  await waitFor(() => loadReadState().chOld === 700, "merged");
+  const moves = readUnreadTrace().filter((e) => e.type === "markerMoved");
+  assert.deepEqual(
+    moves.map(({ id, from, to, source }) => ({ id, from, to, source })),
+    [
+      { id: "chOld", from: 500, to: 700, source: "sync:cccccccc/phone1" },
+      { id: "chNew", from: null, to: 42, source: "sync:cccccccc/phone1" },
+    ],
+    "only advanced markers, each naming slot and client",
   );
 });
 

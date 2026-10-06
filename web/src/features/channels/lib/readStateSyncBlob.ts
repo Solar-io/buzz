@@ -361,6 +361,37 @@ export function parseWebReadStateBlob(
   return blob;
 }
 
+/** One decrypted read-state event and the slot (`d` suffix) it came from. */
+export interface SlottedPayload {
+  plaintext: string | null;
+  slot: string;
+}
+
+/**
+ * Which install supplied each context's winning marker in a batch, as the
+ * unread trace's `sync:<slot>/<client>` source (slot shortened to 8 hex).
+ * Diagnostics only — the merge itself never reads this.
+ */
+export function markerSources(
+  batch: readonly SlottedPayload[],
+): Record<string, string> {
+  const best: Record<string, number> = {};
+  const sources: Record<string, string> = {};
+  for (const { plaintext, slot } of batch) {
+    const blob = plaintext === null ? null : parseWebReadStateBlob(plaintext);
+    if (blob === null) {
+      continue;
+    }
+    for (const [contextId, marker] of Object.entries(blob.contexts)) {
+      if (marker > (best[contextId] ?? 0)) {
+        best[contextId] = marker;
+        sources[contextId] = `sync:${slot.slice(0, 8)}/${blob.client_id}`;
+      }
+    }
+  }
+  return sources;
+}
+
 /** The folded result of a boot-fetch batch, in localStorage-store shapes. */
 export interface MergedRemoteReadState {
   contexts: Record<string, number>;

@@ -20,11 +20,12 @@ import {
 import { favoriteMenuItem } from "@/features/sidebar/lib/favoriteMenuItem.ts";
 import {
   forgetChannel as forgetChannelRead,
-  markSeen,
   saveReadState,
   type ReadState,
 } from "@/features/channels/lib/readState.ts";
 import { notifyReadStateLocalChange } from "@/features/channels/lib/readStateSync.ts";
+import { traceUnread } from "@/features/activity/unreadTrace.ts";
+import { markReadStateSeen } from "@/features/activity/useMarkShownSeen.ts";
 import { evictTimelineCache } from "@/features/channels/lib/timelineCache.ts";
 import type { ChannelSummary } from "@/features/channels/useChannels";
 import type { RelaySession } from "@/shared/api/relay-session";
@@ -69,6 +70,13 @@ export function evictDeletedChannel(
     if (next !== previous) {
       saveReadState(next);
       notifyReadStateLocalChange();
+      traceUnread({
+        type: "markerMoved",
+        id: channelId,
+        from: previous[channelId] ?? null,
+        to: null,
+        source: "evict",
+      });
     }
     return next;
   });
@@ -101,16 +109,8 @@ export function channelMenuItems(
     ),
     {
       label: "Mark read",
-      onSelect: () => {
-        setReadState((previous) => {
-          const next = markSeen(previous, channel.id, channel.updatedAt);
-          if (next !== previous) {
-            saveReadState(next);
-            notifyReadStateLocalChange();
-          }
-          return next;
-        });
-      },
+      onSelect: () =>
+        markReadStateSeen(setReadState, channel.id, channel.updatedAt, "menu"),
     },
     {
       label: channelPrefs.muted.includes(channel.id) ? "Unmute" : "Mute",

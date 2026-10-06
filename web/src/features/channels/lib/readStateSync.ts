@@ -57,9 +57,13 @@ import {
   isValidReadStateDTag,
   mergeChannelMarkers,
   mergeInboxOverlay,
+  markerSources,
   mergePayloadBatch,
   nextPublishCreatedAt,
+  READ_STATE_D_TAG_PREFIX,
+  type SlottedPayload,
 } from "./readStateSyncBlob.ts";
+import { traceUnread } from "@/features/activity/unreadTrace.ts";
 
 /**
  * Fired on `window` once a boot batch or a coalesced live burst has merged
@@ -121,7 +125,7 @@ interface ReadStateSyncState {
   debounceTimer: ReturnType<typeof setTimeout> | null;
   liveFlushTimer: ReturnType<typeof setTimeout> | null;
   /** Live decrypts awaiting one coalesced flush (cleared per flush). */
-  liveQueue: Array<Promise<string | null>>;
+  liveQueue: Array<Promise<SlottedPayload>>;
   /**
    * FIFO of event ids already accepted (or published by us). Checked before
    * any decrypt so replays and own echoes cost nothing.
@@ -314,7 +318,7 @@ async function bootFetch(state: ReadStateSyncState): Promise<void> {
     Object.keys(localChannelsAtBoot).length > 0 ||
     Object.keys(localInboxAtBoot.read).length > 0 ||
     Object.keys(localInboxAtBoot.unread).length > 0;
-  const bootDecrypts: Array<Promise<string | null>> = [];
+  const bootDecrypts: Array<Promise<SlottedPayload>> = [];
   let bootDone = false;
   let settle: () => void = () => {};
   const settled = new Promise<void>((resolve) => {
@@ -358,12 +362,15 @@ async function bootFetch(state: ReadStateSyncState): Promise<void> {
         if (!isReadStateEvent(event, state.pubkey)) {
           return;
         }
-        const decrypt: Promise<string | null> = nip44DecryptFrom(
+        const slot = (
+          event.tags.find((tag) => tag[0] === "d")?.[1] ?? ""
+        ).slice(READ_STATE_D_TAG_PREFIX.length);
+        const decrypt: Promise<SlottedPayload> = nip44DecryptFrom(
           event.content,
           event.pubkey,
         )
-          .then(({ plaintext }) => plaintext)
-          .catch(() => null);
+          .then(({ plaintext }) => ({ plaintext, slot }))
+          .catch(() => ({ plaintext: null, slot }));
         if (bootDone) {
           state.liveQueue.push(decrypt);
           scheduleLiveFlush(state);
@@ -393,7 +400,7 @@ async function bootFetch(state: ReadStateSyncState): Promise<void> {
   if (!isStateLive(state)) {
     return;
   }
-  applyMergedRemote(mergePayloadBatch(payloads));
+  applyMergedRemote(payloads);
   if (hadLocalStateAtBoot) {
     // Publish after the boot fold so the slot carries the full merged union;
     // the open subscription drops its echo by remembered event id.
@@ -431,7 +438,7 @@ async function flushLiveQueue(state: ReadStateSyncState): Promise<void> {
   if (!isStateLive(state)) {
     return;
   }
-  const advanced = applyMergedRemote(mergePayloadBatch(payloads));
+  const advanced = applyMergedRemote(payloads);
   if (advanced) {
     // An advance means local state was behind some slot's blob — another
     // device's, or our own prior session's after a reload (recovery). Either
@@ -449,11 +456,15 @@ async function flushLiveQueue(state: ReadStateSyncState): Promise<void> {
  * all-stale burst) re-reading state would re-derive the activity feed's
  * bounded REQs for nothing.
  */
-function applyMergedRemote(remote: MergedRemoteReadState): boolean {
+function applyMergedRemote(batch: readonly SlottedPayload[]): boolean {
+  const remote: MergedRemoteReadState = mergePayloadBatch(
+    batch.map((entry) => entry.plaintext),
+  );
   const localChannels = loadReadState();
   const mergedChannels = mergeChannelMarkers(localChannels, remote.contexts);
   if (mergedChannels !== localChannels) {
     saveReadState(mergedChannels);
+    traceSyncedMoves(localChannels, mergedChannels, markerSources(batch));
   }
   const localInbox = loadInboxReadState();
   const mergedInbox = mergeInboxOverlay(localInbox, {
@@ -469,6 +480,27 @@ function applyMergedRemote(remote: MergedRemoteReadState): boolean {
     window.dispatchEvent(new CustomEvent(READ_STATE_SYNCED_EVENT));
   }
   return advanced;
+}
+
+/** Record every marker an NIP-RS merge advanced, naming the install. */
+function traceSyncedMoves(
+  before: Record<string, number>,
+  after: Record<string, number>,
+  sources: Record<string, string>,
+): void {
+  for (const [id, to] of Object.entries(after)) {
+    const from = before[id];
+    if (from === to) {
+      continue;
+    }
+    traceUnread({
+      type: "markerMoved",
+      id,
+      from: from ?? null,
+      to,
+      source: (sources[id] ?? "sync:unknown") as `sync:${string}`,
+    });
+  }
 }
 
 /**

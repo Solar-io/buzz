@@ -18,6 +18,12 @@ import { dmDisplayName } from "@/features/dms/lib/dmNaming.ts";
 import { readAuthorName } from "@/features/notifications/hooks";
 import { useRemindMeLater } from "@/features/reminders/ui/RemindMeLaterProvider";
 import { notify } from "@/shared/ui/notify";
+import { traceUnread } from "@/features/activity/unreadTrace.ts";
+import {
+  isUnread,
+  loadReadState,
+  type ReadState,
+} from "@/features/channels/lib/readState.ts";
 
 export interface MessageToastsProps {
   selfPubkey: string | null;
@@ -50,6 +56,8 @@ export interface MessageToastsProps {
    * opens the conversation.
    */
   onReply?: (channelId: string, messageId: string) => void;
+  /** Current read markers, for the trace's `rowUnread` (default: storage). */
+  readMarkers?: () => ReadState;
 }
 
 /**
@@ -71,6 +79,7 @@ export function MessageToasts({
   onOpenChannel,
   agentPubkeys,
   onReply,
+  readMarkers,
 }: MessageToastsProps) {
   const { available, sendToFeedback } = useRemindMeLater();
   // The viewer's pubkey rides along so a scheduled wake addressed to another
@@ -93,6 +102,7 @@ export function MessageToasts({
     agentPubkeys,
     onReply,
     feedback: available ? sendToFeedback : null,
+    readMarkers: readMarkers ?? loadReadState,
   });
   latest.current = {
     selfPubkey,
@@ -104,29 +114,53 @@ export function MessageToasts({
     agentPubkeys,
     onReply,
     feedback: available ? sendToFeedback : null,
+    readMarkers: readMarkers ?? loadReadState,
   };
 
   useEffect(() => {
     const onArrival = (entry: ChannelActivityEvent) => {
       const current = latest.current;
+      const isSelf =
+        current.selfPubkey != null && entry.pubkey === current.selfPubkey;
+      // The unread trace (I3): every toastable arrival, with what the row
+      // showed at that moment, so a toast-without-dot report is decidable.
+      const trace = (toasted: boolean, reason?: string) =>
+        traceUnread({
+          type: "arrival",
+          id: entry.channelId,
+          eventId: entry.eventId ?? null,
+          createdAt: entry.createdAt,
+          toasted,
+          reason,
+          rowUnread:
+            !isSelf &&
+            isUnread(current.readMarkers(), entry.channelId, entry.createdAt),
+        });
       const channel = current.channels.find((c) => c.id === entry.channelId);
       if (!channel) {
         // A message for a channel the shell has not loaded yet: no name, no
         // reliable navigation target — the dot machinery will catch up.
+        trace(false, "unknown-channel");
         return;
       }
       const isDm = channel.type === "dm";
+      const muted = isMuted(current.channelPrefs, entry.channelId);
+      const viewing = current.selectedId === entry.channelId;
       if (
         !shouldToastMessage({
-          isSelf:
-            current.selfPubkey != null && entry.pubkey === current.selfPubkey,
-          isViewingChannel: current.selectedId === entry.channelId,
+          isSelf,
+          isViewingChannel: viewing,
           isDm,
-          isMuted: isMuted(current.channelPrefs, entry.channelId),
+          isMuted: muted,
         })
       ) {
+        trace(
+          false,
+          isSelf ? "self" : viewing ? "viewing" : muted ? "muted" : "policy",
+        );
         return;
       }
+      trace(true);
       const copy = messageToastParts({
         channelName: isDm
           ? dmDisplayName(

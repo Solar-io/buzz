@@ -55,6 +55,7 @@ export function SidebarSection<T>({
     limit: visibleItems,
     expanded,
     isSelected,
+    isUnread,
   });
   return (
     <section className="flex flex-col gap-px" aria-label={label}>

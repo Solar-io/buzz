@@ -68,6 +68,7 @@ export function SidebarNavDisclosure<T>({
     limit: visibleItems,
     expanded: showAll,
     isSelected,
+    isUnread,
   });
   return (
     <div className="flex flex-col gap-px" data-testid="sidebar-nav-disclosure">

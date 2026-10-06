@@ -234,7 +234,7 @@ test("divergence 1 (marker): a read marker advanced by ANOTHER client clears the
   }
 });
 
-test("divergence 2 (presentation): pointer-hold + 6-row truncation leave a newly unread DM unrendered", () => {
+test("divergence 2 (presentation, pre-I5 pipeline): pointer-hold + 6-row truncation WITHOUT the unread predicate leave a newly unread DM unrendered", () => {
   // 20 DMs, none unread, none written in: A-Z order. "dm-15" sits at row 16.
   const names = Array.from(
     { length: 20 },
@@ -294,11 +294,9 @@ test("divergence 3 (two definitions of 'new'): the first message in a never-mess
   }
 });
 
-// TARGET CONTRACT (fails today; `todo` keeps the suite green until the
-// redesign lands — flip to a plain test in phase 1 of the plan).
-test("contract: a newly unread conversation is rendered (or its section signals it) even while the order is held", {
-  todo: "LEFT_NAV_ARCHITECTURE_REVIEW.md phase 1",
-}, () => {
+// TARGET CONTRACT (I5) — a `todo` until phase 0 landed: the section's
+// unread predicate (what SidebarSection hands truncateSection) lifts the row.
+test("contract: a newly unread conversation is rendered (or its section signals it) even while the order is held", () => {
   const names = Array.from(
     { length: 20 },
     (_, i) => `peer-${String(i).padStart(2, "0")}`,
@@ -317,6 +315,7 @@ test("contract: a newly unread conversation is rendered (or its section signals 
     items: holdOrder(rankSection(names, key, facts), key, heldKeys),
     limit: SIDEBAR_LIST_OPTIONS.visibleItems,
     expanded: false,
+    isUnread: (name) => unreadNow.has(name),
   });
   assert.equal(rendered.shown.includes("peer-15"), true);
 });

@@ -24,12 +24,13 @@ import { unreactToMessage } from "@/features/channels/lib/unreact.ts";
 import { useOwnPubkey } from "@/shared/lib/useOwnPubkey";
 import {
   loadReadState,
-  markSeen,
-  saveReadState,
   type ReadState,
 } from "@/features/channels/lib/readState.ts";
-import { notifyReadStateLocalChange } from "@/features/channels/lib/readStateSync.ts";
 import { useReadStateSync } from "@/features/channels/lib/useReadStateSync.ts";
+import {
+  markReadStateSeen,
+  useMarkShownSeen,
+} from "@/features/activity/useMarkShownSeen.ts";
 import { useFavoritesSync } from "@/features/channels/lib/useFavoritesSync.ts";
 import { activeTyping } from "@/features/channels/lib/typing.ts";
 import { usePermalinkCleanup } from "@/features/channels/lib/usePermalinkCleanup.ts";
@@ -195,19 +196,10 @@ function ChannelBrowser() {
     openId: current?.id ?? null,
   });
   const newestMessageAt = messages[messages.length - 1]?.createdAt ?? 0;
-  useEffect(() => {
-    if (channelId === "" || newestMessageAt === 0) {
-      return;
-    }
-    setReadState((previous) => {
-      const next = markSeen(previous, channelId, newestMessageAt);
-      if (next !== previous) {
-        saveReadState(next);
-        notifyReadStateLocalChange();
-      }
-      return next;
-    });
-  }, [channelId, newestMessageAt]);
+  const markOpenSeen = useCallback(
+    (id: string, at: number) => markReadStateSeen(setReadState, id, at, "open"),
+    [],
+  );
   // Cross-browser sync (NIP-RS): boot-merge the relay's markers in, and let
   // the debounced publisher carry every local persist above to other
   // browsers. Strictly additive — see readStateSync.ts.
@@ -359,6 +351,13 @@ function ChannelBrowser() {
   const { web, openFiles, openLink, activeTitle, layerMode } = useShellWebView(
     `${selectedId ?? ""}|${view ?? ""}`,
   );
+  // I3: only a conversation actually on screen is marked seen.
+  useMarkShownSeen({
+    channelId,
+    newestMessageAt,
+    shown: view === undefined && web.state.active === null,
+    markSeen: markOpenSeen,
+  });
   // Sidebar + buttons: section-header plus buttons open the create dialogs.
   const [newChannelOpen, setNewChannelOpen] = useState(false);
   const [newDmOpen, setNewDmOpen] = useState(false);
