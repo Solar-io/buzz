@@ -804,6 +804,9 @@ pub struct PromptContext {
     pub mcp_servers: Vec<McpServer>,
     pub initial_message: Option<String>,
     pub idle_timeout: Duration,
+    /// Idle limit for a turn held open by an outstanding background subagent
+    /// (`--background-idle-timeout`). Equal to `idle_timeout` when disabled.
+    pub background_idle_timeout: Duration,
     pub max_turn_duration: Duration,
     /// Owner-local timezone rendered into every turn's `[Context]` temporal
     /// lines and the heartbeat prompt (from `--prompt-timezone` /
@@ -3021,6 +3024,9 @@ pub async fn run_prompt_task(
                 &standing,
                 initial_msg,
             );
+            agent
+                .acp
+                .set_background_idle_timeout(ctx.background_idle_timeout);
             let init_result = agent
                 .acp
                 .session_prompt_with_idle_timeout(
@@ -3421,6 +3427,10 @@ pub async fn run_prompt_task(
             },
         ));
     }
+
+    agent
+        .acp
+        .set_background_idle_timeout(ctx.background_idle_timeout);
 
     // When control_rx is Some (channel tasks), wrap the prompt in select! so
     // the main loop can cancel, interrupt, or rotate it. Heartbeats
@@ -10152,6 +10162,7 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
             mcp_servers: vec![],
             initial_message: None,
             idle_timeout: Duration::from_secs(60),
+            background_idle_timeout: Duration::from_secs(60),
             max_turn_duration: Duration::from_secs(120),
             prompt_timezone: chrono_tz::UTC,
             turn_liveness_interval: Duration::ZERO,
