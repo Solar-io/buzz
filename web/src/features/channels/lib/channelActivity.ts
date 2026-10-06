@@ -245,7 +245,11 @@ export interface ChannelActivityHandlerDeps {
   activityRef: { current: ChannelActivityMap };
   /** Publish the mutated sample map (the hook's setActivity). */
   onActivityChange: (map: ChannelActivityMap) => void;
-  /** A LIVE strictly-newer arrival that beat a known sample (toast path). */
+  /**
+   * A LIVE arrival (I2): after the first EOSE, strictly newer than the
+   * sample, foreign, not a wake for others, newer than the read marker.
+   * Called after the sample map has moved (toast path).
+   */
   onLiveArrival: (entry: ChannelActivity) => void;
   /** Functional count update (the hook's setUnreadCounts). */
   onUnreadCountsChange: (
@@ -408,9 +412,14 @@ export function createChannelActivityHandlers(
       // Every delivered kind-9 — including replays and at-or-below-sample
       // arrivals the sample map drops below — is a message the timeline
       // store may not have yet; the store's own rules decide what sticks.
-      if (event.kind === 9) {
-        onRawEvent?.(event);
+      if (event.kind !== KIND_CHAT_MESSAGE) {
+        // The filters ask for kind 9, but the reader must not trust the
+        // delivery: a status flip carrying a DM's h tag once became that
+        // DM's sample and preview (the 2026-09-15 phantom DM). DMs ride
+        // this feed now, so the guard the DM sampler had lives here.
+        return;
       }
+      onRawEvent?.(event);
       // A scheduled wake addressed to another member is machinery the viewer
       // is a bystander to: the timeline keeps the row (tapped above), but it
       // must not become the channel's sample, a counted unread or a live
@@ -440,15 +449,24 @@ export function createChannelActivityHandlers(
       if (previous && previous.createdAt >= entry.createdAt) {
         return;
       }
-      // A message is a live arrival when it beats a known sample — or, in a
-      // channel whose only delivered traffic so far was a silent wake, when
-      // it is newer than that wake. Without the second arm a channel read up
-      // to a wake (or a limit-1 DM sample that IS a wake) has no baseline,
-      // and the woken agent's reply would arrive unseen: no count, no toast.
+      // I2 (LEFT_NAV_ARCHITECTURE_REVIEW.md): ONE definition of "live",
+      // shared by the toast and the row. Live = delivered after this
+      // subscription's first EOSE (and strictly newer than the sample, above
+      // — which is what keeps reconnect replays out), and newer than any
+      // silent wake seen for the channel (a message older than a wake is
+      // backfill that arrived late). It no longer has to BEAT a prior
+      // sample: the first message in a never-messaged conversation, or in
+      // one whose window opened empty at the read marker, both dots the row
+      // and toasts.
       const wakeFloor = silentWakeFloor.get(entry.channelId);
       const isLiveArrival =
-        previous !== undefined ||
-        (wakeFloor !== undefined && entry.createdAt > wakeFloor);
+        backfillClosed &&
+        (wakeFloor === undefined || entry.createdAt > wakeFloor);
+      // Only a foreign message the viewer has not already read is news:
+      // the toast fires exactly when the row turns unread.
+      const isNews =
+        entry.pubkey !== selfPubkey &&
+        (readMarkers === null || entry.createdAt > markerFor(entry.channelId));
       if (isLiveArrival) {
         if (readMarkers) {
           // Live increment, same exclusion rules as the derivation.
@@ -466,13 +484,21 @@ export function createChannelActivityHandlers(
             return next;
           });
         }
-        onLiveArrival(entry);
       }
       activityRef.current = applyChannelActivity(activityRef.current, entry);
       onActivityChange(activityRef.current);
+      // After the sample moved, so a handler reading the feed sees the
+      // conversation it is being told about as unread (I1).
+      if (isLiveArrival && isNews) {
+        onLiveArrival(entry);
+      }
     },
     onEose(): void {
-      if (!readMarkers || !window || backfillClosed) {
+      if (backfillClosed) {
+        return;
+      }
+      if (!readMarkers || !window) {
+        backfillClosed = true;
         return;
       }
       // Derive each buffered channel's count from its backfill window.

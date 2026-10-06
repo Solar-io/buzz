@@ -106,16 +106,17 @@ export interface ChannelSidebarReadState {
   /** Per-channel read markers. */
   read: ReadState;
   /**
-   * Newest sampled kind:9 message per non-DM channel (useChannelActivity).
-   * New messages never bump `channel.updatedAt` (a 39000 metadata time), so
-   * the dot must compare the read marker against real message activity,
-   * falling back to metadata only for channels with no sample yet.
+   * Newest sampled kind:9 message per conversation, DMs included (the
+   * conversation-activity store). New messages never bump
+   * `channel.updatedAt` (a 39000 metadata time), so the dot must compare the
+   * read marker against real message activity, falling back to metadata
+   * only for channels with no sample yet.
    */
   activity: ChannelActivityMap;
   /**
-   * Live unread counts per channel (the counting activity feed). A count of
-   * 1+ upgrades the row's dot to a count badge; absent until the feed's EOSE
-   * derives the channel's window, and 0 there renders nothing unread.
+   * Live unread counts per conversation, channel and DM rows alike (I4). A
+   * count of 1+ upgrades the row's dot to a count badge; absent until the
+   * feed's EOSE derives the window, and 0 there renders nothing unread.
    */
   unreadCounts: ChannelUnreadCounts;
 }
@@ -457,7 +458,7 @@ export function ChannelSidebar({
       <DmNavRow
         selected={channel.id === shownId}
         channelId={channel.id}
-        lastSeenAt={readState.read[channel.id] ?? null}
+        unreadCount={readState.unreadCounts.get(channel.id) ?? null}
         unread={dmUnread(dm)}
         participants={channel.participantPubkeys}
         selfPubkey={dmIdentity.selfPubkey}

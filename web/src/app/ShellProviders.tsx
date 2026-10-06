@@ -90,9 +90,8 @@ export function ShellProviders({
               <RemindMeLaterProvider selfPubkey={selfPubkey}>
                 {/* Same mount discipline as NotificationRuntime: once at the shell,
             so toasts survive every view. Inside the reminders provider, for
-            the toast's Feedback. The channel side consumes the shell's
-            shared activity feed; the DM side opens the feed's DM-scoped
-            twin. */}
+            the toast's Feedback. Channels and DMs alike arrive from the
+            shell's one conversation-activity store. */}
                 <MessageToasts
                   {...toasts}
                   selfPubkey={selfPubkey}

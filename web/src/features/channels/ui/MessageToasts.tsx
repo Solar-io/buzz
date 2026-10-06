@@ -1,10 +1,6 @@
 import { useEffect, useRef } from "react";
-import type { Profile } from "@/features/channels/hooks";
-import type {
-  ChannelActivityEvent,
-  UseChannelActivityResult,
-} from "@/features/channels/hooks";
-import { useChannelActivity } from "@/features/channels/hooks";
+import type { ChannelActivityEvent, Profile } from "@/features/channels/hooks";
+import type { ConversationActivityStore } from "@/features/activity/conversationActivity.ts";
 import {
   isMuted,
   type ChannelPrefs,
@@ -32,12 +28,10 @@ export interface MessageToastsProps {
   /** The shell's full channel list — names, types, DM participants. */
   channels: ChannelSummary[];
   /**
-   * Live arrivals from the shell's non-DM activity feed — the SAME
-   * subscription the sidebar's unread dots read (useChannelActivity).
+   * Live arrivals (I2) from the conversation-activity store — the SAME
+   * state every sidebar row, DM or channel, reads (I1).
    */
-  channelLiveEvents: UseChannelActivityResult["onLiveEvent"];
-  /** DM channel ids; the component runs its own activity feed over these. */
-  dmChannelIds: string[];
+  onArrival: ConversationActivityStore["onArrival"];
   /** Viewer's channel prefs — muted channels never toast. */
   channelPrefs: ChannelPrefs;
   /** Known profiles (DM peers at minimum), for DM and sender names. */
@@ -62,18 +56,16 @@ export interface MessageToastsProps {
 
 /**
  * Top-right toasts on new messages. Mounted ONCE at the shell (next to
- * NotificationRuntime): the channel side consumes the shell's shared
- * activity feed via {@link MessageToastsProps.channelLiveEvents}, the DM side
- * runs its own `useChannelActivity` over the DM ids (the DM rows keep their
- * separate recency feed — this one exists for live arrival events only).
- * Renders nothing; its whole job is turning live feed events into toasts.
+ * NotificationRuntime). It registers one handler on the conversation-
+ * activity store, which runs only after the store already holds the
+ * arrival — so a toasted conversation's row is unread in the same commit
+ * (I1). Renders nothing; its whole job is turning arrivals into toasts.
  */
 export function MessageToasts({
   selfPubkey,
   selectedId,
   channels,
-  channelLiveEvents,
-  dmChannelIds,
+  onArrival,
   channelPrefs,
   profiles,
   onOpenChannel,
@@ -82,13 +74,6 @@ export function MessageToasts({
   readMarkers,
 }: MessageToastsProps) {
   const { available, sendToFeedback } = useRemindMeLater();
-  // The viewer's pubkey rides along so a scheduled wake addressed to another
-  // DM member fires no live arrival (and so no toast) — same rule as channels.
-  const dmFeed = useChannelActivity(dmChannelIds, undefined, selfPubkey);
-  // The registration effect keys on the STABLE register functions — keying
-  // on `dmFeed` (a fresh object per render) would unregister and re-register
-  // the handler on every activity update, opening a window to drop arrivals.
-  const dmLiveEvents = dmFeed.onLiveEvent;
 
   // Everything the arrival handler reads but must not re-register for:
   // props change per render, the handler is registered for the feed's life.
@@ -118,7 +103,7 @@ export function MessageToasts({
   };
 
   useEffect(() => {
-    const onArrival = (entry: ChannelActivityEvent) => {
+    const handle = (entry: ChannelActivityEvent) => {
       const current = latest.current;
       const isSelf =
         current.selfPubkey != null && entry.pubkey === current.selfPubkey;
@@ -201,13 +186,10 @@ export function MessageToasts({
       });
     };
 
-    const unregisterChannel = channelLiveEvents(onArrival);
-    const unregisterDm = dmLiveEvents(onArrival);
-    return () => {
-      unregisterChannel();
-      unregisterDm();
-    };
-  }, [channelLiveEvents, dmLiveEvents]);
+    // Keyed on the store's STABLE register function: re-registering per
+    // render would open a window in which arrivals are dropped.
+    return onArrival(handle);
+  }, [onArrival]);
 
   return null;
 }

@@ -1,6 +1,16 @@
-import type { SignedNostrEvent } from "@/shared/lib/nostr-signer";
-import { isWakeForOthers } from "../../channels/lib/wakeMessage.ts";
-import { plainText } from "../../../shared/lib/plainText.ts";
+import type { ChannelSummary } from "../../channels/lib/channelFromEvent.ts";
+import type {
+  ChannelActivity,
+  ChannelActivityMap,
+} from "../../channels/lib/channelActivity.ts";
+
+/*
+ * DM recency, derived from the conversation-activity store's samples
+ * (features/activity). DMs used to run their own per-DM sampler here — a
+ * twin of the toast feed with its own idea of "new" (left-nav review,
+ * 2026-10-05); the store's handlers now carry its rules (kind-9 only,
+ * newest-wins, a wake for someone else never becomes the sample).
+ */
 
 export interface DmLastMessage {
   channelId: string;
@@ -32,120 +42,60 @@ export function compareDmRecency(a: DmRecencyRank, b: DmRecencyRank): number {
   );
 }
 
-/** Relay NIP-11 max_filters: 10 per REQ. */
-export const MAX_FILTERS_PER_REQ = 10;
+/** Sidebar preview length (the store keeps a longer one for toasts). */
+const DM_EXCERPT_MAX = 80;
 
-export interface DmActivityFilter {
-  kinds: number[];
-  "#h": string[];
-  limit: number;
-  // Satisfy NostrFilter's tag-index signature without widening the shape.
-  [key: `#${string}`]: string[];
+/** The DM row's view of one conversation-activity sample. */
+export function dmLastMessage(sample: ChannelActivity): DmLastMessage {
+  return {
+    channelId: sample.channelId,
+    authorPubkey: sample.pubkey,
+    excerpt: sample.preview.slice(0, DM_EXCERPT_MAX),
+    created_at: sample.createdAt,
+  };
+}
+
+/** One DM, as the sidebar and the landing pick read it. */
+export interface DmSummary {
+  channel: ChannelSummary;
+  /** Last kind:9 timestamp seen for this DM (0 = never sampled). */
+  lastActivity: number;
+  /** Newest sampled message (author + excerpt) for the sidebar preview row. */
+  lastMessage: DmLastMessage | null;
 }
 
 /**
- * Exact per-DM newest-message sampling as multi-filter REQ batches: one
- * {kinds:[9], #h:[id], limit:1} filter per DM, OR'd into at most
- * MAX_FILTERS_PER_REQ filters per REQ. This keeps each DM's sample exact
- * (a shared limit starves quiet DMs) without firing one REQ per DM at
- * mount — the concurrent-REQ burst tripped the relay's handler semaphore
- * and randomly refused sibling subscriptions (profiles: names/photos
- * vanished from the sidebar).
+ * The DM channels in `channels`, newest activity first (Sam 2026-09-02:
+ * "they should sort based on most recent activity"); a DM with no sample
+ * falls back to its metadata time.
  */
-export function dmActivityFilterBatches(dmIds: string[]): DmActivityFilter[][] {
-  const batches: DmActivityFilter[][] = [];
-  for (let i = 0; i < dmIds.length; i += MAX_FILTERS_PER_REQ) {
-    batches.push(
-      dmIds
-        .slice(i, i + MAX_FILTERS_PER_REQ)
-        .map((id) => ({ kinds: [9], "#h": [id], limit: 1 })),
-    );
-  }
-  return batches;
-}
-
-/**
- * Last-activity info per DM channel, derived from ONE kind:9 subscription
- * spanning all known DM ids (`#h: [id1, id2, …]` — nostr filters are OR
- * within a tag). The subscription is capped (limit ~100) so this is a recency
- * sample for sidebar ordering and previews, not a message cache.
- */
-/**
- * The only kind that counts as DM activity: a durable channel message. The
- * sampler's filters ask for exactly this, but the reader must not TRUST the
- * delivery to have honored the filter — on 2026-09-15 a status flip from a
- * DM participant re-sorted their idle DM to #1 with the status text as the
- * preview (the "phantom DM" that made the default-open land on a blank
- * conversation). Any other kind arriving on this subscription — statuses,
- * workflow runs, whatever the fan-out delivers — is ignored here by
- * construction.
- */
-export const DM_ACTIVITY_KIND = 9;
-
-/**
- * Fold one delivered event into the per-DM newest-sample list (the state
- * `useDmActivity` keeps): newest-wins per DM, one entry per DM.
- *
- * Returns the SAME array when nothing changes. That is the case for an event
- * with no `h` tag, a stale/duplicate arrival, and a scheduled wake addressed
- * to someone other than the viewer — such a wake must not become the DM's
- * sample, because the row's unread dot, its preview and the DM list's
- * recency order all derive from it.
- */
-export function applyDmActivityEvent(
-  previous: SignedNostrEvent[],
-  event: SignedNostrEvent,
-  selfPubkey: string | null,
-): SignedNostrEvent[] {
-  if (isWakeForOthers(event, selfPubkey)) {
-    return previous;
-  }
-  const id = event.tags.find((tag) => tag[0] === "h")?.[1];
-  if (!id) {
-    return previous;
-  }
-  const channelOf = (candidate: SignedNostrEvent) =>
-    candidate.tags.find((tag) => tag[0] === "h")?.[1];
-  const existing = previous.find((candidate) => channelOf(candidate) === id);
-  if (existing && existing.created_at >= event.created_at) {
-    return previous;
-  }
-  return [
-    ...previous.filter((candidate) => channelOf(candidate) !== id),
-    event,
-  ];
-}
-
-export function dmActivityFromEvents(
-  events: SignedNostrEvent[],
-): Map<string, DmLastMessage> {
-  const activity = new Map<string, DmLastMessage>();
-  for (const event of events) {
-    if (event.kind !== DM_ACTIVITY_KIND) {
-      continue;
-    }
-    const channelId = event.tags.find((tag) => tag[0] === "h")?.[1];
-    if (typeof channelId !== "string" || channelId.length === 0) {
-      continue;
-    }
-    const previous = activity.get(channelId);
-    if (!previous || event.created_at > previous.created_at) {
-      activity.set(channelId, {
-        channelId,
-        authorPubkey: event.pubkey,
-        excerpt: plainExcerpt(event.content),
-        created_at: event.created_at,
-      });
-    }
-  }
-  return activity;
-}
-
-/** Strip markdown noise for a one-line sidebar preview. */
-function plainExcerpt(content: string): string {
-  return plainText(content, { embed: "📷 image" })
-    .replace(/[#~>|]/g, "")
-    .replace(/\s+/g, " ")
-    .trim()
-    .slice(0, 80);
+export function dmSummaries(
+  channels: readonly ChannelSummary[],
+  activity: ChannelActivityMap,
+): DmSummary[] {
+  const list = channels
+    .filter((channel) => channel.type === "dm")
+    .map((channel) => {
+      const sample = activity.get(channel.id);
+      return {
+        channel,
+        lastActivity: sample?.createdAt ?? 0,
+        lastMessage: sample ? dmLastMessage(sample) : null,
+      };
+    });
+  list.sort((a, b) =>
+    compareDmRecency(
+      {
+        lastActivity: a.lastActivity,
+        updatedAt: a.channel.updatedAt,
+        name: a.channel.name,
+      },
+      {
+        lastActivity: b.lastActivity,
+        updatedAt: b.channel.updatedAt,
+        name: b.channel.name,
+      },
+    ),
+  );
+  return list;
 }

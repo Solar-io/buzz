@@ -93,8 +93,19 @@ globalThis.__BUZZ_TEST_MODULE_STUBS__ = {
     export function useTheme() { return { isDark: true }; }
     export function ThemeProvider({ children }) { return children ?? null; }
   `,
+  // Toasts land on globalThis.__BUZZ_TEST_ON_TOAST__ (spec), when a test
+  // installs one; render() is sonner's own call into BuzzToast.
   sonner: `
-    export const toast = { error() {}, success() {}, info() {} };
+    export const toast = {
+      error() {}, success() {}, info() {}, warning() {}, message() {},
+      dismiss() {},
+      custom(render) {
+        const element = render("test-toast");
+        globalThis.__BUZZ_TEST_ON_TOAST__?.(element.props.spec);
+        return "test-toast";
+      },
+    };
+    export function Toaster() { return null; }
   `,
   "@tanstack/react-router": `
     const { createElement } = globalThis.__BUZZ_TEST_REACT__;
