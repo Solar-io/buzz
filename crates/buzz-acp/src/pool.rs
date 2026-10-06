@@ -7889,6 +7889,118 @@ done"#;
         agent.acp.shutdown().await;
     }
 
+    // The resume batch's prompt, as actually sent on the wire, carries the
+    // resume framing AND the journal's list of the work that was stopped.
+    #[tokio::test]
+    async fn run_prompt_task_sends_resume_note_for_resume_batch() {
+        let capture =
+            std::env::temp_dir().join(format!("buzz-acp-resume-prompt-{}.ndjson", Uuid::new_v4()));
+        let quoted_capture = capture.to_string_lossy().replace('\'', "'\\''");
+        let script = format!(
+            r#"count=0
+while IFS= read -r line; do
+  printf '%s\n' "$line" >> '{quoted_capture}'
+  printf '%s\n' "{{\"jsonrpc\":\"2.0\",\"id\":$count,\"result\":{{\"stopReason\":\"end_turn\"}}}}"
+  count=$((count + 1))
+done"#
+        );
+        let acp = AcpClient::spawn("bash", &["-c".to_string(), script], &[], false)
+            .await
+            .expect("spawn resume ACP script");
+        let channel_id = Uuid::new_v4();
+        let mut agent = OwnedAgent {
+            index: 0,
+            acp,
+            state: SessionState::default(),
+            model_capabilities: None,
+            desired_model: None,
+            model_overridden: false,
+            desired_model_request_id: None,
+            desired_model_pending_ack: false,
+            startup_effort: None,
+            agent_name: "legacy-test-agent".into(),
+            goose_system_prompt_supported: None,
+            protocol_version: 1,
+        };
+        agent
+            .state
+            .sessions
+            .insert(channel_id, "live-session".into());
+        agent
+            .state
+            .deliveries
+            .insert(channel_id, ChannelDeliveryState::default());
+
+        // A previous process left a background shell running on this channel.
+        let path = std::env::temp_dir().join(format!("buzz-resume-note-{}.json", Uuid::new_v4()));
+        let event = EventBuilder::new(Kind::Custom(9), "build the release")
+            .sign_with_keys(&Keys::generate())
+            .unwrap();
+        let original = FlushBatch {
+            channel_id,
+            events: vec![crate::queue::BatchEvent {
+                event,
+                prompt_tag: "test".into(),
+                received_at: std::time::Instant::now(),
+            }],
+            cancelled_events: vec![],
+            cancel_reason: None,
+        };
+        let now = crate::auth_parking::now_secs();
+        {
+            let previous = crate::resume::ResumeJournal::load(Some(path.clone()));
+            previous.begin_turn(&original, now);
+            previous.task_started(
+                channel_id,
+                crate::resume::BackgroundTask {
+                    id: "bash-9".into(),
+                    title: "just desktop-release-build".into(),
+                    output_file: Some("/tmp/bash-9.output".into()),
+                    tool_call_id: None,
+                },
+                now,
+            );
+        }
+        let journal = crate::resume::ResumeJournal::load(Some(path.clone()));
+        let resume_batch = journal.take_startup(now).pop().expect("resume batch");
+
+        let mut ctx = make_prompt_context_no_owner();
+        ctx.resume = journal.clone();
+        let ctx = Arc::new(ctx);
+        let (result_tx, mut result_rx) = mpsc::unbounded_channel();
+        run_prompt_task(
+            agent,
+            Some(resume_batch),
+            None,
+            Arc::clone(&ctx),
+            result_tx,
+            None,
+            "turn-resume".into(),
+        )
+        .await;
+        let result = result_rx.recv().await.expect("prompt result");
+        assert!(matches!(
+            result.outcome,
+            PromptOutcome::Ok(StopReason::EndTurn)
+        ));
+        agent = result.agent;
+        agent.acp.shutdown().await;
+
+        let sent = std::fs::read_to_string(&capture).expect("captured requests");
+        std::fs::remove_file(&capture).ok();
+        assert!(sent.contains("your previous session ended before it finished"));
+        assert!(sent.contains("build the release"));
+        assert!(
+            sent.contains("just desktop-release-build (output: /tmp/bash-9.output)"),
+            "stopped-work note reaches the agent: {sent}"
+        );
+        assert!(
+            journal.snapshot(channel_id).is_none(),
+            "a completed resume turn with no new work clears the entry"
+        );
+        assert!(!path.exists());
+    }
+
     #[tokio::test]
     async fn merged_cancel_prompt_commits_and_deduplicates_all_rendered_event_ids() {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
