@@ -1128,3 +1128,12 @@ Three sub-traps from the same hour:
   advance the mocked relay auth grace before expecting subscriptions.
 - Run synthetic Agent Brave tests with fake clocks in an isolated browser
   context, and close only that context; the signed-in browser is shared.
+
+## Web Canvas disk editing (earned 2026-10-05)
+
+- The Canvas pane reads/writes a share's `host:path` through stash with the
+  VIEWER's session, and that path is author-controlled. Disk mode is gated by
+  `diskTrusted` (viewer's own share or a known agent's); never widen it to
+  any member. The `[file: …]` trailer is shown as a chip, never hidden.
+- e2e mocks stash at the Files URL with `page.route`; the browser still
+  enforces CORS on fulfilled responses, so the mock sends ACAO + credentials.

@@ -243,3 +243,10 @@ Plan: `~/.buzz/PLANS/VOICE_STREAMED_REPLIES_2026-10-04.md`.
 - [x] Step 5: `speakStream` in the player, 24820 subscription and stream routing in `useHuddleAgentSpeech`.
 - [ ] Steps 1-3 (buzz-acp harness side) — separate coder.
 - [ ] Step 6 live acceptance: baseline with harness switch off, then Kaiya on; read `window.__buzzVoiceLatency`.
+
+
+## Canvas edit + agent box (plan ~/.buzz/PLANS/CANVAS_EDIT_AGENT_BOX.md, 2026-10-05)
+- [x] W1-W15 web: stash client, disk document state machine + poll, Live/Shared chip, Edit/Preview/Save, 409 panel, read-only reasons, OpenFile.sha256 heal, agent box target/trailer/save-and-send, Agent thread heading, phone sizes.
+- [x] A1 ACP base-prompt bullet, bound to the agent's own share path (security follow-up).
+- [x] Security follow-up: disk mode only for shares by the viewer or a known agent; trailer shown as a chip, never hidden.
+- [ ] Live check 2 (Agent Brave on :6351 against stash prod) — needs stash prod + web bundle deploys.
