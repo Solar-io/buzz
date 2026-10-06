@@ -14,9 +14,9 @@
  * muted channel withholds. Collapsing them would make a denied permission
  * silently disable the badge and the sound too.
  *
- * MUTE MEANS "NO SOUND" (the desktop's rule, 8ca8caa35): a muted channel or
- * DM still notifies and still counts toward the badge — @mentions included —
- * it just never plays a sound.
+ * MUTE MEANS "COUNT, NEVER ALERT" (Sam, 2026-10-06): a muted channel or DM
+ * still counts toward the badge — @mentions included — but never raises an
+ * OS notification and never plays a sound.
  */
 
 /** What the viewer wants to be alerted about. */
@@ -132,12 +132,16 @@ export function decideNotification(
   if (!context.documentHidden && message.isActiveChannel) {
     return { ...SKIP, reason: "viewing" };
   }
-  // Mute is one rule everywhere (left-nav QA #6, 2026-10-05): a muted
-  // conversation — channel or DM — never toasts, never pills, never raises
-  // an OS notification, never counts toward a badge and never chimes. It
-  // used to withhold only the sound, so a muted DM still interrupted.
+  // Mute is one rule everywhere (Sam, 2026-10-06): a muted conversation —
+  // channel or DM — still counts (row pill, badge), but never toasts, never
+  // raises an OS notification and never chimes.
   if (message.channelMuted) {
-    return { ...SKIP, reason: "channel-muted" };
+    return {
+      notify: false,
+      badge: context.documentHidden,
+      sound: false,
+      reason: "channel-muted",
+    };
   }
 
   // The badge exists to make a BACKGROUND tab show activity; a visible tab
@@ -179,7 +183,7 @@ export function describeNotifyReason(reason: NotifyReason): string {
     case "muted-everything":
       return "Notifications are set to nothing.";
     case "channel-muted":
-      return "That conversation is muted: it never alerts.";
+      return "That conversation is muted: it counts as unread but never alerts.";
     case "not-addressed":
       return "Only mentions and DMs notify.";
     case "viewing":

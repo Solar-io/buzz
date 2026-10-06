@@ -62,22 +62,33 @@ test('mode "none" silences both outputs', () => {
   });
 });
 
-// ── Mute means silent everywhere (left-nav QA #6) ─────────────────────────
-// A muted conversation raises nothing: no notification, no badge, no sound.
+// ── Mute means count, never alert (Sam, 2026-10-06) ───────────────────────
+// A muted conversation still counts toward the badge, but raises no
+// notification and no sound.
 // Each muted case is paired with its unmuted control so a rule that silences
 // everyone cannot pass.
 
-test("a muted conversation raises no notification, no badge and no sound", () => {
+test("a muted conversation still badges, but raises no notification and no sound", () => {
   const decision = decideNotification(
     relevantMessage({ channelMuted: true }),
     grantedContext(),
   );
   assert.deepEqual(decision, {
     notify: false,
-    badge: false,
+    badge: true,
     sound: false,
     reason: "channel-muted",
   });
+});
+
+test("a muted conversation in a visible tab does not badge (the sidebar shows it)", () => {
+  const decision = decideNotification(
+    relevantMessage({ channelMuted: true }),
+    grantedContext({ documentHidden: false }),
+  );
+  assert.equal(decision.badge, false);
+  assert.equal(decision.notify, false);
+  assert.equal(decision.sound, false);
 });
 
 test("control: the same message unmuted plays a sound", () => {
@@ -88,17 +99,17 @@ test("control: the same message unmuted plays a sound", () => {
   assert.equal(decision.sound, true);
 });
 
-test("a muted @mention in mode all raises nothing either", () => {
+test("a muted @mention in mode all counts but does not alert either", () => {
   const decision = decideNotification(
     relevantMessage({ channelMuted: true, mentionsSelf: true }),
     grantedContext({ mode: "all" }),
   );
   assert.equal(decision.notify, false);
-  assert.equal(decision.badge, false);
+  assert.equal(decision.badge, true);
   assert.equal(decision.sound, false);
 });
 
-test("a muted DM raises nothing; an unmuted DM notifies and chimes", () => {
+test("a muted DM only counts; an unmuted DM notifies and chimes", () => {
   const muted = decideNotification(
     relevantMessage({ channelMuted: true, isDm: true, mentionsSelf: false }),
     grantedContext(),
@@ -108,7 +119,7 @@ test("a muted DM raises nothing; an unmuted DM notifies and chimes", () => {
     grantedContext(),
   );
   assert.equal(muted.notify, false);
-  assert.equal(muted.badge, false);
+  assert.equal(muted.badge, true);
   assert.equal(muted.sound, false);
   assert.equal(unmuted.notify, true);
   assert.equal(unmuted.sound, true);
@@ -127,10 +138,10 @@ test("a muted channel still obeys mode mentions (not addressed → nothing)", ()
   });
 });
 
-test("the muted reason says it never alerts", () => {
+test("the muted reason says it counts but never alerts", () => {
   assert.equal(
     describeNotifyReason("channel-muted"),
-    "That conversation is muted: it never alerts.",
+    "That conversation is muted: it counts as unread but never alerts.",
   );
 });
 
