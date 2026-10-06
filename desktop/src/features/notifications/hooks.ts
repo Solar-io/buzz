@@ -5,6 +5,7 @@ import { useUsersBatchQuery } from "@/features/profile/hooks";
 import type { UserProfileLookup } from "@/features/profile/lib/identity";
 import type { Channel, FeedItem, HomeFeedResponse } from "@/shared/api/types";
 import { scheduleAfterForegroundReady } from "@/shared/lib/foregroundReady";
+import { isReadAttended, useReadAttention } from "@/shared/lib/readAttention";
 import {
   getDesktopNotificationPermissionState,
   requestDesktopNotificationAccess,
@@ -424,6 +425,10 @@ export function useHomeFeedNotificationState(
     channels,
     silentChannelIds,
   );
+  // I3: Home counts as seen only while the window is visible and focused, so
+  // an unattended Home neither marks its feed seen nor hides the badge.
+  const attended = useReadAttention();
+  const isHomeSeen = isHomeActive && attended;
   const normalizedPubkey = pubkey?.trim().toLowerCase() ?? "";
   const [seenFeedIds, setSeenFeedIds] = React.useState<string[]>(() =>
     readStoredSeenFeedIds(normalizedPubkey),
@@ -449,13 +454,13 @@ export function useHomeFeedNotificationState(
   });
 
   React.useEffect(() => {
-    if (!isHomeActive || currentFeedIds.length === 0) {
+    if (!isHomeSeen || !isReadAttended() || currentFeedIds.length === 0) {
       return;
     }
 
     void normalizedPubkey;
     markCurrentFeedSeen();
-  }, [currentFeedIds, isHomeActive, normalizedPubkey]);
+  }, [currentFeedIds, isHomeSeen, normalizedPubkey]);
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: readStateVersion invalidates getChannelReadAt
   return React.useMemo(() => {
@@ -473,7 +478,7 @@ export function useHomeFeedNotificationState(
     let excludingHighPriority = 0;
     for (const item of currentFeedItems) {
       const isLocallyUnread = localUnreadFeedIds.has(item.id);
-      if (isHomeActive && !isLocallyUnread) {
+      if (isHomeSeen && !isLocallyUnread) {
         continue;
       }
       if (
@@ -512,7 +517,7 @@ export function useHomeFeedNotificationState(
     getMessageReadAt,
     getThreadReadAt,
     highPriorityChannelIds,
-    isHomeActive,
+    isHomeSeen,
     localUnreadFeedIds,
     mutedChannelIds,
     readStateVersion,
