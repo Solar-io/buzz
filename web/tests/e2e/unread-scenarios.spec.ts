@@ -823,7 +823,9 @@ test("#21 phone layout: Channels tab badge equals rows with pills", async ({
     description: `tabbar="${txt}" dmPills=${dmPills}`,
   });
   console.log(`PHONE tabbar="${txt}" dmPills=${dmPills}`);
-  expect(txt).toMatch(/Channels4/);
+  // DMs 3 and 20 plus #random have pills; DM 7 is muted, so after QA #6 it
+  // has no pill and is not counted (this expected 4 while mute leaked).
+  expect(txt).toMatch(/Channels3/);
 });
 
 test("#22 relay CLOSED one batch: health sweep heals within 60s, missed message gets pill", async ({
