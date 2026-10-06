@@ -373,6 +373,8 @@ export function createChannelActivityHandlers(
   // cannot dot, count or reorder), but it proves the channel had traffic up
   // to that instant — a baseline for the live-arrival decision in onEvent.
   const silentWakeFloor = new Map<string, number>();
+  // Event ids delivered in the current sample's second, per channel.
+  const sameSecond = new Map<string, Set<string>>();
   const noteSilentWake = (event: SignedNostrEvent): void => {
     const channelId = event.tags.find((tag) => tag[0] === "h")?.[1];
     if (typeof channelId !== "string" || channelId.length === 0) {
@@ -444,10 +446,23 @@ export function createChannelActivityHandlers(
         window.set(entry.channelId, samples.slice(-UNREAD_COUNT_BUFFER_MAX));
       }
       const previous = activityRef.current.get(entry.channelId);
-      // Strictly newer wins: stale, duplicate and reconnect-replayed
-      // events (same created_at as the stored sample) are dropped here.
-      if (previous && previous.createdAt >= entry.createdAt) {
+      // Newer wins: stale, duplicate and reconnect-replayed events are
+      // dropped here. created_at is in whole seconds, so a DIFFERENT event in
+      // the sample's own second is new too (an agent's two quick replies
+      // used to lose the second one's toast and count); the same event
+      // replayed is not.
+      const tie =
+        previous !== undefined &&
+        previous.createdAt === entry.createdAt &&
+        previous.eventId !== entry.eventId &&
+        !(sameSecond.get(entry.channelId)?.has(event.id) ?? false);
+      if (previous && previous.createdAt >= entry.createdAt && !tie) {
         return;
+      }
+      if (tie) {
+        sameSecond.get(entry.channelId)?.add(event.id);
+      } else {
+        sameSecond.set(entry.channelId, new Set([event.id]));
       }
       // I2 (LEFT_NAV_ARCHITECTURE_REVIEW.md): ONE definition of "live",
       // shared by the toast and the row. Live = delivered after this
@@ -485,7 +500,16 @@ export function createChannelActivityHandlers(
           });
         }
       }
-      activityRef.current = applyChannelActivity(activityRef.current, entry);
+      if (tie) {
+        // Same second: the later delivery becomes the sample (its preview
+        // is the one a toast quotes).
+        activityRef.current = new Map(activityRef.current).set(
+          entry.channelId,
+          entry,
+        );
+      } else {
+        activityRef.current = applyChannelActivity(activityRef.current, entry);
+      }
       onActivityChange(activityRef.current);
       // After the sample moved, so a handler reading the feed sees the
       // conversation it is being told about as unread (I1).

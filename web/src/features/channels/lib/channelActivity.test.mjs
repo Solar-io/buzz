@@ -760,3 +760,24 @@ test("only kind-9 events become a conversation's sample, whatever the sub delive
   assert.equal(feed.activity().get("ch1").createdAt, 100);
   assert.equal(feed.counts().get("ch1"), 1);
 });
+
+test("two different messages in the SAME second both toast and count; a replay of either does neither", () => {
+  // created_at is whole seconds: an agent's two quick replies share one.
+  const feed = driveFeed({ ch1: 100 }, SELF);
+  feed.handlers.onEose();
+  feed.handlers.onEvent(relayEvent({ id: "r1", created_at: 200 }));
+  feed.handlers.onEvent(relayEvent({ id: "r2", created_at: 200 }));
+  assert.equal(feed.live().length, 2, "both toast");
+  assert.equal(feed.counts().get("ch1"), 2, "both count");
+  assert.equal(
+    feed.activity().get("ch1").eventId,
+    "r2",
+    "newest delivery is the sample",
+  );
+  // Reconnect replay of both.
+  feed.handlers.onEvent(relayEvent({ id: "r1", created_at: 200 }));
+  feed.handlers.onEvent(relayEvent({ id: "r2", created_at: 200 }));
+  feed.handlers.onEose();
+  assert.equal(feed.live().length, 2);
+  assert.equal(feed.counts().get("ch1"), 2);
+});
