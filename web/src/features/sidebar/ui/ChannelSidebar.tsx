@@ -60,7 +60,7 @@ import {
   SidebarLinksSection,
   useSidebarLinks,
 } from "@/features/sidebar/ui/SidebarShortcutsSection";
-import { favoriteMenuItem } from "@/features/sidebar/lib/favoriteMenuItem.ts";
+import { dmMenuItems } from "@/features/sidebar/lib/dmMenuItems.ts";
 import {
   sectionSidebar,
   type FavoriteItem,
@@ -461,16 +461,12 @@ export function ChannelSidebar({
           .map((pk) => dmIdentity.presence.get(pk))
           .find((entry) => entry != null)}
         onSelect={() => actions.onSelectChannel(channel.id)}
-        menuItems={[
-          favoriteMenuItem(dmFavorite, () =>
-            actions.onSetFavorite(dmRef, !dmFavorite),
-          ),
-          {
-            label: "Remove from list",
-            danger: true,
-            onSelect: () => actions.onHideDm(channel.id),
-          },
-        ]}
+        menuItems={dmMenuItems(dm, {
+          favorite: dmFavorite,
+          newestActivityAt: readState.activity.get(channel.id)?.createdAt,
+          onToggleFavorite: () => actions.onSetFavorite(dmRef, !dmFavorite),
+          onHide: () => actions.onHideDm(channel.id),
+        })}
       />
     );
   };

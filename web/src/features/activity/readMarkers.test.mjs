@@ -114,3 +114,35 @@ test("'Mark read' marks up to the newest message, not the channel's metadata tim
   assert.equal(getChannelMarkers()["ch-x"], 5_000);
   assert.equal(readUnreadTrace().at(-1).source, "menu");
 });
+
+test("QA #19: a DM row's menu has Mark read — it marks up to the newest message, traces 'menu' and arms the NIP-RS publish", async () => {
+  fresh({ "dm-1": 100 });
+  const { dmMenuItems } = await import("../sidebar/lib/dmMenuItems.ts");
+  let published = 0;
+  const off = onLocalChange(() => {
+    published += 1;
+  });
+  try {
+    const dm = {
+      channel: { id: "dm-1", updatedAt: 50 },
+      lastActivity: 400,
+      lastMessage: { created_at: 400 },
+    };
+    const items = dmMenuItems(dm, {
+      favorite: false,
+      newestActivityAt: 450,
+      onToggleFavorite: () => {},
+      onHide: () => {},
+    });
+    assert.deepEqual(
+      items.map((item) => item.label),
+      ["Add to Favorites", "Mark read", "Remove from list"],
+    );
+    items.find((item) => item.label === "Mark read").onSelect();
+    assert.equal(getChannelMarkers()["dm-1"], 450);
+    assert.equal(readUnreadTrace().at(-1).source, "menu");
+    assert.equal(published, 1, "synced to the other devices");
+  } finally {
+    off();
+  }
+});
