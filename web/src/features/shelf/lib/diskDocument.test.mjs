@@ -68,6 +68,10 @@ test("poll 200 while dirty raises banner, keeps draft", () => {
 test("each refusal has its reason", () => {
   const table = [
     [
+      "untrusted-author",
+      "Shared by someone who is neither you nor an agent here, so it opens as the shared snapshot and Files is not asked for it.",
+    ],
+    [
       "no-path",
       "Shared as a snapshot with no path on crichton, so it can't be edited here. Ask the agent below.",
     ],
@@ -83,11 +87,11 @@ test("each refusal has its reason", () => {
     ["lossy", "This file has bytes the editor can't round-trip"],
     ["gone", "This file was moved or deleted on crichton"],
   ];
-  assert.equal(table.length, 9);
+  assert.equal(table.length, 10);
   for (const [reason, text] of table) {
     assert.equal(reasonText(reason), text, reason);
   }
-  assert.equal(new Set(table.map(([reason]) => reasonText(reason))).size, 9);
+  assert.equal(new Set(table.map(([reason]) => reasonText(reason))).size, 10);
 });
 
 test("edited-since-shared", () => {

@@ -74,24 +74,37 @@ export function agentRequest(
 const TRAILER = /^\[file: [^\]\n]{1,300}\]$/;
 
 /**
- * Strip the trailer for display: only when the LAST line matches exactly.
- * A trailer-shaped line anywhere else is the person's text and stays.
+ * Split the trailer off for display: only when the LAST line matches
+ * exactly. A trailer-shaped line anywhere else is the person's text and
+ * stays. `file` is the trailer's inner text (`report.md · crichton:/…`).
+ *
+ * The pane does NOT hide it (security review, 2026-10-05): it renders `file`
+ * as a visible chip, so a person sees exactly which file the agent is asked
+ * about — a hidden instruction to an agent is the shape to avoid.
  */
-export function stripFileTrailer(content: string): string {
+export function splitFileTrailer(content: string): {
+  text: string;
+  file: string | null;
+} {
   const lines = content.replace(/\s+$/, "").split("\n");
   const last = lines[lines.length - 1] ?? "";
   if (lines.length === 0 || !TRAILER.test(last)) {
-    return content;
+    return { text: content, file: null };
   }
-  return lines.slice(0, -1).join("\n").replace(/\s+$/, "");
+  return {
+    text: lines.slice(0, -1).join("\n").replace(/\s+$/, ""),
+    file: last.slice("[file: ".length, -1),
+  };
 }
 
-/** {@link splitQuotedComment} after the trailer is taken off. */
+/** {@link splitQuotedComment} after the trailer is split off. */
 export function splitAgentRequest(content: string): {
   quote: string | null;
   body: string;
+  file: string | null;
 } {
-  return splitQuotedComment(stripFileTrailer(content));
+  const { text, file } = splitFileTrailer(content);
+  return { ...splitQuotedComment(text), file };
 }
 
 /** Split a comment back into its highlight and its words. */

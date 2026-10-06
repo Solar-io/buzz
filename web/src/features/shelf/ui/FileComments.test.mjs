@@ -190,7 +190,7 @@ test("a failed save sends nothing (the agent never edits under a stale draft)", 
   }
 });
 
-test("the thread never shows the trailer; the highlight still renders", async () => {
+test("the thread shows the trailer as a visible chip, not raw text; the highlight still renders", async () => {
   const node = document.createElement("div");
   document.body.append(node);
   const root = createRoot(node);
@@ -208,6 +208,10 @@ test("the thread never shows the trailer; the highlight still renders", async ()
     ),
   );
   assert.ok(!node.textContent.includes("[file:"));
+  assert.equal(
+    node.querySelector('[data-testid="file-comment-trailer"]').textContent,
+    "report.md · crichton:/Users/sam/report.md",
+  );
   assert.ok(node.textContent.includes("the Q3 row"));
   assert.ok(node.textContent.includes("Fix the dates"));
   assert.ok(node.textContent.includes("Agent thread · 1"));

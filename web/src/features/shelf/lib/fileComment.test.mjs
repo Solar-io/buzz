@@ -9,8 +9,8 @@ import {
   fileTrailer,
   quotedComment,
   splitAgentRequest,
+  splitFileTrailer,
   splitQuotedComment,
-  stripFileTrailer,
 } from "./fileComment.ts";
 import { fileSourceOf, openFileFromSource, sourcePath } from "./fileSource.ts";
 
@@ -127,7 +127,7 @@ test("a tile's file source pairs its paths and keys its tab by message", () => {
   );
 });
 
-test("trailer built and stripped", () => {
+test("trailer built, split off and shown (never silently dropped)", () => {
   const ctx = {
     filename: "report.md",
     path: "crichton:/Users/sam/docs/report.md",
@@ -153,15 +153,19 @@ test("trailer built and stripped", () => {
   assert.deepEqual(splitAgentRequest(content), {
     quote: "Q3 table",
     body: "Fix the dates.",
+    file: "report.md · crichton:/Users/sam/docs/report.md",
   });
   // A trailer-shaped line anywhere but last is the person's text.
   const mid = "see [file: x]\n[file: x]\nthen fix it";
-  assert.equal(stripFileTrailer(mid), mid);
-  assert.equal(
-    stripFileTrailer("[file: x] is the name"),
-    "[file: x] is the name",
-  );
-  assert.equal(stripFileTrailer("plain\n\n[file: a.md]"), "plain");
+  assert.deepEqual(splitFileTrailer(mid), { text: mid, file: null });
+  assert.deepEqual(splitFileTrailer("[file: x] is the name"), {
+    text: "[file: x] is the name",
+    file: null,
+  });
+  assert.deepEqual(splitFileTrailer("plain\n\n[file: a.md]"), {
+    text: "plain",
+    file: "a.md",
+  });
   // A name with brackets cannot break the shape.
   assert.equal(
     fileTrailer({ filename: "a]b.md", path: null, editedSinceShared: false }),

@@ -1,4 +1,4 @@
-import { ArrowUp, Quote, X } from "lucide-react";
+import { ArrowUp, FileText, Quote, X } from "lucide-react";
 import { useMemo, useRef, useState } from "react";
 
 import { sendChannelMessage } from "@/features/channels/hooks";
@@ -18,7 +18,7 @@ import {
   commentTree,
   quotedComment,
   splitAgentRequest,
-  stripFileTrailer,
+  splitFileTrailer,
 } from "../lib/fileComment.ts";
 import { commentThreadRef } from "../lib/shareEvent.ts";
 import { useAgentTargets } from "../useAgentTargets.ts";
@@ -39,6 +39,23 @@ function Avatar({ pubkey, names }: { pubkey: string; names: Names }) {
   );
 }
 
+/** The `[file: …]` trailer, shown — never hidden — as a small chip. */
+function FileChip({ file }: { file: string | null }) {
+  if (!file) {
+    return null;
+  }
+  return (
+    <p
+      data-testid="file-comment-trailer"
+      title="The file this message asks the agent about"
+      className="mt-1 flex min-w-0 items-center gap-1 font-mono text-2xs text-muted-foreground"
+    >
+      <FileText aria-hidden className="size-3 shrink-0" />
+      <span className="truncate">{file}</span>
+    </p>
+  );
+}
+
 function Comment({
   node,
   names,
@@ -46,8 +63,8 @@ function Comment({
   node: CommentNode<TimelineMessage>;
   names: Names;
 }) {
-  // The `[file: …]` trailer is for the agent; the document is right here.
-  const { quote, body } = splitAgentRequest(node.comment.content);
+  // The `[file: …]` trailer becomes a visible chip, not raw text.
+  const { quote, body, file } = splitAgentRequest(node.comment.content);
   return (
     <article
       data-testid="file-comment"
@@ -71,29 +88,34 @@ function Comment({
       <div className="mt-1 text-sm">
         <MarkdownContent content={body} mentionNames={NO_MENTIONS} compact />
       </div>
-      {node.replies.map((reply) => (
-        <div
-          key={reply.id}
-          data-testid="file-comment-reply"
-          className="mt-2 flex items-start gap-1.75 border-t border-dashed border-line-2 pt-2 text-xs text-ink-2"
-        >
-          <span className="mt-0.5">
-            <Avatar pubkey={reply.authorPubkey} names={names} />
-          </span>
-          <div className="min-w-0 flex-1">
-            <b className="font-semibold text-foreground">
-              {names.person(reply.authorPubkey)}:
-            </b>{" "}
-            <span className="[&_.message-prose]:inline [&_p]:inline">
-              <MarkdownContent
-                content={stripFileTrailer(reply.content)}
-                mentionNames={NO_MENTIONS}
-                compact
-              />
+      <FileChip file={file} />
+      {node.replies.map((reply) => {
+        const split = splitFileTrailer(reply.content);
+        return (
+          <div
+            key={reply.id}
+            data-testid="file-comment-reply"
+            className="mt-2 flex items-start gap-1.75 border-t border-dashed border-line-2 pt-2 text-xs text-ink-2"
+          >
+            <span className="mt-0.5">
+              <Avatar pubkey={reply.authorPubkey} names={names} />
             </span>
+            <div className="min-w-0 flex-1">
+              <b className="font-semibold text-foreground">
+                {names.person(reply.authorPubkey)}:
+              </b>{" "}
+              <span className="[&_.message-prose]:inline [&_p]:inline">
+                <MarkdownContent
+                  content={split.text}
+                  mentionNames={NO_MENTIONS}
+                  compact
+                />
+              </span>
+              <FileChip file={split.file} />
+            </div>
           </div>
-        </div>
-      ))}
+        );
+      })}
     </article>
   );
 }

@@ -79,12 +79,16 @@ export interface DiskDocument {
  * unchanged) → save behind the digest precondition.
  *
  * `path` is the share's `host:path`; `filesUrl` the configured Files URL
- * (empty = feature off). No path, or a path on another host, is read-only
- * with a reason before any request is made.
+ * (empty = feature off). No path, a share whose author is neither the viewer
+ * nor a known agent, or a path on another host, is read-only with a reason
+ * before any request is made. Nothing is ever written except by an explicit
+ * Save / Overwrite / Save-and-send: there is no autosave.
  */
 export function useDiskDocument(
   path: SharePath | null,
   filesUrl: string,
+  /** diskTrusted(): the share's author is the viewer or a known agent. */
+  trusted: boolean,
 ): DiskDocument {
   const [state, setState] = useState<DiskDocState>(OFF);
   const stateRef = useRef(state);
@@ -113,6 +117,13 @@ export function useDiskDocument(
     }
     if (pathKey === "") {
       apply(() => readonly("no-path"));
+      return;
+    }
+    // Confused-deputy gate (diskDocument.ts diskTrusted): a share by anyone
+    // else never makes this browser read or write its path with the viewer's
+    // stash session.
+    if (!trusted) {
+      apply(() => readonly("untrusted-author"));
       return;
     }
     if (abs === null) {
@@ -151,7 +162,7 @@ export function useDiskDocument(
     return () => {
       cancelled = true;
     };
-  }, [filesUrl, abs, pathKey, apply]);
+  }, [filesUrl, abs, pathKey, trusted, apply]);
 
   const phase = state.phase;
   const saving = state.saving;

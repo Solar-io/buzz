@@ -20,6 +20,7 @@
 import type { StashDoc } from "./stashClient.ts";
 
 export type ReadonlyReason =
+  | "untrusted-author"
   | "no-path"
   | "other-host"
   | "signed-out"
@@ -72,6 +73,8 @@ export const LOCATING: DiskDocState = { ...OFF, phase: "locating" };
 /** The one-line reason a document is read-only. `host` names the machine. */
 export function reasonText(reason: ReadonlyReason, host = "crichton"): string {
   switch (reason) {
+    case "untrusted-author":
+      return "Shared by someone who is neither you nor an agent here, so it opens as the shared snapshot and Files is not asked for it.";
     case "no-path":
       return `Shared as a snapshot with no path on ${host}, so it can't be edited here. Ask the agent below.`;
     case "other-host":
@@ -91,6 +94,27 @@ export function reasonText(reason: ReadonlyReason, host = "crichton"): string {
     case "gone":
       return `This file was moved or deleted on ${host}`;
   }
+}
+
+/**
+ * CONFUSED-DEPUTY GATE (security review, 2026-10-05). The disk path comes
+ * from the share event, which any channel member can author, and disk mode
+ * reads and writes that path with the VIEWER's stash session. So disk mode
+ * is offered only for a share the viewer wrote, or one an agent of this
+ * community wrote; anything else stays the snapshot and never reaches stash.
+ */
+export function diskTrusted(
+  authorPubkey: string | null | undefined,
+  selfPubkey: string | null | undefined,
+  isAgent: (pubkey: string) => boolean,
+): boolean {
+  if (!authorPubkey) {
+    return false;
+  }
+  return (
+    (!!selfPubkey && authorPubkey.toLowerCase() === selfPubkey.toLowerCase()) ||
+    isAgent(authorPubkey)
+  );
 }
 
 /** The disk copy differs from the bytes that were shared (`imeta x`). */

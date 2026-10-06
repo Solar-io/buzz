@@ -9,7 +9,11 @@ import { openInFiles } from "@/features/webPanels/filesPathStore";
 import { cn } from "@/shared/lib/cn";
 import { publicAppOrigin } from "@/shared/lib/relay-url";
 import { useFileTabs } from "../FileTabsProvider";
-import { editedSinceShared, reasonText } from "../lib/diskDocument.ts";
+import {
+  diskTrusted,
+  editedSinceShared,
+  reasonText,
+} from "../lib/diskDocument.ts";
 import { cleanQuote } from "../lib/fileComment.ts";
 import {
   fileKind,
@@ -137,17 +141,6 @@ export function FilePreview({
   const filesUrl = getConfiguredFilesUrl();
   const filesPath = filesTarget(path, filesUrl);
   const sha256 = useShareSha256(file);
-  const disk = useDiskDocument(path, filesUrl);
-  const [viewShared, setViewShared] = useState(false);
-  const live =
-    disk.state.phase === "live" && disk.state.live ? disk.state.live : null;
-  const showingLive = live !== null && !viewShared;
-  const shown: FileContent =
-    showingLive && readsText(mode)
-      ? { phase: "text", text: live.content }
-      : content;
-  const edited = editedSinceShared(live?.digest, sha256);
-  const editing = disk.state.editing !== null;
   const share =
     file.messageId && file.channelId && file.authorPubkey
       ? {
@@ -169,6 +162,21 @@ export function FilePreview({
     [file.authorPubkey, comments],
   );
   const names = useShareNames(people);
+  const disk = useDiskDocument(
+    path,
+    filesUrl,
+    diskTrusted(file.authorPubkey, names.selfPubkey, names.isAgent),
+  );
+  const [viewShared, setViewShared] = useState(false);
+  const live =
+    disk.state.phase === "live" && disk.state.live ? disk.state.live : null;
+  const showingLive = live !== null && !viewShared;
+  const shown: FileContent =
+    showingLive && readsText(mode)
+      ? { phase: "text", text: live.content }
+      : content;
+  const edited = editedSinceShared(live?.digest, sha256);
+  const editing = disk.state.editing !== null;
   const bodyRef = useRef<HTMLDivElement>(null);
   const compact = variant === "sheet";
 
@@ -262,7 +270,9 @@ export function FilePreview({
                 className="mt-0.5 truncate font-mono text-2xs text-muted-foreground"
                 title={`${path.host}:${path.path}`}
               >
-                {path.host}: {displayPath(path.path)}
+                {disk.state.phase === "live" || disk.state.phase === "locating"
+                  ? `${path.host}:${path.path}`
+                  : `${path.host}: ${displayPath(path.path)}`}
               </p>
             ) : null}
             {disk.state.phase !== "off" ? (

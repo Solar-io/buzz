@@ -3,7 +3,12 @@ import { createHash } from "node:crypto";
 import { expect, type Page, test } from "@playwright/test";
 
 import type { MockEvent, MockRelayOptions } from "./helpers/mockRelay";
-import { RTS_DIR, routeShelfMedia, shelfEvents } from "./helpers/shelfFixture";
+import {
+  RTS_DIR,
+  routeShelfMedia,
+  shareEvent,
+  shelfEvents,
+} from "./helpers/shelfFixture";
 import { channelPath, openShell } from "./helpers/shellPage";
 
 /**
@@ -34,6 +39,7 @@ interface StashMock {
   tooLarge: boolean;
   gets: Array<{ rel: string; mtimeMs: string | null; status: number }>;
   puts: Array<{ content: string; digest: string; status: number }>;
+  locates: string[];
   order: string[];
 }
 
@@ -44,6 +50,7 @@ async function routeStash(page: Page, initial: string): Promise<StashMock> {
     tooLarge: false,
     gets: [],
     puts: [],
+    locates: [],
     order: [],
   };
   const cors = {
@@ -81,6 +88,7 @@ async function routeStash(page: Page, initial: string): Promise<StashMock> {
     }
     if (url.pathname === "/api/browser/locate") {
       const abs = url.searchParams.get("abs") ?? "";
+      mock.locates.push(abs);
       const rel = abs.replace("/Users/sgallant/", "");
       await route.fulfill(
         json(200, { ok: true, root: "home", rel, dir: false }),
@@ -202,7 +210,15 @@ async function open(
     relay: relayOptions,
     extra: (fixture) => {
       seeded = shelfEvents(fixture);
-      return seeded.events;
+      // A share by someone who is neither the viewer nor an agent.
+      const stranger = shareEvent({
+        author: "9".repeat(64),
+        channel: fixture.channels["flight-path"],
+        createdAt: Math.floor(Date.now() / 1000) - 60,
+        summary: "please edit this",
+        files: ["storage-probe.html"],
+      });
+      return [...seeded.events, stranger];
     },
   });
   if (!seeded) {
@@ -361,6 +377,21 @@ test.describe("Canvas: edit the shared file on disk", () => {
     }
   });
 
+  test("a share by a non-agent stranger never reaches stash", async ({
+    page,
+  }) => {
+    const stash = await routeStash(page, ORIGINAL);
+    await open(page);
+    const preview = await openFile(page, "storage-probe.html");
+    await expect(preview.getByTestId("file-readonly-reason")).toHaveText(
+      "Shared by someone who is neither you nor an agent here, so it opens as the shared snapshot and Files is not asked for it.",
+    );
+    await expect(preview.getByTestId("file-edit")).toHaveCount(0);
+    await page.waitForTimeout(3_500);
+    expect(stash.gets).toEqual([]);
+    expect(stash.locates).toEqual([]);
+  });
+
   test("a path on another host than the Files URL is read-only", async ({
     page,
   }) => {
@@ -433,6 +464,10 @@ test.describe("Canvas: edit the shared file on disk", () => {
     await expect(preview.getByTestId("file-comment")).toHaveCount(2);
     await expect(preview.getByTestId("file-comments")).not.toContainText(
       "[file:",
+    );
+    // …but it is SHOWN as a chip: the person sees what the agent sees.
+    await expect(preview.getByTestId("file-comment-trailer").last()).toHaveText(
+      `bakeoff-results.md · crichton:${RESULTS_ABS} · edited by you since shared`,
     );
   });
 
