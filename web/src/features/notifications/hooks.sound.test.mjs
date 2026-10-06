@@ -1,12 +1,14 @@
 import assert from "node:assert/strict";
 import { after, test } from "node:test";
 
-// Caller-level: mount the REAL useNotificationRuntime under jsdom, feed it
-// relay events through a stubbed session, and watch what it does with
+// Caller-level: mount the REAL useNotificationRuntime under jsdom, wired to
+// the REAL conversation-activity store over a stubbed session (left-nav
+// QA #9: the runtime has no subscription of its own any more), feed relay
+// events through the store's subscriptions, and watch what it does with
 // `Audio` and `Notification`. The pure decision is pinned in
 // notifyDecision.test.mjs; this pins that the runtime actually plays the
-// sound it decided on, silences a muted channel, keeps the muted channel in
-// the subscription, and builds the OS notification with `silent: true`.
+// sound it decided on, silences a muted channel, and builds the OS
+// notification with `silent: true`.
 const { JSDOM } = await import("jsdom");
 const dom = new JSDOM("<!doctype html><html><body></body></html>", {
   url: "https://web.test/",
@@ -93,6 +95,9 @@ const React = (await import("react")).default;
 const { act } = await import("react");
 const { createRoot } = await import("react-dom/client");
 const { useNotificationRuntime } = await import("./hooks.ts");
+const { createConversationActivityStore } = await import(
+  "../activity/conversationActivity.ts"
+);
 const { updateNotificationSettings } = await import("./lib/settingsStore.ts");
 
 const channels = [
@@ -101,12 +106,24 @@ const channels = [
   { id: DM, name: "dm", type: "dm", archived: false },
 ];
 
+// The shell's one feed: every channel, the DM first.
+const store = createConversationActivityStore({ readMarkers: () => ({}) });
+store.setFeed({
+  session: globalThis.__BUZZ_TEST_NOTIFY_SESSION__,
+  criticalIds: [DM],
+  ids: [LOUD, MUTED],
+  selfPubkey: SELF,
+});
+for (const sub of subscriptions) sub.handlers.onEose?.();
+const storeSubscriptions = subscriptions.length;
+
 function Harness() {
   useNotificationRuntime({
     selfPubkey: SELF,
     // A visible tab on some OTHER channel: sound must still play.
     activeChannelId: "elsewhere",
     channels,
+    onArrival: store.onArrival,
   });
   return null;
 }
@@ -153,16 +170,17 @@ async function deliver(channelId, { mention = false } = {}) {
   };
   played.length = 0;
   notifications.length = 0;
-  assert.ok(subscriptions.length > 0, "runtime never subscribed");
+  const sub = subscriptions.find((candidate) =>
+    [candidate.filter].flat().some((f) => f["#h"]?.includes(channelId)),
+  );
+  assert.ok(sub, "the store never subscribed to this channel");
   await act(async () => {
-    subscriptions[subscriptions.length - 1].handlers.onEvent(event);
+    sub.handlers.onEvent(event);
   });
 }
 
-test("the muted channel is still in the subscription (mute ≠ unsubscribed)", () => {
-  const ids = subscriptions.flatMap((sub) => sub.filter["#h"] ?? []);
-  assert.ok(ids.includes(MUTED), `muted channel missing from REQ: ${ids}`);
-  assert.ok(ids.includes(LOUD));
+test("QA #9: the runtime opens no kind-9 subscription of its own — one feed", () => {
+  assert.equal(subscriptions.length, storeSubscriptions);
 });
 
 test("runtime: an unmuted channel message plays the channel sound", async () => {

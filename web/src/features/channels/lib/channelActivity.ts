@@ -79,6 +79,16 @@ export interface ChannelActivity {
   eventId?: string;
   /** A reply inside a thread (NIP-10 root/reply `e` tag), not a top-level message. */
   inThread?: boolean;
+  /** p-tagged pubkeys (the notification runtime's "mentions" mode). */
+  mentions?: string[];
+}
+
+/** The pubkeys a message p-tags (mentions; a wake's addressee). */
+function mentionsOf(event: SignedNostrEvent): { mentions?: string[] } {
+  const mentions = event.tags
+    .filter((tag) => tag[0] === "p" && typeof tag[1] === "string")
+    .map((tag) => tag[1] as string);
+  return mentions.length > 0 ? { mentions } : {};
 }
 
 /** NIP-10: a thread reply carries an `e` tag marked "root" or "reply". */
@@ -159,6 +169,7 @@ export function channelActivityFromEvent(
     preview: plainPreview(event.content),
     eventId: event.id,
     ...(isThreadReply(event) ? { inThread: true } : {}),
+    ...mentionsOf(event),
   };
 }
 

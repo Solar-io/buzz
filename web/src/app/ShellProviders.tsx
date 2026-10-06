@@ -85,6 +85,7 @@ export function ShellProviders({
               <NotificationRuntime
                 selfPubkey={selfPubkey}
                 channels={channels}
+                onArrival={toasts.onArrival}
               />
               <StageRoute {...stage} selfPubkey={selfPubkey} />
               <RemindMeLaterProvider selfPubkey={selfPubkey}>
