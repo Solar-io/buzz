@@ -786,6 +786,22 @@ mod tests {
             "over-cap entry dropped"
         );
 
+        // TTL on its own: under the cap, the expired entry would otherwise be
+        // the one extra resume (it is always the oldest, so the 5-entry case
+        // above cannot tell TTL from the cap).
+        let ttl_path = temp_path();
+        let (expired, live) = (Uuid::new_v4(), Uuid::new_v4());
+        let journal = ResumeJournal::load(Some(ttl_path.clone()));
+        seed(&journal, expired, now - RESUME_TTL_SECS);
+        seed(&journal, live, now - 5);
+        let taken: Vec<Uuid> = ResumeJournal::load(Some(ttl_path.clone()))
+            .take_startup(now)
+            .into_iter()
+            .map(|b| b.channel_id)
+            .collect();
+        assert_eq!(taken, vec![live], "an entry at the TTL is not resumed");
+        let _ = std::fs::remove_file(ttl_path);
+
         // Crash-loop guard: an entry resumed twice already is dropped.
         let looping = Uuid::new_v4();
         let journal = ResumeJournal::load(Some(path.clone()));
