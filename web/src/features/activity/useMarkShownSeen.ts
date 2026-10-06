@@ -1,39 +1,5 @@
-import { type Dispatch, type SetStateAction, useEffect } from "react";
-import {
-  markSeen,
-  type ReadState,
-  saveReadState,
-} from "@/features/channels/lib/readState.ts";
-import { notifyReadStateLocalChange } from "@/features/channels/lib/readStateSync.ts";
+import { useEffect } from "react";
 import { usePageAttended } from "./pageAttention.ts";
-import { type MarkerSource, traceUnread } from "./unreadTrace.ts";
-
-/**
- * Advance one read marker held in React state: persist, schedule the NIP-RS
- * publish and record the move (with who made it) in the unread trace.
- */
-export function markReadStateSeen(
-  setReadState: Dispatch<SetStateAction<ReadState>>,
-  channelId: string,
-  createdAt: number,
-  source: MarkerSource,
-): void {
-  setReadState((previous) => {
-    const next = markSeen(previous, channelId, createdAt);
-    if (next !== previous) {
-      saveReadState(next);
-      notifyReadStateLocalChange();
-      traceUnread({
-        type: "markerMoved",
-        id: channelId,
-        from: previous[channelId] ?? null,
-        to: createdAt,
-        source,
-      });
-    }
-    return next;
-  });
-}
 
 /**
  * Mark the open conversation seen up to its newest message — but only while

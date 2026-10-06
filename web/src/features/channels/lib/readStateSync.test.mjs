@@ -90,12 +90,17 @@ function makeSignerCtl() {
 
 globalThis.__RS_TEST_SIGNER__ = makeSignerCtl();
 
-const {
-  READ_STATE_SYNCED_EVENT,
-  initReadStateSync,
-  disposeReadStateSync,
-  notifyReadStateLocalChange,
-} = await import("./readStateSync.ts");
+const { initReadStateSync, disposeReadStateSync } = await import(
+  "./readStateSync.ts"
+);
+// The read-marker store is the merge target and the local-change source;
+// its "remote" notifications replace the old window event (phase 2).
+const { markSeen, resetReadMarkersForTests, subscribeReadMarkers } =
+  await import("../../activity/readMarkers.ts");
+const remoteNotifications = { count: 0 };
+subscribeReadMarkers((change) => {
+  if (change === "remote") remoteNotifications.count += 1;
+});
 const { loadReadState, saveReadState } = await import("./readState.ts");
 const { loadInboxReadState } = await import("../../home/lib/inboxReadState.ts");
 const { clearUnreadTrace, readUnreadTrace } = await import(
@@ -148,9 +153,9 @@ function fakeWindow() {
     listenerCount(type) {
       return listeners.get(type)?.size ?? 0;
     },
+    /** Store notifications from NIP-RS merges (re-rendered readers). */
     syncedEventCount() {
-      return this.dispatched.filter((type) => type === READ_STATE_SYNCED_EVENT)
-        .length;
+      return remoteNotifications.count;
     },
   };
 }
@@ -212,6 +217,9 @@ function freshHarness(signingPubkey) {
   const win = fakeWindow();
   globalThis.localStorage = ls;
   globalThis.window = win;
+  // The store reloads from THIS test's storage on its next read.
+  resetReadMarkersForTests();
+  remoteNotifications.count = 0;
   return { ls, win };
 }
 
@@ -353,7 +361,7 @@ test("boot: an undecryptable event is skipped without killing the batch, and its
   session.eose();
 
   await waitFor(() => loadReadState().chGood === 7, "good blob merged");
-  notifyReadStateLocalChange();
+  markSeen("chPin", 1, "open"); // a local change arms the publish
   win.dispatchEvent({ type: "pagehide" });
   await waitFor(
     () => session.published.length === 1,
@@ -376,6 +384,7 @@ test("live: foreign read marker arriving AFTER EOSE advances the store and notif
   initReadStateSync({ session, selfPubkey: pubkey });
   session.eose();
   win.dispatched.length = 0;
+  remoteNotifications.count = 0;
 
   session.emit(
     foreignEvent(pubkey, {
@@ -457,6 +466,7 @@ test("live: a foreign burst with nothing newer than local notifies nothing and p
   initReadStateSync({ session, selfPubkey: pubkey });
   session.eose();
   win.dispatched.length = 0;
+  remoteNotifications.count = 0;
 
   session.emit(
     foreignEvent(pubkey, {
@@ -505,6 +515,7 @@ test("dedupe: a replayed event id (reconnect replay) is dropped before decrypt a
 
   const decryptCallsBefore = signerCtl.decryptCalls.length;
   win.dispatched.length = 0;
+  remoteNotifications.count = 0;
   session.emit(replayed);
   session.eose();
   await sleep(250);
@@ -526,8 +537,7 @@ test("own echo: the published event fed back on the open subscription is dropped
 
   initReadStateSync({ session, selfPubkey: pubkey });
   session.eose();
-  saveReadState({ chLocal: 5 });
-  notifyReadStateLocalChange();
+  markSeen("chLocal", 5, "open");
   win.dispatchEvent({ type: "pagehide" });
   await waitFor(() => session.published.length === 1, "own publish flushed");
 
@@ -607,6 +617,7 @@ test("recovery (live): an unseen own-slot marker after EOSE merges once, pays on
   initReadStateSync({ session, selfPubkey: pubkey });
   session.eose();
   win.dispatched.length = 0;
+  remoteNotifications.count = 0;
 
   session.emit(
     foreignEvent(pubkey, {
@@ -824,6 +835,7 @@ test("session replacement under one identity moves the subscription and the dedu
   // overlap): dedupe must swallow it without a second decrypt or notify.
   const decryptCallsBefore = signerCtl.decryptCalls.length;
   win.dispatched.length = 0;
+  remoteNotifications.count = 0;
   sessionB.emit(replayed);
   sessionB.eose();
   await sleep(250);

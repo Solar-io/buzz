@@ -9,22 +9,18 @@ import type { SignedNostrEvent } from "@/shared/lib/nostr-signer";
 import type { ChannelSummary } from "@/features/channels/useChannels";
 import type { TimelineMessage } from "@/features/channels/lib/messageBuffer.ts";
 import { timelineMessageFromEvent } from "@/features/channels/lib/messageBuffer.ts";
-import {
-  loadReadState,
-  type ReadState,
-} from "@/features/channels/lib/readState.ts";
+import type { ReadState } from "@/features/channels/lib/readState.ts";
 import { inboxRequests } from "./lib/inboxQuery.ts";
 import {
-  loadInboxReadState,
   markInboxMessagesRead,
   markInboxMessagesUnread,
-  saveInboxReadState,
   type InboxReadState,
 } from "./lib/inboxReadState.ts";
+import { updateInboxMarkers } from "@/features/activity/readMarkers.ts";
 import {
-  READ_STATE_SYNCED_EVENT,
-  notifyReadStateLocalChange,
-} from "@/features/channels/lib/readStateSync.ts";
+  useChannelMarkers,
+  useInboxMarkers,
+} from "@/features/activity/useReadMarkers.ts";
 
 /**
  * Coalesce relay bursts into one render. The initial replay delivers up to a
@@ -152,58 +148,25 @@ export interface InboxReadStateApi {
 }
 
 /**
- * The inbox's read state.
- *
- * The channel markers are re-read when the tab regains focus because the
- * channel view writes them from a different route; without that, opening a
- * channel in another tab (or navigating back) would leave the inbox claiming
- * messages are unread that the viewer has plainly read.
+ * The inbox's read state: a view of the read-marker store
+ * (features/activity/readMarkers.ts), the same copy the sidebar and the
+ * channel timeline render from. It used to keep its own copy and re-read
+ * localStorage on focus and on an NIP-RS window event; one store makes
+ * every change — this route's, another route's, another tab's, another
+ * device's — reach it directly.
  */
 export function useInboxReadState(): InboxReadStateApi {
-  const [channelRead, setChannelRead] = useState<ReadState>(() =>
-    loadReadState(),
-  );
-  const [inboxRead, setInboxRead] = useState<InboxReadState>(() =>
-    loadInboxReadState(),
-  );
-
-  useEffect(() => {
-    const reread = () => {
-      setChannelRead(loadReadState());
-      setInboxRead(loadInboxReadState());
-    };
-    window.addEventListener("focus", reread);
-    document.addEventListener("visibilitychange", reread);
-    // The NIP-RS boot merge writes the same stores from outside React —
-    // same reread, one more trigger.
-    window.addEventListener(READ_STATE_SYNCED_EVENT, reread);
-    return () => {
-      window.removeEventListener("focus", reread);
-      document.removeEventListener("visibilitychange", reread);
-      window.removeEventListener(READ_STATE_SYNCED_EVENT, reread);
-    };
-  }, []);
+  const channelRead = useChannelMarkers();
+  const inboxRead = useInboxMarkers();
 
   const markRead = useCallback((messages: readonly TimelineMessage[]) => {
-    setInboxRead((previous) => {
-      const next = markInboxMessagesRead(previous, messages);
-      if (next !== previous) {
-        saveInboxReadState(next);
-        notifyReadStateLocalChange();
-      }
-      return next;
-    });
+    updateInboxMarkers((previous) => markInboxMessagesRead(previous, messages));
   }, []);
 
   const markUnread = useCallback((messages: readonly TimelineMessage[]) => {
-    setInboxRead((previous) => {
-      const next = markInboxMessagesUnread(previous, messages);
-      if (next !== previous) {
-        saveInboxReadState(next);
-        notifyReadStateLocalChange();
-      }
-      return next;
-    });
+    updateInboxMarkers((previous) =>
+      markInboxMessagesUnread(previous, messages),
+    );
   }, []);
 
   return { channelRead, inboxRead, markRead, markUnread };

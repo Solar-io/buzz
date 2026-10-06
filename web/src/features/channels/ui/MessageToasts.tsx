@@ -15,11 +15,8 @@ import { readAuthorName } from "@/features/notifications/hooks";
 import { useRemindMeLater } from "@/features/reminders/ui/RemindMeLaterProvider";
 import { notify } from "@/shared/ui/notify";
 import { traceUnread } from "@/features/activity/unreadTrace.ts";
-import {
-  isUnread,
-  loadReadState,
-  type ReadState,
-} from "@/features/channels/lib/readState.ts";
+import { isUnread, type ReadState } from "@/features/channels/lib/readState.ts";
+import { getChannelMarkers } from "@/features/activity/readMarkers.ts";
 
 export interface MessageToastsProps {
   selfPubkey: string | null;
@@ -87,7 +84,7 @@ export function MessageToasts({
     agentPubkeys,
     onReply,
     feedback: available ? sendToFeedback : null,
-    readMarkers: readMarkers ?? loadReadState,
+    readMarkers: readMarkers ?? getChannelMarkers,
   });
   latest.current = {
     selfPubkey,
@@ -99,7 +96,7 @@ export function MessageToasts({
     agentPubkeys,
     onReply,
     feedback: available ? sendToFeedback : null,
-    readMarkers: readMarkers ?? loadReadState,
+    readMarkers: readMarkers ?? getChannelMarkers,
   };
 
   useEffect(() => {

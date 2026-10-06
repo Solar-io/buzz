@@ -1,7 +1,8 @@
 /**
  * Cross-device read-state sync (NIP-RS) — the lifecycle half of
  * readStateSyncBlob.ts. Owns the boot-to-live subscription, the merge into
- * the two localStorage stores, and the debounced publish.
+ * the read-marker store (features/activity/readMarkers.ts — the one copy of
+ * read state the whole app renders from), and the debounced publish.
  *
  * The prime directive: LOCAL BEHAVIOR IS IDENTICAL TO TODAY. Every relay
  * interaction is wrapped so an unreachable relay, a refused publish, or a
@@ -45,10 +46,11 @@ import {
   signNostrEvent,
 } from "@/shared/lib/nostr-signer";
 import {
-  loadInboxReadState,
-  saveInboxReadState,
-} from "@/features/home/lib/inboxReadState.ts";
-import { loadReadState, saveReadState } from "./readState.ts";
+  applyRemoteMarkers,
+  getChannelMarkers,
+  getInboxMarkers,
+  onLocalChange,
+} from "@/features/activity/readMarkers.ts";
 import {
   KIND_READ_STATE,
   type MergedRemoteReadState,
@@ -63,15 +65,6 @@ import {
   READ_STATE_D_TAG_PREFIX,
   type SlottedPayload,
 } from "./readStateSyncBlob.ts";
-import { traceUnread } from "@/features/activity/unreadTrace.ts";
-
-/**
- * Fired on `window` once a boot batch or a coalesced live burst has merged
- * relay state into the two localStorage stores. repos.tsx and
- * useInboxReadState listen for it and re-read localStorage — the same
- * reread-on-external-change pattern those hooks already use for tab focus.
- */
-export const READ_STATE_SYNCED_EVENT = "buzz:read-state-synced";
 
 /** NIP-RS debounce guidance: flush 5–10s after the last local change. */
 const PUBLISH_DEBOUNCE_MS = 5_000;
@@ -136,6 +129,8 @@ interface ReadStateSyncState {
   /** Set by dispose; every await site re-checks liveness against it. */
   disposed: boolean;
   onPageHide: () => void;
+  /** Unhooks this state from the store's local-change announcements. */
+  offLocalChange: () => void;
 }
 
 let syncState: ReadStateSyncState | null = null;
@@ -232,8 +227,15 @@ export function initReadStateSync(options: {
     unsubscribe: null,
     disposed: false,
     onPageHide: () => flushDebouncedPublish(state),
+    offLocalChange: () => {},
   };
   syncState = state;
+  // Every local marker move (open, menu, inbox, evict) re-arms the publish.
+  state.offLocalChange = onLocalChange(() => {
+    if (isStateLive(state)) {
+      schedulePublishDebounced(state);
+    }
+  });
   // The 5s debounce's one escape hatch: a tab closed inside the window must
   // not silently lose the last read (NIP-RS publishes on close for this
   // reason). Still publish-only — never blocks the close.
@@ -264,6 +266,7 @@ export function disposeReadStateSync(): void {
   state.liveQueue = [];
   state.unsubscribe?.();
   state.unsubscribe = null;
+  state.offLocalChange();
   window.removeEventListener("pagehide", state.onPageHide);
   syncState = null;
 }
@@ -312,8 +315,8 @@ async function bootFetch(state: ReadStateSyncState): Promise<void> {
   // Snapshot local state before the REQ opens. Only markers that already
   // existed when sync initialized need a one-time seed; a read performed while
   // this boot is draining follows the ordinary local-change publish path.
-  const localChannelsAtBoot = loadReadState();
-  const localInboxAtBoot = loadInboxReadState();
+  const localChannelsAtBoot = getChannelMarkers();
+  const localInboxAtBoot = getInboxMarkers();
   const hadLocalStateAtBoot =
     Object.keys(localChannelsAtBoot).length > 0 ||
     Object.keys(localInboxAtBoot.read).length > 0 ||
@@ -450,70 +453,26 @@ async function flushLiveQueue(state: ReadStateSyncState): Promise<void> {
 }
 
 /**
- * Merge the folded remote state into both localStorage stores and nudge the
- * UI. Returns whether the merge advanced either store. Fires the synced
- * event only on an advance — a no-op batch (fresh browser, empty relay,
- * all-stale burst) re-reading state would re-derive the activity feed's
- * bounded REQs for nothing.
+ * Max-merge the folded remote state into the read-marker store, which
+ * persists it, records each advanced marker in the unread trace with the
+ * install that sent it, and re-renders every reader directly — no window
+ * event. Returns whether the merge advanced anything; a no-op batch (fresh
+ * browser, empty relay, all-stale burst) notifies nobody.
  */
 function applyMergedRemote(batch: readonly SlottedPayload[]): boolean {
   const remote: MergedRemoteReadState = mergePayloadBatch(
     batch.map((entry) => entry.plaintext),
   );
-  const localChannels = loadReadState();
+  const localChannels = getChannelMarkers();
   const mergedChannels = mergeChannelMarkers(localChannels, remote.contexts);
-  if (mergedChannels !== localChannels) {
-    saveReadState(mergedChannels);
-    traceSyncedMoves(localChannels, mergedChannels, markerSources(batch));
-  }
-  const localInbox = loadInboxReadState();
-  const mergedInbox = mergeInboxOverlay(localInbox, {
+  const mergedInbox = mergeInboxOverlay(getInboxMarkers(), {
     read: remote.inboxRead,
     unread: remote.inboxUnread,
   });
-  if (mergedInbox !== localInbox) {
-    saveInboxReadState(mergedInbox);
-  }
-  const advanced =
-    mergedChannels !== localChannels || mergedInbox !== localInbox;
-  if (advanced) {
-    window.dispatchEvent(new CustomEvent(READ_STATE_SYNCED_EVENT));
-  }
-  return advanced;
-}
-
-/** Record every marker an NIP-RS merge advanced, naming the install. */
-function traceSyncedMoves(
-  before: Record<string, number>,
-  after: Record<string, number>,
-  sources: Record<string, string>,
-): void {
-  for (const [id, to] of Object.entries(after)) {
-    const from = before[id];
-    if (from === to) {
-      continue;
-    }
-    traceUnread({
-      type: "markerMoved",
-      id,
-      from: from ?? null,
-      to,
-      source: (sources[id] ?? "sync:unknown") as `sync:${string}`,
-    });
-  }
-}
-
-/**
- * Announce a local persist of either store (repos.tsx markSeen, the inbox
- * overlay's markRead/markUnread, the channel delete/eviction path). Schedules
- * the debounced publish; a no-op before init (tests, logged-out shell) so
- * callers never need to check.
- */
-export function notifyReadStateLocalChange(): void {
-  if (syncState === null) {
-    return;
-  }
-  schedulePublishDebounced(syncState);
+  return applyRemoteMarkers(
+    { channels: mergedChannels, inbox: mergedInbox },
+    mergedChannels !== localChannels ? markerSources(batch) : {},
+  );
 }
 
 function schedulePublishDebounced(state: ReadStateSyncState): void {
@@ -542,17 +501,18 @@ function flushDebouncedPublish(state: ReadStateSyncState): void {
 }
 
 /**
- * Re-read both stores from localStorage (the debounced flush is far enough
- * from the writes that re-reading is simpler than threading state through),
- * prune to the publish caps, seal to self, publish. Every failure is quiet:
+ * Read the current markers from the store (the debounced flush is far
+ * enough from the writes that reading at flush time is simpler than
+ * threading state through), prune to the publish caps, seal to self,
+ * publish. Every failure is quiet:
  * an unreachable relay or an unsigned session leaves local state exactly as
  * it was, and the next change re-arms the debounce.
  */
 async function publishReadState(state: ReadStateSyncState): Promise<void> {
-  const inbox = loadInboxReadState();
+  const inbox = getInboxMarkers();
   const built = buildPublishPayload({
     clientId: state.clientId,
-    contexts: loadReadState(),
+    contexts: getChannelMarkers(),
     inboxRead: inbox.read,
     inboxUnread: inbox.unread,
   });

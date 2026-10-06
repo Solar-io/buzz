@@ -34,6 +34,14 @@ const { truncateSection, SIDEBAR_LIST_OPTIONS } = await import(
 const { clearUnreadTrace, readUnreadTrace } = await import(
   "../../activity/unreadTrace.ts"
 );
+const {
+  applyRemoteMarkers,
+  getChannelMarkers,
+  getInboxMarkers,
+  markSeen,
+  resetReadMarkersForTests,
+} = await import("../../activity/readMarkers.ts");
+const { useChannelMarkers } = await import("../../activity/useReadMarkers.ts");
 
 class FakeSocket {
   constructor() {
@@ -93,8 +101,10 @@ function kind9(id, channelId, pubkey, createdAt) {
 }
 
 /** What repos.tsx mounts, minus everything unrelated to unread. */
-function Shell({ channels, read, profiles, onFrame }) {
+function Shell({ channels, profiles, onFrame }) {
   const session = globalThis.__BUZZ_TEST_RELAY_SESSION__;
+  // THE read-marker store, as repos.tsx reads it (phase 2).
+  const read = useChannelMarkers();
   const { store, state, dms } = useShellConversationActivity({
     session,
     channels,
@@ -113,7 +123,6 @@ function Shell({ channels, read, profiles, onFrame }) {
       channelPrefs: PREFS,
       profiles,
       onOpenChannel: () => {},
-      readMarkers: () => read,
     }),
     React.createElement(
       ChannelSidebar,
@@ -139,6 +148,8 @@ function Shell({ channels, read, profiles, onFrame }) {
 async function boot({ channels, read }) {
   FakeSocket.instances = [];
   localStorage.clear();
+  localStorage.setItem("buzz.read-state.v1", JSON.stringify(read));
+  resetReadMarkersForTests();
   const session = new RelaySession({
     wsUrl: "wss://relay.test",
     webSocketFactory: () => new FakeSocket(),
@@ -176,7 +187,7 @@ async function boot({ channels, read }) {
               }
             : null,
         },
-        { read, selfPubkey: SELF },
+        { read: getChannelMarkers(), selfPubkey: SELF },
       ),
     );
     toasts.push({
@@ -187,7 +198,6 @@ async function boot({ channels, read }) {
   const element = () =>
     React.createElement(Shell, {
       channels,
-      read,
       profiles,
       onFrame: (f) => {
         frame.current = f;
@@ -342,6 +352,70 @@ test("phase 1 AC: one REQ family — 68 DMs open 7 activity batches, not one per
       (m) => m[0] === "REQ" && m.slice(2).some((f) => f.kinds?.includes(9)),
     );
     assert.equal(allKind9.length, reqs.length);
+  } finally {
+    await h.close();
+  }
+});
+
+test("phase 2 / I1 clear: an NIP-RS merge clears the toasted row by re-rendering through the store (no window event), and the clear is a traced markerMoved naming the install", async () => {
+  const channels = dmChannels(3);
+  const read = Object.fromEntries(channels.map((c) => [c.id, 1_000]));
+  const h = await boot({ channels, read });
+  const events = [];
+  const realDispatch = window.dispatchEvent.bind(window);
+  window.dispatchEvent = (event) => {
+    events.push(event.type);
+    return realDispatch(event);
+  };
+  try {
+    await h.eoseAll();
+    await h.deliver(kind9("m1", dmId(1), peer(1), 2_000));
+    assert.equal(h.toasts.length, 1);
+    assert.equal(h.rows().find((r) => r.name === peerName(1)).badge, "1");
+
+    clearUnreadTrace();
+    // What readStateSync does with another device's blob: max-merge into
+    // the store. Nothing else is called — no event, no re-read.
+    await act(async () => {
+      applyRemoteMarkers(
+        {
+          channels: { ...getChannelMarkers(), [dmId(1)]: 2_000 },
+          inbox: getInboxMarkers(),
+        },
+        { [dmId(1)]: "sync:cccccccc/phone1" },
+      );
+    });
+    assert.equal(
+      h.rows().find((r) => r.name === peerName(1)).badge,
+      null,
+      "the row re-rendered as read",
+    );
+    assert.deepEqual(events, [], "no window event carried it");
+    const [move] = readUnreadTrace().filter((e) => e.type === "markerMoved");
+    assert.equal(move.id, dmId(1));
+    assert.equal(move.source, "sync:cccccccc/phone1");
+    assert.ok(move.to >= 2_000, "the clear covers the toasted message (I1)");
+  } finally {
+    window.dispatchEvent = realDispatch;
+    await h.close();
+  }
+});
+
+test("phase 2: a local mark (opening the DM) clears its pill through the same store and is traced as 'open'", async () => {
+  const channels = dmChannels(2);
+  const read = Object.fromEntries(channels.map((c) => [c.id, 1_000]));
+  const h = await boot({ channels, read });
+  try {
+    await h.eoseAll();
+    await h.deliver(kind9("m1", dmId(0), peer(0), 2_000));
+    await h.deliver(kind9("m2", dmId(0), peer(0), 2_001));
+    assert.equal(h.rows().find((r) => r.name === peerName(0)).badge, "2");
+    clearUnreadTrace();
+    await act(async () => {
+      markSeen(dmId(0), 2_001, "open");
+    });
+    assert.equal(h.rows().find((r) => r.name === peerName(0)).badge, null);
+    assert.equal(readUnreadTrace()[0].source, "open");
   } finally {
     await h.close();
   }

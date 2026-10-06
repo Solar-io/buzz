@@ -18,15 +18,10 @@ import { replyCounts } from "@/features/channels/lib/messageBuffer.ts";
 import { timelineReplyCounts } from "@/features/channels/lib/threadSummaryEvent.ts";
 import { unreactToMessage } from "@/features/channels/lib/unreact.ts";
 import { useOwnPubkey } from "@/shared/lib/useOwnPubkey";
-import {
-  loadReadState,
-  type ReadState,
-} from "@/features/channels/lib/readState.ts";
 import { useReadStateSync } from "@/features/channels/lib/useReadStateSync.ts";
-import {
-  markReadStateSeen,
-  useMarkShownSeen,
-} from "@/features/activity/useMarkShownSeen.ts";
+import { useMarkShownSeen } from "@/features/activity/useMarkShownSeen.ts";
+import { markSeen } from "@/features/activity/readMarkers.ts";
+import { useChannelMarkers } from "@/features/activity/useReadMarkers.ts";
 import { useShellConversationActivity } from "@/features/activity/useConversationActivity.ts";
 import { useFavoritesSync } from "@/features/channels/lib/useFavoritesSync.ts";
 import { activeTyping } from "@/features/channels/lib/typing.ts";
@@ -128,9 +123,10 @@ function ChannelBrowser() {
 
   const selfPubkey = useOwnPubkey();
   const { session, status: relayStatus } = useRelaySession();
-  // Read state: opening a channel marks its newest message seen; badges and
-  // the timeline unread divider derive from the marker.
-  const [readState, setReadState] = useState<ReadState>(() => loadReadState());
+  // Read state: THE read-marker store (features/activity/readMarkers.ts) —
+  // opening a channel marks its newest message seen; badges and the
+  // timeline unread divider derive from the marker; NIP-RS merges into it.
+  const readState = useChannelMarkers();
   // THE conversation-activity feed (features/activity): every conversation,
   // DMs included, on one subscription family, so a row, its pill and its
   // toast read one state (left-nav review, phase 1). DMs ride the same
@@ -178,18 +174,15 @@ function ChannelBrowser() {
     openId: current?.id ?? null,
   });
   const newestMessageAt = messages[messages.length - 1]?.createdAt ?? 0;
-  const markOpenSeen = useCallback(
-    (id: string, at: number) => markReadStateSeen(setReadState, id, at, "open"),
-    [],
-  );
-  // Cross-browser sync (NIP-RS): boot-merge the relay's markers in, and let
-  // the debounced publisher carry every local persist above to other
-  // browsers. Strictly additive — see readStateSync.ts.
-  useReadStateSync({
-    session,
-    selfPubkey,
-    onSynced: () => setReadState(loadReadState()),
-  });
+  const markOpenSeen = useCallback((id: string, at: number) => {
+    markSeen(id, at, "open");
+  }, []);
+  // Cross-device sync (NIP-RS): boot-merge the relay's markers into the
+  // store, and let the debounced publisher carry every local move to the
+  // other devices. Strictly additive — see readStateSync.ts.
+  useReadStateSync({ session, selfPubkey });
+  const newestActivityAt = (id: string) =>
+    channelActivity.activity.get(id)?.createdAt;
   // React / edit / delete / share / typing / send for the open channel.
   const messageActions = useMessageActions({
     session,
@@ -360,7 +353,6 @@ function ChannelBrowser() {
     refreshChannels,
     evict: {
       setChannelPrefs,
-      setReadState,
       onChannelDeleted: forgetChannelFromList,
     },
   });
@@ -485,7 +477,7 @@ function ChannelBrowser() {
             session,
             channelPrefs,
             setChannelPrefs,
-            setReadState,
+            newestActivityAt,
             refreshChannels,
             onChannelDeleted: forgetChannelFromList,
             selectedId,
@@ -783,7 +775,7 @@ function ChannelBrowser() {
                       session,
                       channelPrefs,
                       setChannelPrefs,
-                      setReadState,
+                      newestActivityAt,
                       refreshChannels,
                       onChannelDeleted: forgetChannelFromList,
                       selectedId,
