@@ -187,7 +187,12 @@ async function boot({ channels, read }) {
               }
             : null,
         },
-        { read: getChannelMarkers(), selfPubkey: SELF, prefs: PREFS },
+        {
+          read: getChannelMarkers(),
+          selfPubkey: SELF,
+          prefs: PREFS,
+          unreadCounts: store.getSnapshot().unreadCounts,
+        },
       ),
     );
     toasts.push({
@@ -484,4 +489,23 @@ test("contract: a newly unread conversation is rendered (or its section signals 
     isUnread: (name) => unreadNow.has(name),
   });
   assert.equal(rendered.shown.includes("peer-15"), true);
+});
+
+test("QA #12b (I4): a foreign unread then the viewer's own newer message from another device — the row keeps its pill, from the store's count", async () => {
+  const channels = dmChannels(3);
+  const read = Object.fromEntries(channels.map((c) => [c.id, 1_000]));
+  const h = await boot({ channels, read });
+  try {
+    await h.eoseAll();
+    await h.deliver(kind9("theirs", dmId(1), peer(1), 2_000));
+    assert.equal(h.rows().find((r) => r.name === peerName(1)).badge, "1");
+    await h.deliver(kind9("mine", dmId(1), SELF, 2_005));
+    assert.equal(
+      h.rows().find((r) => r.name === peerName(1)).badge,
+      "1",
+      "the own newer sample must not hide the still-unread message",
+    );
+  } finally {
+    await h.close();
+  }
 });

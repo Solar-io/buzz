@@ -662,6 +662,7 @@ function ChannelBrowser() {
                   read: readState,
                   activity: channelActivity.activity,
                   selfPubkey,
+                  unreadCounts: channelActivity.unreadCounts,
                 },
               )}
               onOpenView={openView}

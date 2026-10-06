@@ -1,5 +1,6 @@
 import {
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -66,8 +67,10 @@ export function useConversationActivityFeed({
   }, [store, session, dmKey, channelKey, selfPubkey]);
   useEffect(() => () => store.dispose(), [store]);
 
+  // Layout effect: a marker move re-derives the counts before the browser
+  // paints, so a row (which reads the count, I4) never flashes stale.
   const previousMarkers = useRef(readMarkers);
-  useEffect(() => {
+  useLayoutEffect(() => {
     const previous = previousMarkers.current;
     previousMarkers.current = readMarkers;
     if (previous !== readMarkers) {

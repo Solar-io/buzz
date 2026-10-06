@@ -302,6 +302,7 @@ export function ChannelSidebar({
     read: readState.read,
     activity: readState.activity,
     selfPubkey: dmIdentity.selfPubkey,
+    unreadCounts: readState.unreadCounts,
   };
   const rowUnread = (channel: ChannelSummary) =>
     channelRowUnread(channel, unreadInput);
