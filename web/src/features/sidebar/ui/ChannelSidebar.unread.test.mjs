@@ -158,7 +158,7 @@ test("I5 under the per-row hold: five DMs turn unread while the pointer pins row
   }
 });
 
-test("QA #6: a muted DM with a new message shows no pill, is not bold, and is not counted on the phone tab", async () => {
+test("mute counts but never surfaces: a muted DM with a new message shows its pill and bold, does not float, and counts on the phone tab", async () => {
   localStorage.clear();
   const fixture = dmFixture(8, { unread: [2, 5] });
   const view = await mountInRail(
@@ -169,20 +169,22 @@ test("QA #6: a muted DM with a new message shows no pill, is not bold, and is no
   );
   try {
     const rows = sectionRows(view.container, "Direct messages");
-    assert.equal(
+    assert.notEqual(
       rows.find((r) => r.name === name(2)).badge,
       null,
-      "muted: no pill",
+      "muted: still pills",
     );
     assert.notEqual(
       rows.find((r) => r.name === name(5)).badge,
       null,
       "control: unmuted pill",
     );
+    assert.equal(rows[0].name, name(5), "only the unmuted unread floats");
+    assert.equal(rows[1].name, name(0), "the muted unread stays in A-Z");
     const label = Array.from(
       view.container.querySelectorAll("span.truncate"),
     ).find((el) => el.textContent === name(2));
-    assert.equal(label.className.includes("font-semibold"), false, "not bold");
+    assert.equal(label.className.includes("font-semibold"), true, "bold");
   } finally {
     await view.unmount();
   }
@@ -194,7 +196,29 @@ test("QA #6: a muted DM with a new message shows no pill, is not bold, and is no
       activity: new Map(),
       selfPubkey: SELF,
     }),
-    1,
-    "the phone badge counts only the unmuted unread DM",
+    2,
+    "the phone badge counts the muted unread DM too",
   );
+});
+
+test("mute never lifts: a muted unread DM past the 6-row cutoff stays behind N more", async () => {
+  localStorage.clear();
+  const fixture = dmFixture(68, { unread: [40] });
+  const view = await mountInRail(
+    React.createElement(
+      ChannelSidebar,
+      railProps(fixture, { muted: [fixture.dms[40].channel.id] }),
+    ),
+  );
+  try {
+    const rows = sectionRows(view.container, "Direct messages");
+    assert.equal(rows.length, 6);
+    assert.equal(
+      rows.find((r) => r.name === name(40)),
+      undefined,
+      "muted unread row is not lifted into view",
+    );
+  } finally {
+    await view.unmount();
+  }
 });

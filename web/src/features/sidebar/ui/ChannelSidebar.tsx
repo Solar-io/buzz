@@ -100,7 +100,7 @@ export interface ChannelSidebarLists {
 
 /** Viewer-side state deciding which rows read as unread. */
 export interface ChannelSidebarReadState {
-  /** Favorites / muted prefs; muted rows never show an unread dot. */
+  /** Favorites / muted prefs; muted rows still count unread but never float. */
   prefs: ChannelPrefs;
   /** Per-channel read markers. */
   read: ReadState;
@@ -307,8 +307,8 @@ export function ChannelSidebar({
   const rowUnread = (channel: ChannelSummary) =>
     channelRowUnread(channel, unreadInput);
   // The counted form of the same signal, when the counting feed has derived
-  // the channel's window. Muted rows never reach the badge: `rowUnread`
-  // already folds mute in, and the badge renders only on an unread row.
+  // the channel's window. Muted rows keep their count (mute only silences
+  // toasts and sounds), but never float to the top — see `floats` below.
   const rowUnreadCount = (channel: ChannelSummary) =>
     readState.unreadCounts.get(channel.id) ?? null;
 
@@ -324,15 +324,24 @@ export function ChannelSidebar({
   // facts at the moment it was opened, and the row under the pointer (with
   // its neighbours) holds its place, so nothing slides under a click.
   const ownLastSent = useOwnLastSent();
+  // A muted row counts unread but does not jump the queue: floating to the
+  // top is an interruption, and mute exists to stop those.
+  const floats = (id: string, unread: boolean) =>
+    unread && !isMuted(readState.prefs, id);
+  // Section-level unread (lift past the cutoff, collapsed-header count):
+  // the same quiet rule, so a muted row never surfaces itself.
+  const rowFloats = (channel: ChannelSummary) =>
+    floats(channel.id, rowUnread(channel));
+  const dmFloats = (dm: DmSummary) => floats(dm.channel.id, dmUnread(dm));
   const channelFacts = (channel: ChannelSummary): RankFacts => ({
-    unread: rowUnread(channel),
+    unread: rowFloats(channel),
     score: ownLastSent.get(channel.id) ?? 0,
     lastActivity:
       readState.activity.get(channel.id)?.createdAt ?? channel.updatedAt,
     name: channel.name,
   });
   const dmFacts = (dm: DmSummary): RankFacts => ({
-    unread: dmUnread(dm),
+    unread: dmFloats(dm),
     score: ownLastSent.get(dm.channel.id) ?? 0,
     lastActivity: dm.lastMessage?.created_at ?? dm.channel.updatedAt,
     // The label the row shows (DmNavRow), so A–Z matches what you read.
@@ -493,9 +502,9 @@ export function ChannelSidebar({
     switch (item.kind) {
       case "channel":
       case "forum":
-        return rowUnread(item.channel);
+        return rowFloats(item.channel);
       case "dm":
-        return dmUnread(item.dm);
+        return dmFloats(item.dm);
       case "link":
         return false;
     }
@@ -620,7 +629,7 @@ export function ChannelSidebar({
               getKey={(channel) => channel.id}
               renderItem={forumRow}
               isSelected={channelSelected}
-              isUnread={rowUnread}
+              isUnread={rowFloats}
               collapsed={isCollapsed(collapsed, NAV_FORUMS_ID)}
               onToggleCollapsed={() => toggle(NAV_FORUMS_ID)}
             />
@@ -658,7 +667,7 @@ export function ChannelSidebar({
             getKey={(channel) => channel.id}
             renderItem={scratchRow}
             isSelected={channelSelected}
-            isUnread={rowUnread}
+            isUnread={rowFloats}
             collapsed={isCollapsed(collapsed, "scratch")}
             onToggleCollapsed={() => toggle("scratch")}
           />
@@ -683,7 +692,7 @@ export function ChannelSidebar({
           getKey={(channel) => channel.id}
           renderItem={channelRow}
           isSelected={channelSelected}
-          isUnread={rowUnread}
+          isUnread={rowFloats}
           collapsed={isCollapsed(collapsed, "channels")}
           onToggleCollapsed={() => toggle("channels")}
           onAdd={() => dialogs.onNewChannelOpenChange(true)}
@@ -701,7 +710,7 @@ export function ChannelSidebar({
           getKey={(dm) => dm.channel.id}
           renderItem={renderDm}
           isSelected={(dm) => dm.channel.id === shownId}
-          isUnread={dmUnread}
+          isUnread={dmFloats}
           collapsed={isCollapsed(collapsed, "dms")}
           onToggleCollapsed={() => toggle("dms")}
           onAdd={() => dialogs.onNewDmOpenChange(true)}

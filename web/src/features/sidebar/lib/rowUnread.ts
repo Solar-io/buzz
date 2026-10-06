@@ -3,10 +3,7 @@ import {
   type ChannelUnreadCounts,
   isChannelRowUnread,
 } from "@/features/channels/lib/channelActivity.ts";
-import {
-  type ChannelPrefs,
-  isMuted,
-} from "@/features/channels/lib/channelPrefs.ts";
+import type { ChannelPrefs } from "@/features/channels/lib/channelPrefs.ts";
 import { isUnread, type ReadState } from "@/features/channels/lib/readState.ts";
 import type { ChannelSummary } from "@/features/channels/useChannels";
 import type { DmSummary } from "@/features/dms/hooks";
@@ -43,15 +40,14 @@ function countVerdict(
 /**
  * Channel / forum rows: read marker vs the newest sampled MESSAGE
  * (self-authored samples excluded — see channelUnreadSignal), falling back to
- * metadata for unsampled channels. Muted rows never read as unread.
+ * metadata for unsampled channels. Mute does not hide unread: a muted row
+ * still counts (Sam, 2026-10-06 — mute silences toasts and sounds, it does
+ * not stop the count).
  */
 export function channelRowUnread(
   channel: ChannelSummary,
   input: RowUnreadInput,
 ): boolean {
-  if (isMuted(input.prefs, channel.id)) {
-    return false;
-  }
   const counted = countVerdict(input, channel.id);
   if (counted !== null) {
     return counted;
@@ -68,17 +64,14 @@ export function channelRowUnread(
 /**
  * DM rows: the newest sampled message vs the marker. Own messages (e.g. sent
  * from another device) never dot your row — parity with channel rows, whose
- * signal ignores self-authored activity. Muted DMs never read as unread,
- * exactly like muted channels (left-nav QA #6).
+ * signal ignores self-authored activity. Muted DMs still read as unread,
+ * exactly like muted channels.
  */
 export function dmRowUnread(
   dm: DmSummary,
   input: Pick<RowUnreadInput, "read" | "selfPubkey" | "prefs" | "unreadCounts">,
 ): boolean {
   const { channel, lastMessage } = dm;
-  if (isMuted(input.prefs, channel.id)) {
-    return false;
-  }
   const counted = countVerdict(input, channel.id);
   if (counted !== null) {
     return counted;

@@ -398,21 +398,20 @@ for (const mode of ["resting", "away"] as const) {
       await expect(toasts(page)).toHaveCount(0);
     });
 
-    test(`#6 muted DM: no toast, no pill, not bold [${mode}]`, async ({
+    test(`#6 muted DM: pill counts, no toast, no OS notification [${mode}]`, async ({
       page,
     }) => {
-      const fx = build({ muted: [TARGET] });
+      // Slot 3 is on screen without lifting: mute counts but never surfaces
+      // a row, so a muted DM behind "N more" stays there (unit-tested).
+      const MUTED = 2;
+      const fx = build({ muted: [MUTED] });
       const relay = await open(page, fx);
       await mouse(page, mode);
-      relay.push(live(fx, TARGET));
+      relay.push(live(fx, MUTED));
+      await expect(badge(dmRow(page, peerName(MUTED)))).toHaveText("1");
       await page.waitForTimeout(1_500);
       await expect(toasts(page)).toHaveCount(0);
-      await expect(badge(dmRow(page, peerName(TARGET)))).toHaveCount(0);
-      // informational: OS notification for a muted DM
-      test.info().annotations.push({
-        type: "evidence",
-        description: `muted DM OS notifications=${await osCount(page)}`,
-      });
+      expect(await osCount(page)).toBe(0);
     });
 
     test(`#8 brand-new DM: row + toast + pill 1 (relay sends 39000 then message at once) [${mode}]`, async ({
@@ -823,9 +822,9 @@ test("#21 phone layout: Channels tab badge equals rows with pills", async ({
     description: `tabbar="${txt}" dmPills=${dmPills}`,
   });
   console.log(`PHONE tabbar="${txt}" dmPills=${dmPills}`);
-  // DMs 3 and 20 plus #random have pills; DM 7 is muted, so after QA #6 it
-  // has no pill and is not counted (this expected 4 while mute leaked).
-  expect(txt).toMatch(/Channels3/);
+  // DMs 3, 7 and 20 plus #random are unread. DM 7 is muted, and mute still
+  // counts (Sam, 2026-10-06), so the tab shows 4.
+  expect(txt).toMatch(/Channels4/);
 });
 
 test("#22 relay CLOSED one batch: health sweep heals within 60s, missed message gets pill", async ({
