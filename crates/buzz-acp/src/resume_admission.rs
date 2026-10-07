@@ -176,6 +176,7 @@ mod tests {
         channel_id: Uuid,
         subscribed: HashSet<Uuid>,
         rules: Vec<SubscriptionRule>,
+        agent: nostr::Keys,
         agent_hex: String,
         allowlist: HashSet<String>,
         owner: nostr::Keys,
@@ -225,6 +226,7 @@ mod tests {
             subscribed: HashSet::from([channel_id]),
             rules,
             agent_hex: agent.public_key().to_hex(),
+            agent,
             allowlist: HashSet::new(),
             owner,
             stranger,
@@ -332,6 +334,22 @@ mod tests {
             batches[0].events[0].prompt_tag, "@mention",
             "prompt tag comes from the matched rule, not the journal"
         );
+        fx.server.abort();
+    }
+
+    // `--respond-to anyone` admits every author except the agent itself.
+    #[tokio::test]
+    async fn admission_rejects_self_authored_events_under_respond_to_anyone() {
+        let mut fx = fixture().await;
+        let own = message(&fx.agent, "my own message");
+        let other = message(&fx.stranger, "someone else");
+        let batches = vec![fx.batch(vec![own, other])];
+        let journal = ResumeJournal::default();
+        let admitted = fx
+            .admission(&RespondTo::Anyone)
+            .admit(batches, &journal)
+            .await;
+        assert_eq!(texts(admitted), vec!["someone else".to_string()]);
         fx.server.abort();
     }
 

@@ -3655,6 +3655,42 @@ mod tests {
         assert_eq!(caps["_meta"]["goose"]["customNotifications"], true);
     }
 
+    // Between turns an agent may still send a request; the idle drain must
+    // answer one it does not handle with -32601 so the agent never hangs.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn idle_drain_answers_unknown_requests_with_method_not_found() {
+        let capture =
+            std::env::temp_dir().join(format!("buzz-idle-unknown-{}.ndjson", uuid::Uuid::new_v4()));
+        let quoted = capture.to_string_lossy().replace('\'', "'\\''");
+        let mut client = spawn_script(&format!(
+            r#"printf '%s\n' '{{"jsonrpc":"2.0","id":"q1","method":"fs/read_text_file","params":{{}}}}'
+read -r reply
+printf '%s\n' "$reply" > '{quoted}'
+while read -r _; do :; done"#
+        ))
+        .await;
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while !capture.exists() {
+            assert!(std::time::Instant::now() < deadline, "no reply written");
+            let _ = client
+                .drain_idle_updates(
+                    std::time::Duration::from_millis(25),
+                    std::time::Duration::from_millis(250),
+                )
+                .await;
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        // The script writes the file before it is fully flushed; re-read.
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        let reply: serde_json::Value =
+            serde_json::from_str(std::fs::read_to_string(&capture).unwrap().trim()).unwrap();
+        let _ = std::fs::remove_file(&capture);
+        assert_eq!(reply["id"], "q1");
+        assert_eq!(reply["error"]["code"], -32601);
+        client.shutdown().await;
+    }
+
     #[tokio::test]
     async fn idle_timeout_fires_on_silent_process() {
         let mut client = spawn_script("sleep 10").await;
