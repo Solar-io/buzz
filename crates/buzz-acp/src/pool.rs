@@ -7485,6 +7485,126 @@ done"#;
         agent.acp.shutdown().await;
     }
 
+    // claude-agent-acp self-wakes an idle session when a background shell
+    // finishes after `end_turn`; that unprompted turn's updates arrive while
+    // NO prompt is reading stdout. The main loop's idle drain must feed them
+    // to the journal (spawn recorded, completion removes the entry) and must
+    // answer an agent-initiated permission request — with no shutdown drain.
+    #[tokio::test]
+    async fn idle_slot_drain_journals_updates_emitted_after_end_turn() {
+        let capture =
+            std::env::temp_dir().join(format!("buzz-idle-drain-perm-{}.ndjson", Uuid::new_v4()));
+        let quoted_capture = capture.to_string_lossy().replace('\'', "'\\''");
+        let update = |body: &str| {
+            format!(
+                r#"printf '%s\n' '{{"jsonrpc":"2.0","method":"session/update","params":{{"sessionId":"live-session","update":{body}}}}}'"#
+            )
+        };
+        let spawned_1 = update(
+            r#"{"sessionUpdate":"async_task_spawned","asyncTaskId":"bash-1","name":"sleep 30","outputFilePath":"/tmp/bash-1.output"}"#,
+        );
+        let spawned_2 = update(
+            r#"{"sessionUpdate":"async_task_spawned","asyncTaskId":"bash-2","name":"cargo build","outputFilePath":"/tmp/bash-2.output"}"#,
+        );
+        let done_1 = update(
+            r#"{"sessionUpdate":"async_task_state_update","asyncTaskId":"bash-1","state":"completed"}"#,
+        );
+        let done_2 = update(
+            r#"{"sessionUpdate":"async_task_state_update","asyncTaskId":"bash-2","state":"completed"}"#,
+        );
+        // Turn 1 spawns bash-1 and ends. Then, unprompted: bash-1 completes,
+        // the self-woken turn spawns bash-2, asks for a permission (and waits
+        // for the answer), and later bash-2 completes.
+        let script = format!(
+            r#"read -r line
+{spawned_1}
+printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'
+sleep 0.3
+{done_1}
+{spawned_2}
+printf '%s\n' '{{"jsonrpc":"2.0","id":"perm-1","method":"session/request_permission","params":{{"sessionId":"live-session","options":[{{"optionId":"yes","kind":"allow_once"}},{{"optionId":"no","kind":"reject_once"}}]}}}}'
+read -r reply
+printf '%s\n' "$reply" >> '{quoted_capture}'
+sleep 1
+{done_2}
+while read -r _; do :; done"#
+        );
+        let acp = AcpClient::spawn("bash", &["-c".to_string(), script], &[], false)
+            .await
+            .expect("spawn self-waking ACP script");
+        let scope = conv(Uuid::new_v4());
+        let agent = resume_test_agent(acp, &scope);
+
+        let path = std::env::temp_dir().join(format!("buzz-resume-idle-{}.json", Uuid::new_v4()));
+        let journal = crate::resume::ResumeJournal::load(Some(path.clone()));
+        let mut ctx = make_prompt_context_no_owner();
+        ctx.resume = journal.clone();
+        let (result_tx, mut result_rx) = mpsc::unbounded_channel();
+        run_prompt_task(
+            agent,
+            Some(resume_test_batch(&scope, "start the build")),
+            None,
+            Arc::new(ctx),
+            result_tx,
+            None,
+            "turn-1".into(),
+            Default::default(),
+        )
+        .await;
+        let result = result_rx.recv().await.expect("prompt result");
+        assert!(matches!(
+            result.outcome,
+            PromptOutcome::Ok(StopReason::EndTurn)
+        ));
+        let task_ids = |journal: &crate::resume::ResumeJournal| {
+            journal
+                .snapshot(&scope)
+                .map(|(tasks, _, _)| tasks.into_iter().map(|t| t.id).collect::<Vec<_>>())
+        };
+        assert_eq!(task_ids(&journal), Some(vec!["bash-1".to_string()]));
+
+        // The slot is now idle in the pool. Only the idle drain reads it.
+        let mut pool = AgentPool::from_slots(vec![Some(result.agent)]);
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        while !capture.exists() {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "idle drain never answered the permission request; journal = {:?}",
+                task_ids(&journal)
+            );
+            crate::drain_idle_agent_slots(&mut pool).await;
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        let reply: serde_json::Value = serde_json::from_str(
+            std::fs::read_to_string(&capture)
+                .expect("read permission reply")
+                .trim(),
+        )
+        .expect("permission reply is JSON");
+        assert_eq!(reply["id"], "perm-1");
+        assert_eq!(reply["result"]["outcome"]["optionId"], "yes");
+        assert_eq!(
+            task_ids(&journal),
+            Some(vec!["bash-2".to_string()]),
+            "idle updates: bash-1 completion cleared, self-woken bash-2 recorded"
+        );
+
+        while task_ids(&journal).is_some() {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "bash-2 completion never reached the journal: {:?}",
+                task_ids(&journal)
+            );
+            crate::drain_idle_agent_slots(&mut pool).await;
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        assert!(!path.exists(), "no outstanding work leaves no journal file");
+
+        let _ = std::fs::remove_file(&capture);
+        let mut agent = pool.agents_mut()[0].take().expect("slot still idle");
+        agent.acp.shutdown().await;
+    }
+
     // The resume batch's prompt, as actually sent on the wire, carries the
     // resume framing AND the journal's list of the work that was stopped.
     #[tokio::test]

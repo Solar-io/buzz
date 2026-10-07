@@ -3160,6 +3160,9 @@ async fn run_harness(
     // spawn_and_init never blocks the main loop.
     let maintenance_interval = Duration::from_secs(30);
     let mut last_maintenance = std::time::Instant::now();
+    // Idle-slot drain (resume journal): same starve-proof top-of-loop
+    // Instant check as maintenance, woken through the maintenance deadline.
+    let mut last_idle_drain = std::time::Instant::now();
 
     // Channel for background respawn tasks to return completed agents.
     // Bounded to agent count — at most one respawn per slot in flight.
@@ -3329,6 +3332,11 @@ async fn run_harness(
             }
         }
 
+        if pool_ready && last_idle_drain.elapsed() >= IDLE_DRAIN_INTERVAL {
+            last_idle_drain = std::time::Instant::now();
+            drain_idle_agent_slots(&mut pool).await;
+        }
+
         // Reap completed respawn handles from the JoinSet. Payloads are
         // delivered out-of-band through `respawn_rx` (selected below), so the
         // JoinSet is never joined by the normal flow — Tokio retains finished
@@ -3351,7 +3359,11 @@ async fn run_harness(
         } else {
             None
         };
-        let maintenance_at = pool_ready.then_some(last_maintenance + maintenance_interval);
+        // The idle drain shares the maintenance wake: either deadline returns
+        // to the top of the loop, where each runs when due.
+        let maintenance_at = pool_ready.then_some(
+            (last_maintenance + maintenance_interval).min(last_idle_drain + IDLE_DRAIN_INTERVAL),
+        );
 
         // Borrow result_rx and join_set simultaneously via split-borrow helper.
         pool.retain_held_scopes(|scope| queue.has_pending_scope(scope));
@@ -6045,6 +6057,41 @@ async fn shutdown_agent_slots(slots: &mut [Option<OwnedAgent>]) {
             agent.acp.shutdown().await;
         }
     }
+}
+
+/// How often the main loop reads idle slots' stdout (see [`drain_idle_agent_slots`]).
+const IDLE_DRAIN_INTERVAL: Duration = Duration::from_secs(3);
+/// Per-slot quiet window: buffered lines arrive back-to-back, so 25 ms of
+/// silence means the backlog is consumed.
+const IDLE_DRAIN_QUIET: Duration = Duration::from_millis(25);
+/// Per-tick ceiling, so a slot streaming a self-woken turn cannot hold the loop.
+const IDLE_DRAIN_MAX: Duration = Duration::from_millis(250);
+
+/// Read every IDLE slot's buffered agent output, concurrently, so the resume
+/// journal sees updates from turns the agent started on its own (a background
+/// shell finishing after `end_turn` self-wakes Claude Code) before any
+/// shutdown. Only slots resting in `pool.agents_mut()` are touched: a slot
+/// taken for a turn has been moved into the join set, so ownership rules out
+/// racing a prompt read. Fail-open: errors are logged, never propagated; a
+/// dead slot is found by the ordinary turn/respawn paths.
+pub(crate) async fn drain_idle_agent_slots(pool: &mut AgentPool) {
+    let drains = pool
+        .agents_mut()
+        .iter_mut()
+        .flatten()
+        .map(|agent| async move {
+            let index = agent.index;
+            match agent
+                .acp
+                .drain_idle_updates(IDLE_DRAIN_QUIET, IDLE_DRAIN_MAX)
+                .await
+            {
+                Ok(0) => {}
+                Ok(lines) => tracing::debug!(agent = index, lines, "idle drain read agent output"),
+                Err(e) => tracing::debug!(agent = index, "idle drain stopped: {e}"),
+            }
+        });
+    futures_util::future::join_all(drains).await;
 }
 
 async fn shutdown_agent_pool(pool: &mut AgentPool) {
