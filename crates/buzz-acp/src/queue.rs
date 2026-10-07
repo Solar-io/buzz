@@ -399,17 +399,29 @@ impl EventQueue {
         }
     }
 
-    /// Load the resume journal and stage every startup resume batch, each
-    /// held back by `delay` (fleet jitter). See [`crate::resume`].
+    /// Load the resume journal and take every entry a previous process left.
+    ///
+    /// The batches come from a file on disk and are untrusted: they reach the
+    /// queue only through [`stage_resumes`](Self::stage_resumes), which takes
+    /// the output of [`crate::resume_admission`]. See [`crate::resume`].
     pub(crate) fn load_resume(
         &mut self,
         path: Option<std::path::PathBuf>,
         now: u64,
+    ) -> Vec<FlushBatch> {
+        self.resume = crate::resume::ResumeJournal::load(path);
+        self.resume.take_startup(now)
+    }
+
+    /// Stage admitted startup resume batches, each held back by `delay`
+    /// (fleet jitter).
+    pub(crate) fn stage_resumes(
+        &mut self,
+        admitted: crate::resume_admission::AdmittedResumes,
         delay: Duration,
     ) {
-        self.resume = crate::resume::ResumeJournal::load(path);
         let release = Instant::now() + delay;
-        for batch in self.resume.take_startup(now) {
+        for batch in admitted.into_batches() {
             if delay.is_zero() {
                 self.requeue_as_cancelled(batch, CancelReason::Resume);
             } else {
@@ -1104,6 +1116,13 @@ impl EventQueue {
                 return true;
             }
             events.iter().for_each(|e| collect(&e.event));
+            false
+        });
+        self.pending_resumes.retain(|(_, batch)| {
+            if batch.channel_id != channel_id {
+                return true;
+            }
+            batch.events.iter().for_each(|e| collect(&e.event));
             false
         });
         // Also purge side-tables for every scope of this channel.
@@ -7536,6 +7555,7 @@ mod tests {
 mod resume_queue_tests {
     use super::*;
     use crate::resume::{BackgroundTask, ResumeJournal, ResumeTracker, TurnEnd};
+    use crate::resume_admission::AdmittedResumes;
     use nostr::{EventBuilder, Keys, Kind};
 
     fn conv(channel_id: Uuid) -> SessionScope {
@@ -7607,7 +7627,8 @@ mod resume_queue_tests {
         }
 
         let mut queue = EventQueue::new(DedupMode::Queue);
-        queue.load_resume(Some(path.clone()), now, Duration::ZERO);
+        let startup = queue.load_resume(Some(path.clone()), now);
+        queue.stage_resumes(AdmittedResumes::assume_admitted(startup), Duration::ZERO);
         let journal = queue.resume_journal();
         let mut prompts = HashMap::new();
         while let Some(batch) = queue.flush_next() {
@@ -7633,7 +7654,8 @@ mod resume_queue_tests {
         journal.turn_ended(&held, TurnEnd::Natural);
         journal.turn_ended(&background, TurnEnd::Natural);
         let mut restarted = EventQueue::new(DedupMode::Queue);
-        restarted.load_resume(Some(path.clone()), now, Duration::ZERO);
+        let startup = restarted.load_resume(Some(path.clone()), now);
+        restarted.stage_resumes(AdmittedResumes::assume_admitted(startup), Duration::ZERO);
         assert!(
             restarted.flush_next().is_none(),
             "second startup yields nothing"
@@ -7649,11 +7671,8 @@ mod resume_queue_tests {
         let path = temp_path("lost");
         let (lost, requeued) = (conv(Uuid::new_v4()), conv(Uuid::new_v4()));
         let mut queue = EventQueue::new(DedupMode::Queue);
-        queue.load_resume(
-            Some(path.clone()),
-            crate::resume::now_secs(),
-            Duration::ZERO,
-        );
+        let startup = queue.load_resume(Some(path.clone()), crate::resume::now_secs());
+        assert!(startup.is_empty());
         let journal = queue.resume_journal();
         let requeued_batch = request_batch(&requeued, "request");
         {
@@ -7705,7 +7724,11 @@ mod resume_queue_tests {
             previous.task_started(&scope, shell("t", "t", None), now);
         }
         let mut queue = EventQueue::new(DedupMode::Queue);
-        queue.load_resume(Some(path.clone()), now, Duration::from_secs(60));
+        let startup = queue.load_resume(Some(path.clone()), now);
+        queue.stage_resumes(
+            AdmittedResumes::assume_admitted(startup),
+            Duration::from_secs(60),
+        );
         assert!(queue.flush_next().is_none(), "jittered resume waits");
         assert!(!queue.has_flushable_work());
         assert!(queue.has_undispatched_work());

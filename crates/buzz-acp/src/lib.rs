@@ -19,6 +19,7 @@ mod queue;
 mod recovery_wake;
 mod relay;
 mod resume;
+mod resume_admission;
 mod run_task;
 mod runtime;
 use runtime::{AgentRuntime, PoolStartup, SessionMode};
@@ -3038,17 +3039,6 @@ async fn run_harness(
     let dedup_mode = config.dedup_mode;
     let mut queue =
         EventQueue::new(dedup_mode).with_in_flight_deadline(config.max_turn_duration_secs);
-    // Turns whose session died with background work outstanding (previous
-    // process): one resume batch each, spread by per-agent jitter.
-    queue.load_resume(
-        resume::path_for_agent(
-            config.resume_enabled,
-            config.resume_file.as_deref(),
-            &pubkey_hex,
-        ),
-        resume::now_secs(),
-        resume::startup_jitter(&pubkey_hex),
-    );
 
     // Online means the harness can receive work, not merely that its socket is
     // connected. Publishing after channel subscriptions gives desktop callers
@@ -3076,6 +3066,34 @@ async fn run_harness(
         channel_info_map,
         SessionMode::Conversation,
     )?;
+    // Turns whose session died with background work outstanding (previous
+    // process): one resume batch each, spread by per-agent jitter. The journal
+    // is a file on disk, so every entry is re-admitted through the live
+    // ingress boundary before it can become a prompt.
+    let startup_resumes = queue.load_resume(
+        resume::path_for_agent(
+            config.resume_enabled,
+            config.resume_file.as_deref(),
+            &pubkey_hex,
+        ),
+        resume::now_secs(),
+    );
+    let admitted_resumes = resume_admission::ResumeAdmission {
+        author_gate: &mut author_gate_ctx,
+        respond_to: &config.respond_to,
+        allowlist: &config.respond_to_allowlist,
+        ignore_self: config.ignore_self,
+        session_policy: config.session_policy,
+        rules: &rules,
+        subscribed_channels: &subscribed_channel_ids,
+        owner_cache: &owner_cache,
+        channel_info: &prompt_context.channel_info,
+        rest_client: &prompt_context.rest_client,
+        agent_pubkey_hex: &pubkey_hex,
+    }
+    .admit(startup_resumes, &queue.resume_journal())
+    .await;
+    queue.stage_resumes(admitted_resumes, resume::startup_jitter(&pubkey_hex));
     prompt_context.resume = queue.resume_journal();
     let ctx = Arc::new(prompt_context);
 

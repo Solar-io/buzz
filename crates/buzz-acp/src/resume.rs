@@ -16,7 +16,11 @@
 //! ordinary turn cut off mid-flight keeps the in-process requeue behaviour
 //! and is never written to disk.
 //!
-//! Storage: one JSON file per agent, atomic temp-file + rename writes, a
+//! Entries read back at startup are untrusted: they reach the queue only
+//! through [`crate::resume_admission`], which re-applies the live ingress
+//! checks (signature, membership, author gate, subscription rules, scope).
+//!
+//! Storage: one JSON file per agent (mode 0600), atomic temp-file + rename writes, a
 //! corrupt or missing file is logged and treated as empty. The file only
 //! exists while some scope has outstanding work. `--no-resume` /
 //! `BUZZ_ACP_NO_RESUME` disables the feature (no file, no replay);
@@ -1135,6 +1139,22 @@ mod tests {
             journal.task_started(&scope, task("t"), now_secs());
         }
         assert_eq!(journal.take_lost(now_secs(), |_, _| false).len(), 1);
+    }
+
+    // The journal holds other people's messages: owner-only, even when a
+    // wider-mode file was there before.
+    #[cfg(unix)]
+    #[test]
+    fn journal_file_is_written_owner_only() {
+        use std::os::unix::fs::PermissionsExt;
+        let path = temp_path();
+        std::fs::write(&path, b"{}").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+        let journal = ResumeJournal::load(Some(path.clone()));
+        seed(&journal, &conv(Uuid::new_v4()), 1000);
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600, "journal mode is {mode:o}");
+        let _ = std::fs::remove_file(path);
     }
 
     #[test]
