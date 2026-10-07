@@ -630,6 +630,283 @@ pub fn voice_stream_from_env(agent_pubkey: Option<&str>) -> VoiceStreamSwitch {
     })
 }
 
+// ── Voice fast lane config (spec: VOICE_FAST_PATH_2026-10-07 §7) ─────────────
+
+/// Env fallback for the `voiceFast` switch (`on` | `off`, default off).
+pub const ENV_VOICE_FAST: &str = "BUZZ_VOICE_FAST";
+/// Env fallback for `voiceFastModel`.
+pub const ENV_VOICE_FAST_MODEL: &str = "BUZZ_VOICE_FAST_MODEL";
+/// Env fallback for `voiceFastBaseUrl`.
+pub const ENV_VOICE_FAST_BASE_URL: &str = "BUZZ_VOICE_FAST_BASE_URL";
+/// Default fast-lane model. Carries the OmniRoute provider prefix (bare
+/// model names are rejected with a 400).
+pub const DEFAULT_VOICE_FAST_MODEL: &str = "ollama-cloud/deepseek-v4.1-flash";
+
+/// The raw config-file entries that can apply to ONE agent, kept as JSON
+/// objects so any key can be layered: exact lowercase pubkey > display name
+/// (case-insensitive) > `*`.
+#[derive(Debug, Clone, Default)]
+pub struct AgentConfigLayers {
+    pubkey: Option<serde_json::Map<String, serde_json::Value>>,
+    name: Option<serde_json::Map<String, serde_json::Value>>,
+    wildcard: Option<serde_json::Map<String, serde_json::Value>>,
+}
+
+impl AgentConfigLayers {
+    /// The value for `key` from the highest tier that carries it.
+    pub fn get(&self, key: &str) -> Option<&serde_json::Value> {
+        [&self.pubkey, &self.name, &self.wildcard]
+            .into_iter()
+            .flatten()
+            .find_map(|entry| entry.get(key))
+    }
+
+    /// [`Self::get`] as a string: a JSON string verbatim, any other present
+    /// value serialized (so it fails a vocabulary check loudly instead of
+    /// falling through to a lower tier).
+    pub fn get_str(&self, key: &str) -> Option<String> {
+        self.get(key).map(|v| match v.as_str() {
+            Some(s) => s.to_string(),
+            None => v.to_string(),
+        })
+    }
+}
+
+/// Parse the config file into the layers for one agent. Same matching rules
+/// as [`parse_agent_effort_file`]; file-level failure is an `Err`.
+pub fn parse_agent_config_layers(
+    raw: &str,
+    agent_name: Option<&str>,
+    agent_pubkey: Option<&str>,
+) -> Result<AgentConfigLayers, String> {
+    let parsed: serde_json::Value =
+        serde_json::from_str(raw).map_err(|e| format!("invalid JSON: {e}"))?;
+    let root = parsed
+        .as_object()
+        .ok_or_else(|| "content is valid JSON but not an object".to_string())?;
+    let mut layers = AgentConfigLayers::default();
+    for (key, value) in root {
+        let Some(entry) = value.as_object() else {
+            continue;
+        };
+        if key == WILDCARD_KEY {
+            layers.wildcard = Some(entry.clone());
+        } else if agent_pubkey.is_some_and(|pk| key == pk) {
+            layers.pubkey = Some(entry.clone());
+        } else if agent_name.is_some_and(|name| key.eq_ignore_ascii_case(name)) {
+            layers.name = Some(entry.clone());
+        }
+    }
+    Ok(layers)
+}
+
+/// When the fast lane tells the full agent about fast-only turns.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VoiceFastDigest {
+    /// One silent agent turn after the call goes quiet (the default).
+    Idle,
+    /// Only on the next handoff — no extra agent turns.
+    Handoff,
+}
+
+/// Every fast-lane knob for one event, resolved (spec §7).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VoiceFastSettings {
+    /// `voiceFast` — only an explicit `on` enables the lane.
+    pub on: bool,
+    /// `voiceFastModel`.
+    pub model: String,
+    /// `voiceFastBaseUrl`, trailing `/` trimmed. `None` keeps the lane off.
+    pub base_url: Option<String>,
+    /// `voiceFastReasoning`: the `reasoning_effort` value to send; `None`
+    /// (`omit`) drops the field for models that reject it.
+    pub reasoning: Option<String>,
+    /// `voiceFastFirstTokenMs` — fallback threshold (R4).
+    pub first_token_ms: u64,
+    /// `voiceFastMaxTokens`.
+    pub max_tokens: u32,
+    /// `voiceFastHistoryTurns` — transcript cap in user/assistant pairs.
+    pub history_turns: usize,
+    /// `voiceFastHistoryChars` — transcript cap in characters.
+    pub history_chars: usize,
+    /// `voiceFastMemory` — include the core-memory section.
+    pub memory: bool,
+    /// `voiceFastDigest`.
+    pub digest: VoiceFastDigest,
+    /// `voiceFastDigestIdleSecs`.
+    pub digest_idle_secs: u64,
+}
+
+impl Default for VoiceFastSettings {
+    fn default() -> Self {
+        Self {
+            on: false,
+            model: DEFAULT_VOICE_FAST_MODEL.to_string(),
+            base_url: None,
+            reasoning: Some("none".to_string()),
+            first_token_ms: 2500,
+            max_tokens: 220,
+            history_turns: 12,
+            history_chars: 6000,
+            memory: true,
+            digest: VoiceFastDigest::Idle,
+            digest_idle_secs: 180,
+        }
+    }
+}
+
+/// Injected sources for [`resolve_voice_fast`] (pure seam).
+#[derive(Debug, Clone, Default)]
+pub struct VoiceFastKnobs<'a> {
+    /// `BUZZ_VOICE_FAST`.
+    pub env_on: Option<&'a str>,
+    /// `BUZZ_VOICE_FAST_MODEL`.
+    pub env_model: Option<&'a str>,
+    /// `BUZZ_VOICE_FAST_BASE_URL`.
+    pub env_base_url: Option<&'a str>,
+    /// `BUZZ_ACP_DISPLAY_NAME`.
+    pub agent_name: Option<&'a str>,
+    /// The harness's own lowercase pubkey hex.
+    pub agent_pubkey: Option<&'a str>,
+    /// Raw config-file content; `None` = absent.
+    pub file_content: Option<&'a str>,
+}
+
+fn non_blank(value: Option<String>) -> Option<String> {
+    value
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty() && !v.eq_ignore_ascii_case("unset"))
+}
+
+fn knob_u64(layers: &AgentConfigLayers, key: &str, default: u64, min: u64, max: u64) -> u64 {
+    let Some(value) = layers.get(key) else {
+        return default;
+    };
+    let parsed = value
+        .as_u64()
+        .or_else(|| value.as_str().and_then(|s| s.trim().parse::<u64>().ok()));
+    match parsed {
+        Some(n) if (min..=max).contains(&n) => n,
+        _ => {
+            tracing::warn!(
+                target: "buzz_acp::voice_fast",
+                key,
+                value = %value,
+                "invalid {key} (expected an integer in {min}..={max}) — using {default}"
+            );
+            default
+        }
+    }
+}
+
+/// Resolve every fast-lane knob: config file (pubkey > name > `*`) first,
+/// env second (only for the three keys that have one), defaults last. A
+/// value that is present but invalid never turns the lane on and never
+/// silently picks a lower tier for the switch — it is off with a warning.
+pub fn resolve_voice_fast(knobs: &VoiceFastKnobs) -> VoiceFastSettings {
+    let layers = knobs
+        .file_content
+        .and_then(|raw| parse_agent_config_layers(raw, knobs.agent_name, knobs.agent_pubkey).ok())
+        .unwrap_or_default();
+    let defaults = VoiceFastSettings::default();
+
+    let switch_raw = layers
+        .get_str("voiceFast")
+        .or_else(|| knobs.env_on.map(str::to_string));
+    let on = match resolve_voice_stream_value(switch_raw.as_deref()) {
+        VoiceStreamSwitch::On => true,
+        VoiceStreamSwitch::Off => false,
+        VoiceStreamSwitch::Invalid(raw) => {
+            tracing::warn!(
+                target: "buzz_acp::voice_fast",
+                value = %raw,
+                "invalid voiceFast value (expected on/off) — the fast lane stays off"
+            );
+            false
+        }
+    };
+    let model = non_blank(layers.get_str("voiceFastModel"))
+        .or_else(|| non_blank(knobs.env_model.map(str::to_string)))
+        .unwrap_or(defaults.model);
+    let base_url = non_blank(layers.get_str("voiceFastBaseUrl"))
+        .or_else(|| non_blank(knobs.env_base_url.map(str::to_string)))
+        .map(|url| url.trim_end_matches('/').to_string());
+    let reasoning = match layers.get_str("voiceFastReasoning") {
+        None => defaults.reasoning,
+        Some(raw) if raw.trim().eq_ignore_ascii_case("omit") => None,
+        Some(raw) => non_blank(Some(raw)).or(defaults.reasoning),
+    };
+    let memory = match layers.get_str("voiceFastMemory") {
+        None => true,
+        Some(raw) => !raw.trim().eq_ignore_ascii_case("off"),
+    };
+    let digest = match layers.get_str("voiceFastDigest") {
+        Some(raw) if raw.trim().eq_ignore_ascii_case("handoff") => VoiceFastDigest::Handoff,
+        _ => VoiceFastDigest::Idle,
+    };
+    VoiceFastSettings {
+        on,
+        model,
+        base_url,
+        reasoning,
+        first_token_ms: knob_u64(
+            &layers,
+            "voiceFastFirstTokenMs",
+            defaults.first_token_ms,
+            100,
+            60_000,
+        ),
+        max_tokens: knob_u64(
+            &layers,
+            "voiceFastMaxTokens",
+            u64::from(defaults.max_tokens),
+            1,
+            8192,
+        ) as u32,
+        history_turns: knob_u64(
+            &layers,
+            "voiceFastHistoryTurns",
+            defaults.history_turns as u64,
+            0,
+            200,
+        ) as usize,
+        history_chars: knob_u64(
+            &layers,
+            "voiceFastHistoryChars",
+            defaults.history_chars as u64,
+            0,
+            200_000,
+        ) as usize,
+        memory,
+        digest,
+        digest_idle_secs: knob_u64(
+            &layers,
+            "voiceFastDigestIdleSecs",
+            defaults.digest_idle_secs,
+            5,
+            86_400,
+        ),
+    }
+}
+
+/// [`resolve_voice_fast`] over the process environment and the config file,
+/// read fresh so a flip lands on the next utterance without a restart.
+pub fn voice_fast_from_env(agent_pubkey: Option<&str>) -> VoiceFastSettings {
+    let env_on = std::env::var(ENV_VOICE_FAST).ok();
+    let env_model = std::env::var(ENV_VOICE_FAST_MODEL).ok();
+    let env_base_url = std::env::var(ENV_VOICE_FAST_BASE_URL).ok();
+    let agent_name = std::env::var(ENV_AGENT_NAME).ok();
+    let file_content = read_agent_effort_file();
+    resolve_voice_fast(&VoiceFastKnobs {
+        env_on: env_on.as_deref(),
+        env_model: env_model.as_deref(),
+        env_base_url: env_base_url.as_deref(),
+        agent_name: agent_name.as_deref(),
+        agent_pubkey,
+        file_content: file_content.as_deref(),
+    })
+}
+
 /// Read the per-agent effort config file, fresh — the file is tiny and every
 /// turn resolving it means an edit lands on the next turn without a restart.
 ///

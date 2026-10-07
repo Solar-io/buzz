@@ -18,6 +18,7 @@ mod resume;
 mod setup_mode;
 mod task_status;
 mod usage;
+mod voice_fast;
 mod voice_stream;
 mod voice_turn;
 
