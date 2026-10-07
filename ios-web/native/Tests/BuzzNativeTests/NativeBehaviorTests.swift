@@ -546,3 +546,23 @@ final class RelayInfoStub: URLProtocol {
     }
     override func stopLoading() {}
 }
+
+final class HuddleInterruptionTests: XCTestCase {
+    private func post(_ type: AVAudioSession.InterruptionType, options: UInt? = nil) {
+        var info: [AnyHashable: Any] = [AVAudioSessionInterruptionTypeKey: type.rawValue]
+        if let options { info[AVAudioSessionInterruptionOptionKey] = options }
+        NotificationCenter.default.post(name: AVAudioSession.interruptionNotification, object: AVAudioSession.sharedInstance(), userInfo: info)
+    }
+
+    func testCallResumesWhenInterruptionEndsWithoutShouldResume() throws {
+        try AVAudioSession.sharedInstance().setCategory(.playAndRecord, mode: .voiceChat)
+        let huddle = NativeHuddle.shared
+        huddle.armForTesting(channel: "00000000-0000-0000-0000-000000000001")
+        defer { huddle.leave() }
+        post(.began)
+        XCTAssertTrue(huddle.interrupted)
+        post(.ended) // iOS omits .shouldResume after Siri, alerts and other apps' audio
+        XCTAssertFalse(huddle.interrupted, "a call must resume without the media-playback hint")
+        XCTAssertTrue(huddle.snapshot()["error"] is NSNull, "no strand-the-call error after a resumable interruption")
+    }
+}

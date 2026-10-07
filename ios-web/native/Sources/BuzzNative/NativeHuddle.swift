@@ -1,5 +1,6 @@
 import AVFoundation
 import Foundation
+import UIKit
 
 /// Owns the call, authentication and network transport outside WKWebView.
 /// All mutable state is serialized on the main queue; audio callbacks hop here.
@@ -26,7 +27,7 @@ final class NativeHuddle {
     private var roster = HuddleRoster()
     private var observers: [NSObjectProtocol] = []
     private var held = false
-    private var interrupted = false
+    private(set) var interrupted = false
     private var outputMuted = false
     /// Stage-owned: silences AGENT speech only. Never touches `outputMuted` (the
     /// user's speaker mute, which also silences the room) or `speechEnabled`.
@@ -40,21 +41,45 @@ final class NativeHuddle {
         observers.append(NotificationCenter.default.addObserver(forName: AVAudioSession.interruptionNotification, object: nil, queue: .main) { [weak self] note in
             guard let self else { return }
             let began = (note.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt) == AVAudioSession.InterruptionType.began.rawValue
-            let options = AVAudioSession.InterruptionOptions(rawValue: note.userInfo?[AVAudioSessionInterruptionOptionKey] as? UInt ?? 0)
-            self.interrupted = began || !options.contains(.shouldResume)
-            self.engine?.setInterrupted(self.interrupted)
-            self.voice?.setCaptureAllowed(!self.interrupted && !self.muted && !self.held)
-            if !began && self.interrupted { self.error = "Audio was interrupted. Leave and rejoin to resume." }
-            if !self.interrupted, self.channel != nil {
-                do { try AVAudioSession.sharedInstance().setActive(true) }
-                catch { self.fail(error.localizedDescription) }
+            if began {
+                self.interrupted = true
+                self.engine?.setInterrupted(true)
+                self.voice?.setCaptureAllowed(false)
+                self.emit()
+            } else {
+                // A call resumes even when iOS omits .shouldResume (that hint is
+                // for media playback); it is often missing after Siri, alerts or
+                // another app's audio, which used to strand the call for good.
+                self.resumeAfterInterruption()
             }
-            self.emit()
+        })
+        observers.append(NotificationCenter.default.addObserver(forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
+            // iOS can skip the "ended" notification entirely; retry on return.
+            guard let self, self.interrupted else { return }
+            self.resumeAfterInterruption()
         })
         observers.append(NotificationCenter.default.addObserver(forName: AVAudioSession.mediaServicesWereResetNotification, object: nil, queue: .main) { [weak self] _ in
             self?.fail("The audio service restarted. Leave and rejoin the call.")
         })
     }
+
+    private func resumeAfterInterruption() {
+        guard interrupted, channel != nil else { interrupted = false; emit(); return }
+        do {
+            try AVAudioSession.sharedInstance().setActive(true)
+            interrupted = false
+            if error == Self.interruptedMessage { error = nil }
+            engine?.setInterrupted(false)
+            voice?.setCaptureAllowed(!muted && !held)
+        } catch {
+            self.error = Self.interruptedMessage
+        }
+        emit()
+    }
+    static let interruptedMessage = "Audio was interrupted. Leave and rejoin to resume."
+#if DEBUG
+    func armForTesting(channel: String) { self.channel = channel; interrupted = false; error = nil }
+#endif
 
     func snapshot() -> [String: Any] {
         ["status": status, "channelId": channel as Any? ?? NSNull(),
@@ -77,7 +102,7 @@ final class NativeHuddle {
         }
         _ = try NativeIdentity.shared.signer()
         self.channel = channel; self.parent = parent; relayURL = url
-        generation += 1; retry = 0; error = nil; muted = false; held = false
+        generation += 1; retry = 0; error = nil; muted = false; held = false; interrupted = false
         status = "connecting"; emit()
         let activeGeneration = generation
         AVAudioSession.sharedInstance().requestRecordPermission { [weak self] granted in
