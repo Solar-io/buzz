@@ -7,8 +7,14 @@ use crate::voice_fast_testkit::{self as kit, Script};
 fn sse_parser_reassembles_lines_split_across_chunks() {
     let mut p = SseParser::default();
     assert!(p.feed(b"data: {\"a\"").is_empty());
-    assert_eq!(p.feed(b":1}\r\n\r\ndata: [DO"), vec!["{\"a\":1}".to_string()]);
-    assert_eq!(p.feed(b"NE]\n: comment\nevent: x\n"), vec!["[DONE]".to_string()]);
+    assert_eq!(
+        p.feed(b":1}\r\n\r\ndata: [DO"),
+        vec!["{\"a\":1}".to_string()]
+    );
+    assert_eq!(
+        p.feed(b"NE]\n: comment\nevent: x\n"),
+        vec!["[DONE]".to_string()]
+    );
 }
 
 #[test]
@@ -32,8 +38,14 @@ fn parse_counts_reasoning_and_yields_text() {
     );
     assert_eq!(parse_sse_data("[DONE]"), vec![SseItem::Done]);
     assert_eq!(
-        parse_sse_data(r#"{"choices":[{"delta":{"reasoning":"ab","content":"x"},"finish_reason":"stop"}]}"#),
-        vec![SseItem::Reasoning(2), SseItem::Text("x".into()), SseItem::Finish]
+        parse_sse_data(
+            r#"{"choices":[{"delta":{"reasoning":"ab","content":"x"},"finish_reason":"stop"}]}"#
+        ),
+        vec![
+            SseItem::Reasoning(2),
+            SseItem::Text("x".into()),
+            SseItem::Finish
+        ]
     );
     assert!(matches!(
         parse_sse_data(r#"{"error":{"message":"bad"}}"#).first(),
@@ -44,8 +56,14 @@ fn parse_counts_reasoning_and_yields_text() {
 
 #[test]
 fn completions_url_handles_v1_suffix() {
-    assert_eq!(completions_url("https://h:6250"), "https://h:6250/v1/chat/completions");
-    assert_eq!(completions_url("https://h:6250/v1/"), "https://h:6250/v1/chat/completions");
+    assert_eq!(
+        completions_url("https://h:6250"),
+        "https://h:6250/v1/chat/completions"
+    );
+    assert_eq!(
+        completions_url("https://h:6250/v1/"),
+        "https://h:6250/v1/chat/completions"
+    );
 }
 
 #[test]
@@ -85,10 +103,15 @@ async fn stream_yields_text_counts_reasoning_and_sends_bearer_body() {
 #[tokio::test]
 async fn stream_http_error_is_reported() {
     let server = kit::spawn(vec![Script::Status(503)]).await;
-    let err = FastCompletionStream::open(&build_http_client(), &server.base_url, "k", &serde_json::json!({}))
-        .await
-        .err()
-        .expect("error");
+    let err = FastCompletionStream::open(
+        &build_http_client(),
+        &server.base_url,
+        "k",
+        &serde_json::json!({}),
+    )
+    .await
+    .err()
+    .expect("error");
     assert_eq!(err, FastClientError::Http { status: 503 });
     assert_eq!(err.reason(), "http_503");
 }
@@ -100,11 +123,19 @@ async fn stream_eof_without_done_is_an_error() {
         kit::text_delta("Half a sen"),
     )])])
     .await;
-    let mut s = FastCompletionStream::open(&build_http_client(), &server.base_url, "k", &serde_json::json!({}))
-        .await
-        .expect("open");
+    let mut s = FastCompletionStream::open(
+        &build_http_client(),
+        &server.base_url,
+        "k",
+        &serde_json::json!({}),
+    )
+    .await
+    .expect("open");
     assert_eq!(s.next_text().await, Ok(Some("Half a sen".to_string())));
-    assert!(matches!(s.next_text().await, Err(FastClientError::Protocol(_))));
+    assert!(matches!(
+        s.next_text().await,
+        Err(FastClientError::Protocol(_))
+    ));
 }
 
 /// Live probe against the real OmniRoute endpoint (WP2). Ignored by default;
@@ -150,5 +181,8 @@ async fn voice_fast_live_probe() {
         s.reasoning_chars
     );
     assert!(!out.trim().is_empty(), "no text came back");
-    assert_eq!(s.reasoning_chars, 0, "provider ignored reasoning_effort=none");
+    assert_eq!(
+        s.reasoning_chars, 0,
+        "provider ignored reasoning_effort=none"
+    );
 }

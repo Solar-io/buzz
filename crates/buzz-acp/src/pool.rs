@@ -879,6 +879,9 @@ pub struct PromptContext {
     /// `~/.buzz/agent-effort.json` / `BUZZ_VOICE_STREAM` fresh each `[voice]`
     /// turn; `Some` forces it without touching process state.
     pub voice_stream_forced: Option<bool>,
+    /// Voice fast lane call ledgers: a channel turn renders their
+    /// `[Voice Fast Context]` and commits it on success. `None` disables.
+    pub voice_fast_ledgers: Option<Arc<crate::voice_fast::VoiceFastLedgers>>,
     /// Resume journal (`crate::resume`); `Default` is disabled.
     pub(crate) resume: crate::resume::ResumeJournal,
 }
@@ -2562,6 +2565,17 @@ fn plan_voice_stream(
     }
 }
 
+/// Mark a delivered `[Voice Fast Context]` digested (successful turn only).
+fn commit_voice_fast_context(
+    ctx: &PromptContext,
+    channel_id: Uuid,
+    rendered: Option<&crate::voice_fast::RenderedContext>,
+) {
+    if let (Some(ledgers), Some(rendered)) = (&ctx.voice_fast_ledgers, rendered) {
+        ledgers.commit_context(channel_id, rendered);
+    }
+}
+
 /// Core async function spawned for each prompt.
 ///
 /// Lifecycle:
@@ -3179,6 +3193,22 @@ pub async fn run_prompt_task(
     // so every other turn reads no extra config and — with the switch off
     // everywhere — gets a byte-identical prompt.
     let voice_stream_plan = plan_voice_stream(&ctx, &source, batch.as_ref(), &agent.state);
+    // Voice fast lane (spec VOICE_FAST_PATH §3.6): what the fast voice said in
+    // this call, plus any handoff this batch answers. Rendered now, committed
+    // only when the turn succeeds (same rule as the canvas notice).
+    let voice_fast_context: Option<crate::voice_fast::RenderedContext> =
+        match (&ctx.voice_fast_ledgers, &batch) {
+            (Some(ledgers), Some(b)) => {
+                let ids: Vec<String> = b
+                    .events
+                    .iter()
+                    .chain(b.cancelled_events.iter())
+                    .map(|e| e.event.id.to_hex())
+                    .collect();
+                ledgers.render_context(b.channel_id, &ids)
+            }
+            _ => None,
+        };
     // Event IDs represented by this prompt. Commit only after ACP reports a
     // successful turn; failed/cancelled prompts must be retryable without loss.
     let mut pending_delivered_event_ids = HashSet::new();
@@ -3288,6 +3318,7 @@ pub async fn run_prompt_task(
                     .map(|notice| notice.rendered_section.as_str()),
                 standing_context_sent,
                 reply_mode: voice_stream_plan.reply_mode,
+                voice_fast_context: voice_fast_context.as_ref().map(|c| c.text.as_str()),
             },
         )
     } else {
@@ -3593,6 +3624,7 @@ pub async fn run_prompt_task(
                             // The turn completed, so the canvas notice it
                             // carried (if any) is delivered — consume it.
                             agent.state.consume_canvas_notice(cid);
+                            commit_voice_fast_context(&ctx, *cid, voice_fast_context.as_ref());
                         }
                         apply_completed_before_control_signal(
                             &mut agent.state,
@@ -3656,6 +3688,7 @@ pub async fn run_prompt_task(
                 // any) is delivered — consume it. Failed/cancelled/timeout
                 // paths above leave it armed for the retry.
                 agent.state.consume_canvas_notice(cid);
+                commit_voice_fast_context(&ctx, *cid, voice_fast_context.as_ref());
             } else if !agent.has_system_prompt_support() {
                 agent.state.heartbeat_standing_context_sent = true;
             }
@@ -10355,6 +10388,7 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
             task_status_refresh: crate::task_status::STATUS_REFRESH,
             speech_sink: None,
             voice_stream_forced: None,
+            voice_fast_ledgers: None,
             resume: Default::default(),
         }
     }

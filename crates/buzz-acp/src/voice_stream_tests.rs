@@ -624,3 +624,55 @@ async fn measure_only_stream_publishes_nothing() {
     assert_eq!(report.segments_published, 0);
     assert!(!report.final_posted);
 }
+
+#[tokio::test(start_paused = true)]
+async fn cut_after_a_segment_sends_cut_done_and_no_final() {
+    let sink = Arc::new(RecordingSink::default());
+    let (tx, rx) = mpsc::unbounded_channel();
+    let handle = tokio::spawn(run_voice_stream(rx, Some(sink.clone()), params()));
+    tx.send(SpeechTap::Text("Sure. And then the rest".into()))
+        .unwrap();
+    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    tx.send(SpeechTap::Cut).unwrap();
+    tx.send(SpeechTap::Text(" more that never goes out.".into()))
+        .unwrap();
+    let report = handle.await.unwrap();
+    let segments = sink.segments();
+    assert_eq!(segments.len(), 2);
+    assert_eq!(segments[0].content, "Sure.");
+    assert_eq!(segments[1].content, "");
+    assert_eq!(
+        tag_values(&segments[1], "done").unwrap(),
+        vec!["done", "5", "cut"]
+    );
+    assert!(sink.finals().is_empty());
+    assert!(report.cut);
+    assert!(!report.final_posted);
+    assert_eq!(report.text, "Sure.");
+}
+
+#[tokio::test(start_paused = true)]
+async fn cut_before_any_segment_publishes_nothing() {
+    let sink = Arc::new(RecordingSink::default());
+    let (tx, rx) = mpsc::unbounded_channel();
+    let handle = tokio::spawn(run_voice_stream(rx, Some(sink.clone()), params()));
+    tx.send(SpeechTap::Text("no boundary yet".into())).unwrap();
+    tx.send(SpeechTap::Cut).unwrap();
+    let report = handle.await.unwrap();
+    assert!(sink.events.lock().unwrap().is_empty());
+    assert!(report.cut);
+    assert_eq!(report.segments_published, 0);
+}
+
+#[tokio::test(start_paused = true)]
+async fn abort_discards_pending_text_without_done_or_final() {
+    let sink = Arc::new(RecordingSink::default());
+    let (tx, rx) = mpsc::unbounded_channel();
+    let handle = tokio::spawn(run_voice_stream(rx, Some(sink.clone()), params()));
+    tx.send(SpeechTap::Text("half a thought".into())).unwrap();
+    tx.send(SpeechTap::Abort).unwrap();
+    let report = handle.await.unwrap();
+    assert!(sink.events.lock().unwrap().is_empty());
+    assert!(!report.cut);
+    assert!(!report.final_posted);
+}

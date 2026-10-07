@@ -83,6 +83,14 @@ pub enum SpeechTap {
         /// The update's `rawInput`.
         raw_input: serde_json::Value,
     },
+    /// The stream was superseded (voice fast lane R5): drop anything not yet
+    /// published, send a `["done", n, "cut"]` segment if anything WAS
+    /// published, and post NO final kind:9.
+    Cut,
+    /// Discard the stream without publishing anything further. Only sent by
+    /// the voice fast lane after it verified (through its gated sink) that no
+    /// segment went out — the fallback-before-speech path.
+    Abort,
 }
 
 /// A sentence-sized slice of the reply's canonical text.
@@ -398,6 +406,8 @@ pub struct VoiceStreamParams {
 /// What a finished stream did (returned for tests and logs).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct StreamReport {
+    /// The stream ended with a [`SpeechTap::Cut`] (no final was posted).
+    pub cut: bool,
     /// kind:24820 events handed to the sink (done segment included).
     pub segments_published: u32,
     /// Whether the final kind:9 was posted successfully.
@@ -424,6 +434,19 @@ pub fn build_segment_event(
     text: &str,
     done_total: Option<usize>,
 ) -> Result<Event, String> {
+    build_segment_event_with_cut(params, seq, offset, text, done_total, false)
+}
+
+/// [`build_segment_event`] with the optional `cut` flag on the done tag:
+/// `["done", <total>, "cut"]` marks a superseded stream that gets no final.
+pub fn build_segment_event_with_cut(
+    params: &VoiceStreamParams,
+    seq: u32,
+    offset: usize,
+    text: &str,
+    done_total: Option<usize>,
+    cut: bool,
+) -> Result<Event, String> {
     let mut tags = vec![
         tag(&["h", &params.channel_id.to_string()])?,
         tag(&[
@@ -437,7 +460,12 @@ pub fn build_segment_event(
         tags.push(tag(&["e", trigger, "", "reply"])?);
     }
     if let Some(total) = done_total {
-        tags.push(tag(&["done", &total.to_string()])?);
+        let total = total.to_string();
+        if cut {
+            tags.push(tag(&["done", &total, "cut"])?);
+        } else {
+            tags.push(tag(&["done", &total])?);
+        }
     }
     EventBuilder::new(
         Kind::Custom(buzz_core::kind::KIND_AGENT_SPEECH_SEGMENT as u16),
@@ -490,6 +518,8 @@ struct Publisher<'a> {
     published: u32,
     /// Earliest instant the next non-first segment may go out.
     next_allowed: tokio::time::Instant,
+    /// Text handed to the sink so far, in order.
+    published_text: String,
 }
 
 impl Publisher<'_> {
@@ -512,11 +542,27 @@ impl Publisher<'_> {
     }
 
     async fn publish(&mut self, offset: usize, text: &str, done_total: Option<usize>) {
+        self.publish_with_cut(offset, text, done_total, false).await;
+    }
+
+    async fn publish_with_cut(
+        &mut self,
+        offset: usize,
+        text: &str,
+        done_total: Option<usize>,
+        cut: bool,
+    ) {
         let seq = self.published;
         self.published += 1;
         self.next_allowed = tokio::time::Instant::now() + MIN_PUBLISH_GAP;
+        self.published_text.push_str(text);
         let chars = text.chars().count();
-        let result = match build_segment_event(self.params, seq, offset, text, done_total) {
+        let built = if cut {
+            build_segment_event_with_cut(self.params, seq, offset, text, done_total, true)
+        } else {
+            build_segment_event(self.params, seq, offset, text, done_total)
+        };
+        let result = match built {
             Ok(event) => self.sink.publish_segment(event).await,
             Err(e) => Err(format!("build: {e}")),
         };
@@ -611,6 +657,8 @@ pub async fn run_voice_stream(
                     }
                 }
                 SpeechTap::ToolBoundary { raw_input: None } => {}
+                SpeechTap::Cut => report.cut = true,
+                SpeechTap::Abort => {}
             }
         }
         return report;
@@ -627,6 +675,7 @@ pub async fn run_voice_stream(
         // `published == 0` exemption in `may_publish`, the single rule that
         // keeps the first sentence immediate.
         next_allowed: tokio::time::Instant::now() + MIN_PUBLISH_GAP,
+        published_text: String::new(),
     };
 
     let note_cli_send = |raw: &serde_json::Value, detected: &mut bool| {
@@ -659,6 +708,23 @@ pub async fn run_voice_stream(
                 }
                 Some(SpeechTap::ToolInput { raw_input }) => {
                     note_cli_send(&raw_input, &mut cli_send_detected);
+                }
+                Some(SpeechTap::Cut) => {
+                    return finish_cut(&mut publisher, cli_send_detected).await;
+                }
+                Some(SpeechTap::Abort) => {
+                    tracing::info!(
+                        target: LOG_TARGET,
+                        stream_id = %params.stream_id,
+                        published = publisher.published,
+                        "aborted — nothing more is published"
+                    );
+                    return StreamReport {
+                        segments_published: publisher.published,
+                        cli_send_detected,
+                        text: publisher.published_text.clone(),
+                        ..StreamReport::default()
+                    };
                 }
                 None => break,
             },
@@ -744,6 +810,33 @@ pub async fn run_voice_stream(
         }
     }
     report
+}
+
+/// End a superseded stream: unpublished text is dropped; if anything was
+/// published, one empty `["done", n, "cut"]` segment closes it for the
+/// client. Never a final kind:9.
+async fn finish_cut(publisher: &mut Publisher<'_>, cli_send_detected: bool) -> StreamReport {
+    publisher.pending.clear();
+    let published_before = publisher.published;
+    if published_before > 0 {
+        let total = utf16_len(&publisher.published_text);
+        publisher
+            .publish_with_cut(total, "", Some(total), true)
+            .await;
+    }
+    tracing::info!(
+        target: LOG_TARGET,
+        stream_id = %publisher.params.stream_id,
+        segments = published_before,
+        "cut — superseded, no final"
+    );
+    StreamReport {
+        cut: true,
+        segments_published: publisher.published,
+        final_posted: false,
+        cli_send_detected,
+        text: publisher.published_text.clone(),
+    }
 }
 
 #[cfg(test)]

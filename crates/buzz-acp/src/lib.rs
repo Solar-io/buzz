@@ -20,6 +20,7 @@ mod task_status;
 mod usage;
 mod voice_fast;
 mod voice_fast_client;
+mod voice_fast_runner;
 #[cfg(test)]
 mod voice_fast_testkit;
 mod voice_stream;
@@ -59,6 +60,7 @@ use relay::{HarnessRelay, RelayEventPublisher};
 use tokio::sync::{mpsc, watch};
 use tracing_subscriber::EnvFilter;
 use uuid::Uuid;
+use voice_fast_runner::VoiceFastMsg;
 
 /// Check if argv[1] matches a subcommand name, before any clap parsing.
 ///
@@ -2254,6 +2256,10 @@ async fn tokio_main() -> Result<()> {
     let cwd = current_working_directory()?;
     let task_status_sink: Arc<dyn task_status::TaskStatusSink> =
         Arc::new(task_status::RestTaskStatusSink::new(relay.rest_client()));
+    // Voice fast lane (spec VOICE_FAST_PATH_2026-10-07). Always constructed;
+    // whether an event takes it is the per-event `voiceFast` switch (default
+    // off), read fresh from the config file — so this is inert until flipped.
+    let voice_fast_ledgers = Arc::new(voice_fast::VoiceFastLedgers::new());
     let ctx = Arc::new(PromptContext {
         mcp_servers: build_mcp_servers(&config),
         initial_message: config.initial_message.clone(),
@@ -2298,8 +2304,35 @@ async fn tokio_main() -> Result<()> {
             relay.rest_client(),
         ))),
         voice_stream_forced: None,
+        voice_fast_ledgers: Some(voice_fast_ledgers.clone()),
         resume: queue.resume_journal(),
     });
+    let (voice_fast_tx, mut voice_fast_rx) = mpsc::unbounded_channel::<VoiceFastMsg>();
+    let voice_fast = {
+        let agent_pubkey_hex = pubkey_hex.clone();
+        voice_fast_runner::VoiceFastRuntime::new(voice_fast_runner::VoiceFastDeps {
+            ledgers: voice_fast_ledgers.clone(),
+            http: voice_fast_client::build_http_client(),
+            sink: Arc::new(voice_stream::RelaySpeechSink::new(
+                relay.event_publisher(),
+                relay.rest_client(),
+            )),
+            keys: config.keys.clone(),
+            persona: config.system_prompt.clone(),
+            rest: Some(relay.rest_client()),
+            owner: startup_owner
+                .as_deref()
+                .and_then(|hex| nostr::PublicKey::from_hex(hex).ok()),
+            to_main: voice_fast_tx,
+            settings: Arc::new(move || {
+                voice_turn::voice_fast_from_env(Some(agent_pubkey_hex.as_str()))
+            }),
+            key: voice_fast_runner::KeySource::Resolve {
+                agent_name: std::env::var(voice_turn::ENV_AGENT_NAME).ok(),
+            },
+            digest_delay_override: None,
+        })
+    };
 
     // D8.8: close any `running` status heads a previous process of this agent
     // left behind. Off the startup path — best-effort, never blocks readiness.
@@ -2519,6 +2552,7 @@ async fn tokio_main() -> Result<()> {
         Panic(tokio::task::JoinError),
         SteerAck(SteerAckEvent),
         Wake(u32, Result<AgentPool, String>),
+        VoiceFast(VoiceFastMsg),
     }
 
     loop {
@@ -2707,6 +2741,10 @@ async fn tokio_main() -> Result<()> {
                 Some(ack_event) = steer_ack_rx.recv() => {
                     Some(PoolEvent::SteerAck(ack_event))
                 }
+                // Voice fast lane hand-backs (handoff / fallback / digest).
+                Some(msg) = voice_fast_rx.recv() => {
+                    Some(PoolEvent::VoiceFast(msg))
+                }
                 Some((attempt, result)) = wake_rx.recv(), if config.lazy_pool && !pool_ready => {
                     Some(PoolEvent::Wake(attempt, result))
                 }
@@ -2892,6 +2930,14 @@ async fn tokio_main() -> Result<()> {
                                     }
                                 }
                                 continue;
+                            }
+
+                            // Voice fast lane R8: this agent's own replies
+                            // in a call channel feed the call ledger (so the
+                            // fast voice knows what the agent said). No-op for
+                            // channels without a ledger.
+                            if kind_u32 == 9 && buzz_event.event.pubkey.to_hex() == pubkey_hex {
+                                voice_fast.note_self_message(buzz_event.channel_id, &buzz_event.event);
                             }
 
                             if config.ignore_self && buzz_event.event.pubkey.to_hex() == pubkey_hex {
@@ -3134,92 +3180,31 @@ async fn tokio_main() -> Result<()> {
                                     continue;
                                 }
                             };
-                            // Capture author pubkey before queue.push() moves
-                            // buzz_event.event (needed for mode gate below).
-                            let author_hex = buzz_event.event.pubkey.to_hex();
-                            let event_id_hex = buzz_event.event.id.to_hex();
-                            // Clone for the non-cancelling steer fork, which
-                            // needs the event to render the steer body. The
-                            // clone is unconditional because we don't know
-                            // yet whether the mode gate will demand a steer
-                            // — checking `multiple_event_handling` here
-                            // would couple the queueing path to the mode
-                            // and break the existing invariant that every
-                            // accepted event goes through `queue.push`
-                            // first. `nostr::Event::clone` is cheap (Arc-
-                            // backed payload) so the cost is negligible.
-                            let event_for_steer = buzz_event.event.clone();
-                            let prompt_tag_for_steer = prompt_tag.clone();
-                            let accepted = queue.push(QueuedEvent {
-                                channel_id: buzz_event.channel_id,
-                                event: buzz_event.event,
-                                received_at: std::time::Instant::now(),
+                            // Voice fast lane (R1): the ONE routing decision
+                            // for this event. A claimed owner `[voice]` turn
+                            // is answered by the fast lane and never enters
+                            // the queue here — the runner hands it back
+                            // (PoolEvent::VoiceFast) only on handoff or
+                            // fallback, at most once. Inert while the
+                            // per-agent `voiceFast` switch is off.
+                            route_inbound_event(
+                                &voice_fast,
+                                AcceptCtx {
+                                    pool: &mut pool,
+                                    queue: &mut queue,
+                                    ctx: &ctx,
+                                    multiple_event_handling: config.multiple_event_handling,
+                                    owner: owner_cache.get(),
+                                    steer_ack_tx: &steer_ack_tx,
+                                    pubkey_hex: &pubkey_hex,
+                                    last_activity: &mut last_activity,
+                                    typing_channels: &mut typing_channels,
+                                    pool_ready,
+                                },
+                                buzz_event.channel_id,
+                                buzz_event.event,
                                 prompt_tag,
-                            });
-                            // 👀 — immediate "seen" reaction, only if the event
-                            // was actually queued (not dropped by DedupMode::Drop).
-                            // Fire-and-forget: on rare fast-failure paths the
-                            // guard's cleanup may race with this add, leaving a
-                            // cosmetic stale 👀. Acceptable — see ReactionGuard docs.
-                            if accepted {
-                                let rc = ctx.rest_client.clone();
-                                let eid = event_id_hex.clone();
-                                tokio::spawn(async move {
-                                    pool::reaction_add(&rc, &eid, "👀").await;
-                                });
-                            }
-                            // Event is already queued. If mode requires it AND
-                            // the channel has an in-flight task, fire cancel —
-                            // OR take the non-cancelling (ACP steer) fork for Steer signals.
-                            if accepted && queue.is_channel_in_flight(buzz_event.channel_id) {
-                                // Author eligibility (owner ∪ allowlist ∪ siblings)
-                                // is already enforced by the inbound author gate
-                                // above, so the mid-turn signal fires for every
-                                // event that reaches here.
-                                let signal = mode_gate_signal(
-                                    config.multiple_event_handling,
-                                    &author_hex,
-                                    owner_cache.get(),
-                                );
-                                if let Some(signal) = signal {
-                                    // Non-cancelling fork: when the mode
-                                    // wants a Steer, attempt the
-                                    // non-cancelling path first. On accept,
-                                    // withhold the queued event and spawn an
-                                    // ack watcher; the main loop's
-                                    // `PoolEvent::SteerAck` arm decides
-                                    // success/release/fallback. On reject
-                                    // (including agents that advertise no
-                                    // steer transport at all), fall through
-                                    // to the universal cancel+merge `Steer`
-                                    // signal so the event still reaches the
-                                    // agent.
-                                    let native_attempted = matches!(signal, ControlSignal::Steer)
-                                        && try_native_steer(
-                                            &mut pool,
-                                            &mut queue,
-                                            buzz_event.channel_id,
-                                            event_for_steer,
-                                            prompt_tag_for_steer,
-                                            &steer_ack_tx,
-                                            &pubkey_hex,
-                                        );
-                                    if !native_attempted {
-                                        signal_in_flight_task(
-                                            &mut pool,
-                                            buzz_event.channel_id,
-                                            signal,
-                                        );
-                                    }
-                                }
-                            }
-                            if pool_ready {
-                                for (channel_id, thread_tags) in
-                                    dispatch_pending(&mut pool, &mut queue, &ctx, &mut last_activity)
-                                {
-                                    typing_channels.insert(channel_id, thread_tags);
-                                }
-                            }
+                            );
                         }
                         None => {
                             tracing::warn!("relay event stream ended — requesting reconnect");
@@ -3386,6 +3371,8 @@ async fn tokio_main() -> Result<()> {
                 // Stop typing indicator for the completed channel.
                 if let PromptSource::Channel(ch) = &result.source {
                     typing_channels.remove(ch);
+                    // A handed-off task (if any) is no longer running (R7).
+                    voice_fast_ledgers.note_agent_turn_end(*ch);
                 }
                 if handle_prompt_result(
                     &mut pool,
@@ -3613,6 +3600,23 @@ async fn tokio_main() -> Result<()> {
                 {
                     typing_channels.insert(channel_id, thread_tags);
                 }
+            }
+            Some(PoolEvent::VoiceFast(msg)) => {
+                handle_voice_fast_msg(
+                    AcceptCtx {
+                        pool: &mut pool,
+                        queue: &mut queue,
+                        ctx: &ctx,
+                        multiple_event_handling: config.multiple_event_handling,
+                        owner: owner_cache.get(),
+                        steer_ack_tx: &steer_ack_tx,
+                        pubkey_hex: &pubkey_hex,
+                        last_activity: &mut last_activity,
+                        typing_channels: &mut typing_channels,
+                        pool_ready,
+                    },
+                    msg,
+                );
             }
             Some(PoolEvent::Wake(attempt, result)) => {
                 let completion = result.as_ref().map(|_| ()).map_err(|error| error.clone());
@@ -3881,6 +3885,7 @@ fn signal_in_flight_task(
 ///
 /// The withheld event is NOT released here on `false` because no withhold
 /// was established: `mark_native_steer_pending` only runs on `Ok(())`.
+#[cfg(test)]
 fn try_native_steer(
     pool: &mut AgentPool,
     queue: &mut EventQueue,
@@ -3889,6 +3894,179 @@ fn try_native_steer(
     prompt_tag: String,
     steer_ack_tx: &mpsc::UnboundedSender<SteerAckEvent>,
     agent_pubkey: &str,
+) -> bool {
+    try_native_steer_with(
+        pool,
+        queue,
+        channel_id,
+        event,
+        prompt_tag,
+        steer_ack_tx,
+        agent_pubkey,
+        None,
+    )
+}
+
+/// The borrowed main-loop state [`accept_event`] needs.
+struct AcceptCtx<'a> {
+    pool: &'a mut AgentPool,
+    queue: &'a mut EventQueue,
+    ctx: &'a Arc<PromptContext>,
+    multiple_event_handling: MultipleEventHandling,
+    owner: Option<&'a str>,
+    steer_ack_tx: &'a mpsc::UnboundedSender<SteerAckEvent>,
+    pubkey_hex: &'a str,
+    last_activity: &'a mut tokio::time::Instant,
+    typing_channels: &'a mut HashMap<Uuid, ThreadTags>,
+    pool_ready: bool,
+}
+
+/// Queue an accepted event exactly as the intake loop always has: push,
+/// 👀 (when `react`), the mid-turn steer/cancel fork, dispatch. Shared by
+/// the intake loop and the voice fast lane's hand-back (handoff/fallback),
+/// so a handed-back event reaches the agent by the very same path.
+fn accept_event(
+    a: AcceptCtx<'_>,
+    channel_id: Uuid,
+    event: nostr::Event,
+    prompt_tag: String,
+    react: bool,
+) -> bool {
+    // Capture author pubkey before queue.push() moves the event (needed for
+    // the mode gate below).
+    let author_hex = event.pubkey.to_hex();
+    let event_id_hex = event.id.to_hex();
+    // Clone for the non-cancelling steer fork, which needs the event to
+    // render the steer body. The clone is unconditional because we don't
+    // know yet whether the mode gate will demand a steer — checking
+    // `multiple_event_handling` here would couple the queueing path to the
+    // mode and break the existing invariant that every accepted event goes
+    // through `queue.push` first. `nostr::Event::clone` is cheap (Arc-backed
+    // payload) so the cost is negligible.
+    let event_for_steer = event.clone();
+    let prompt_tag_for_steer = prompt_tag.clone();
+    let accepted = a.queue.push(QueuedEvent {
+        channel_id,
+        event,
+        received_at: std::time::Instant::now(),
+        prompt_tag,
+    });
+    // 👀 — immediate "seen" reaction, only if the event was actually queued
+    // (not dropped by DedupMode::Drop). Fire-and-forget: on rare fast-failure
+    // paths the guard's cleanup may race with this add, leaving a cosmetic
+    // stale 👀. Acceptable — see ReactionGuard docs.
+    if accepted && react {
+        let rc = a.ctx.rest_client.clone();
+        let eid = event_id_hex.clone();
+        tokio::spawn(async move {
+            pool::reaction_add(&rc, &eid, "👀").await;
+        });
+    }
+    // Event is already queued. If mode requires it AND the channel has an
+    // in-flight task, fire cancel — OR take the non-cancelling (ACP steer)
+    // fork for Steer signals.
+    if accepted && a.queue.is_channel_in_flight(channel_id) {
+        // Author eligibility (owner ∪ allowlist ∪ siblings) is already
+        // enforced by the inbound author gate, so the mid-turn signal fires
+        // for every event that reaches here.
+        let signal = mode_gate_signal(a.multiple_event_handling, &author_hex, a.owner);
+        if let Some(signal) = signal {
+            // Non-cancelling fork: when the mode wants a Steer, attempt the
+            // non-cancelling path first. On accept, withhold the queued event
+            // and spawn an ack watcher; the main loop's `PoolEvent::SteerAck`
+            // arm decides success/release/fallback. On reject (including
+            // agents that advertise no steer transport at all), fall through
+            // to the universal cancel+merge `Steer` signal so the event still
+            // reaches the agent.
+            let native_attempted = matches!(signal, ControlSignal::Steer)
+                && try_native_steer_with(
+                    a.pool,
+                    a.queue,
+                    channel_id,
+                    event_for_steer,
+                    prompt_tag_for_steer,
+                    a.steer_ack_tx,
+                    a.pubkey_hex,
+                    a.ctx.voice_fast_ledgers.as_deref(),
+                );
+            if !native_attempted {
+                signal_in_flight_task(a.pool, channel_id, signal);
+            }
+        }
+    }
+    if a.pool_ready {
+        for (channel_id, thread_tags) in dispatch_pending(a.pool, a.queue, a.ctx, a.last_activity) {
+            a.typing_channels.insert(channel_id, thread_tags);
+        }
+    }
+    accepted
+}
+
+/// The intake's last step for an event that passed every gate and matched
+/// a rule: the voice fast lane claims it (R1 — then it is NOT queued, the
+/// runner owns it), or it is accepted exactly as before. Returns whether the
+/// event entered the queue.
+fn route_inbound_event(
+    voice_fast: &Arc<voice_fast_runner::VoiceFastRuntime>,
+    a: AcceptCtx<'_>,
+    channel_id: Uuid,
+    event: nostr::Event,
+    prompt_tag: String,
+) -> bool {
+    if voice_fast.try_claim(channel_id, &event, a.owner, &prompt_tag) {
+        return false;
+    }
+    accept_event(a, channel_id, event, prompt_tag, true)
+}
+
+/// Apply one voice fast lane hand-back on the main loop.
+fn handle_voice_fast_msg(a: AcceptCtx<'_>, msg: VoiceFastMsg) {
+    match msg {
+        VoiceFastMsg::PushToAgent {
+            channel_id,
+            event,
+            prompt_tag,
+            reason,
+        } => {
+            tracing::info!(
+                target: voice_fast::LOG_TARGET,
+                event = %event.id.to_hex(),
+                reason,
+                "handed to agent"
+            );
+            accept_event(a, channel_id, event, prompt_tag, true);
+        }
+        VoiceFastMsg::Digest { channel_id, event } => {
+            if a.queue.is_channel_in_flight(channel_id) {
+                // The running turn will pick the context up (steer/prompt).
+                tracing::debug!(
+                    target: voice_fast::LOG_TARGET,
+                    channel = %channel_id,
+                    "digest skipped — agent turn in flight"
+                );
+                return;
+            }
+            accept_event(
+                a,
+                channel_id,
+                event,
+                voice_fast_runner::DIGEST_PROMPT_TAG.to_string(),
+                false,
+            );
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn try_native_steer_with(
+    pool: &mut AgentPool,
+    queue: &mut EventQueue,
+    channel_id: uuid::Uuid,
+    event: nostr::Event,
+    prompt_tag: String,
+    steer_ack_tx: &mpsc::UnboundedSender<SteerAckEvent>,
+    agent_pubkey: &str,
+    voice_fast: Option<&voice_fast::VoiceFastLedgers>,
 ) -> bool {
     // Build the steer body: framing strings come from
     // `queue::native_steer_framing()` (Eva's drift-proof requirement —
@@ -3935,7 +4113,18 @@ fn try_native_steer(
         received_at: std::time::Instant::now(),
     };
     let event_block = queue::format_event_block(channel_id, None, &be, None, None);
-    let body = format!("{header}\n\n[Buzz event: {prompt_tag}]\n{event_block}\n\n{closing}");
+    // Voice fast lane (spec §3.6): what the fast voice said, plus the
+    // handoff this event carries. Committed only if the steer is accepted;
+    // on reject the cancel+merge re-prompt renders it again.
+    let voice_fast_context =
+        voice_fast.and_then(|l| l.render_context(channel_id, std::slice::from_ref(&event_id_hex)));
+    let body = match &voice_fast_context {
+        Some(context) => format!(
+            "{header}\n\n[Buzz event: {prompt_tag}]\n{event_block}\n\n{}\n\n{closing}",
+            context.text
+        ),
+        None => format!("{header}\n\n[Buzz event: {prompt_tag}]\n{event_block}\n\n{closing}"),
+    };
 
     let (ack_tx, ack_rx) = tokio::sync::oneshot::channel::<pool::SteerAck>();
     let request = pool::SteerRequest {
@@ -3946,6 +4135,9 @@ fn try_native_steer(
 
     match pool.send_steer(channel_id, request) {
         Ok(()) => {
+            if let (Some(ledgers), Some(context)) = (voice_fast, &voice_fast_context) {
+                ledgers.commit_context(channel_id, context);
+            }
             // Withhold the queued event synchronously BEFORE spawning
             // the watcher: this closes the race where `mark_complete`
             // clears `in_flight_channels` and a stray `flush_next` could
@@ -4206,6 +4398,7 @@ mod claim_router_tests {
             task_status_refresh: crate::task_status::STATUS_REFRESH,
             speech_sink: None,
             voice_stream_forced: None,
+            voice_fast_ledgers: None,
             resume: Default::default(),
         }
     }
@@ -11041,3 +11234,7 @@ mod observer_payload_trim_tests {
         assert!(leaf.contains("[elided"));
     }
 }
+
+#[cfg(test)]
+#[path = "voice_fast_intake_tests.rs"]
+mod voice_fast_intake_tests;

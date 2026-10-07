@@ -108,10 +108,7 @@ pub fn parse_sse_data(data: &str) -> Vec<SseItem> {
             }
         }
     }
-    if choice
-        .get("finish_reason")
-        .is_some_and(|f| !f.is_null())
-    {
+    if choice.get("finish_reason").is_some_and(|f| !f.is_null()) {
         out.push(SseItem::Finish);
     }
     out

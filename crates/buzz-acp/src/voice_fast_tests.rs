@@ -63,8 +63,14 @@ fn claim_switch_off_routes_agent() {
 fn claim_only_kind9_voice_marker_is_a_candidate() {
     let s = on_settings();
     assert_eq!(claim(&input(&s, "hello", OWNER)).reason, "not_voice");
-    assert_eq!(claim(&input(&s, "[video] hello", OWNER)).reason, "not_voice");
-    assert_eq!(claim(&input(&s, "say [voice] hi", OWNER)).reason, "not_voice");
+    assert_eq!(
+        claim(&input(&s, "[video] hello", OWNER)).reason,
+        "not_voice"
+    );
+    assert_eq!(
+        claim(&input(&s, "say [voice] hi", OWNER)).reason,
+        "not_voice"
+    );
     let mut other_kind = input(&s, "[voice] hello", OWNER);
     other_kind.kind = 1;
     assert_eq!(claim(&other_kind).reason, "not_voice");
@@ -177,7 +183,11 @@ fn scanner_marker_split_at_every_boundary_never_leaks() {
             let (out, task) = scan(&[&a, &b, &c]);
             assert_eq!(out, "Let me check.\n", "split at {i},{j}");
             assert!(!out.contains('<'), "split at {i},{j}");
-            assert_eq!(task.as_deref(), Some("look up the weather"), "split {i},{j}");
+            assert_eq!(
+                task.as_deref(),
+                Some("look up the weather"),
+                "split {i},{j}"
+            );
             cases += 1;
         }
     }
@@ -246,7 +256,9 @@ fn self_messages_dedupe_by_stream_and_event_id() {
     assert!(!l.note_self_message("e3", None, "cli send replay"));
     let texts: Vec<&str> = l.entries().map(|e| e.text.as_str()).collect();
     assert_eq!(texts, vec!["agent streamed answer", "cli send"]);
-    assert!(l.entries().all(|e| e.digested && e.speaker == Speaker::Agent));
+    assert!(l
+        .entries()
+        .all(|e| e.digested && e.speaker == Speaker::Agent));
 }
 
 #[test]
@@ -266,7 +278,10 @@ fn render_context_carries_lines_ack_and_task_then_commits() {
         ack: "Let me check.".into(),
         task: "check the calendar for tomorrow".into(),
     });
-    assert_eq!(l.agent_status, AgentStatus::Working("check the calendar for tomorrow".into()));
+    assert_eq!(
+        l.agent_status,
+        AgentStatus::Working("check the calendar for tomorrow".into())
+    );
 
     let r = l.render_context(&["u2".to_string()]).expect("context");
     assert_eq!(
@@ -301,7 +316,12 @@ fn render_context_none_when_nothing_undigested() {
 fn render_context_caps_lines() {
     let mut l = CallLedger::new(Instant::now());
     for i in 0..40 {
-        l.push_owner(&format!("{i:03} {}", "x".repeat(200)), None, EntrySource::Fast, false);
+        l.push_owner(
+            &format!("{i:03} {}", "x".repeat(200)),
+            None,
+            EntrySource::Fast,
+            false,
+        );
     }
     let r = l.render_context(&[]).expect("ctx");
     assert!(r.text.contains("(earlier lines omitted)"));
@@ -345,7 +365,11 @@ fn history_caps_turns_and_chars_and_merges_speakers() {
         ]
     );
     let h3 = l.history_messages(current, 12, 5);
-    assert_eq!(h3, Vec::<(Speaker, String)>::new(), "agent-first is trimmed");
+    assert_eq!(
+        h3,
+        Vec::<(Speaker, String)>::new(),
+        "agent-first is trimmed"
+    );
     let h4 = l.history_messages(current, 12, 4);
     assert_eq!(h4, Vec::<(Speaker, String)>::new());
 }
@@ -401,7 +425,9 @@ fn request_has_stable_prefix_history_and_call_state() {
     let msgs = body["messages"].as_array().expect("messages");
     assert_eq!(msgs.len(), 4);
     let system = msgs[0]["content"].as_str().expect("system");
-    assert!(system.starts_with("I am Kaiya.\n\n[Agent Memory — core]\nlikes tea\n\n[Voice Fast Rules]"));
+    assert!(
+        system.starts_with("I am Kaiya.\n\n[Agent Memory — core]\nlikes tea\n\n[Voice Fast Rules]")
+    );
     assert_eq!(msgs[1]["role"], "user");
     assert_eq!(msgs[2]["role"], "assistant");
     assert_eq!(msgs[3]["content"], "what now\n\n[call state: agent idle]");
@@ -434,7 +460,10 @@ fn request_omits_reasoning_when_configured() {
 fn helpers_strip_marker_and_derive_stream_id() {
     assert_eq!(strip_voice_marker("[voice] hello there "), "hello there");
     assert_eq!(fast_stream_id("0123456789abcdef0123"), "vf-0123456789ab");
-    assert_eq!(normalize_transcript("Hey, want to  do it?"), "hey want to do it");
+    assert_eq!(
+        normalize_transcript("Hey, want to  do it?"),
+        "hey want to do it"
+    );
     assert!(!usable_core_section(&format!(
         "[Agent Memory — core]\n{}",
         crate::engram_fetch::ONBOARDING_NUDGE

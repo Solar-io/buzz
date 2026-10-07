@@ -68,8 +68,7 @@ pub fn finish() -> Vec<(Duration, String)> {
 
 /// A full streamed reply of `chunks`, `gap` apart, properly finished.
 pub fn reply(chunks: &[&str], gap: Duration) -> Script {
-    let mut items: Vec<(Duration, String)> =
-        chunks.iter().map(|c| (gap, text_delta(c))).collect();
+    let mut items: Vec<(Duration, String)> = chunks.iter().map(|c| (gap, text_delta(c))).collect();
     items.extend(finish());
     Script::Stream(items)
 }

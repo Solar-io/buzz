@@ -89,6 +89,7 @@ pub fn fast_stream_id(trigger_id_hex: &str) -> String {
 /// Transcript normalization for comparing two renderings of one utterance
 /// (Phase 3 draft adoption): lowercase, punctuation dropped, whitespace
 /// collapsed.
+#[cfg_attr(not(test), allow(dead_code))]
 pub fn normalize_transcript(text: &str) -> String {
     let mapped: String = text
         .chars()
@@ -309,11 +310,6 @@ impl HandoffScanner {
         out
     }
 
-    /// Whether the marker has opened (the reply is a handoff).
-    pub fn handoff_seen(&self) -> bool {
-        self.in_marker
-    }
-
     /// Whether the marker has closed — nothing more will be spoken, so the
     /// caller may stop generation.
     pub fn is_closed(&self) -> bool {
@@ -450,6 +446,7 @@ impl CallLedger {
     }
 
     /// All entries, oldest first.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn entries(&self) -> impl Iterator<Item = &TranscriptEntry> {
         self.entries.iter()
     }
@@ -629,7 +626,7 @@ impl CallLedger {
         let notes: Vec<&HandoffNote> = self
             .handoffs
             .iter()
-            .filter(|n| trigger_ids.iter().any(|id| *id == n.trigger_id))
+            .filter(|n| trigger_ids.contains(&n.trigger_id))
             .collect();
         if undigested.is_empty() && notes.is_empty() {
             return None;
@@ -697,7 +694,8 @@ impl CallLedger {
         for entry in self.entries.iter_mut().filter(|e| e.seq <= watermark) {
             entry.digested = true;
         }
-        self.handoffs.retain(|n| !handoff_ids.contains(&n.trigger_id));
+        self.handoffs
+            .retain(|n| !handoff_ids.contains(&n.trigger_id));
     }
 }
 
@@ -737,6 +735,7 @@ impl VoiceFastLedgers {
     }
 
     /// Whether the channel has a ledger.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn contains(&self, cid: Uuid) -> bool {
         self.lock().contains_key(&cid)
     }

@@ -1743,6 +1743,11 @@ pub struct FormatPromptArgs<'a> {
     /// Reply-delivery section for this turn; [`ReplyMode::Default`] adds
     /// nothing, keeping the prompt byte-identical to the pre-streaming one.
     pub reply_mode: ReplyMode,
+    /// Rendered `[Voice Fast Context]` (voice fast lane, spec §3.6): what the
+    /// fast voice said in this call, and the handoff this turn answers.
+    /// Placed after the event section, before the reply-mode section.
+    /// `None` keeps the prompt byte-identical.
+    pub voice_fast_context: Option<&'a str>,
 }
 
 /// The prompt sections that do not change for the life of a session: base
@@ -2053,6 +2058,11 @@ pub fn format_prompt(batch: &FlushBatch, args: &FormatPromptArgs<'_>) -> Vec<Str
     // 4c. Closing note for cancel + re-prompt.
     if has_cancelled {
         sections.push(framing.closing_note.to_string());
+    }
+
+    // 4c'. Voice fast lane context — what the fast voice already said.
+    if let Some(context) = args.voice_fast_context.filter(|c| !c.trim().is_empty()) {
+        sections.push(context.to_string());
     }
 
     // 4d. Reply-delivery section — last, closest to generation, so it wins
