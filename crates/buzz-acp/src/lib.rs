@@ -11238,3 +11238,7 @@ mod observer_payload_trim_tests {
 #[cfg(test)]
 #[path = "voice_fast_intake_tests.rs"]
 mod voice_fast_intake_tests;
+
+#[cfg(test)]
+#[path = "voice_fast_eval_tests.rs"]
+mod voice_fast_eval_tests;

@@ -25,7 +25,7 @@ use uuid::Uuid;
 
 use crate::relay::RestClient;
 use crate::voice_fast::{
-    build_fast_request, claim, fast_stream_id, is_candidate, strip_voice_marker,
+    build_fast_request, claim, fast_stream_id, is_candidate, resolve_handoff, strip_voice_marker,
     usable_core_section, CircuitBreaker, ClaimInput, EntrySource, FastPromptParts, HandoffNote,
     HandoffScanner, Route, VoiceFastLedgers, LOG_TARGET,
 };
@@ -744,7 +744,7 @@ impl VoiceFastRuntime {
                     &event,
                     &prompt_tag,
                     user_seq,
-                    task,
+                    resolve_handoff(&report.text, task, &utterance),
                     report,
                     gate.published(),
                     started,

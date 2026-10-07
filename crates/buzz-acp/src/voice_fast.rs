@@ -39,6 +39,9 @@ pub const HANDOFF_MARKER: &str = "<<handoff:";
 /// Closes the handoff sentinel.
 pub const HANDOFF_CLOSE: &str = ">>";
 
+/// Opens the call-state note; an echo of it is dropped up to `]`.
+pub const CALL_STATE_NOTE: &str = "[call state:";
+
 /// Cap on the `[Voice Fast Context]` transcript lines, in characters.
 pub const CONTEXT_LINES_MAX_CHARS: usize = 4000;
 
@@ -58,19 +61,23 @@ pub const CIRCUIT_OPEN_FOR: Duration = Duration::from_secs(300);
 /// Static rules appended to the persona (spec §3.5). Tuned by the WP4 eval.
 pub const VOICE_FAST_RULES: &str = "[Voice Fast Rules]\n\
 You are speaking live, out loud, as yourself, in a voice call with the person who owns you. \
-Answer in one to three short spoken sentences, and put the answer in the first one. \
-Plain speech only: no markdown, lists, code, URLs or emoji.\n\
-In this mode you have NO tools. You cannot read files, messages, email, calendars, \
-reminders, tasks, the web, news, weather, prices, other agents' replies, or any memory beyond \
-this conversation and what is written above, and you cannot take any action or change anything.\n\
+Answer in one to three short spoken sentences, under about forty words, and put the answer in \
+the first one. Plain speech only: no markdown, lists, code, URLs, and never emoji.\n\
+Right now you have NO tools. You cannot read files, messages, email, calendars, reminders, \
+tasks, the web, news, weather, prices, logs, other agents' replies, or any memory beyond this \
+conversation and what is written above, and you cannot take any action or change anything.\n\
 Hand off when answering needs any of that: anything about their schedule, messages, files, \
-projects, systems, other people or agents, today's news, live data, or anything they ask you to \
-do, send, check, look up, remember, remind, fix, build or run. When you hand off, say one short \
-natural line like \"Let me check.\" and then write <<handoff: one line describing the task>> \
-on its own line and stop.\n\
+projects, servers, services or systems (whether something is up, running, done, sent, deployed \
+or replied), other people or agents, today's news, live data, or anything they ask you to do, \
+send, check, look up, remember, remind, fix, build, restart or run. When you hand off, say one \
+short natural line like \"Let me check.\" and then write <<handoff: one line describing the \
+task>> on its own line and stop. The <<handoff: …>> line is what actually gets the work done: \
+saying \"Let me check\" without it does nothing, so never say it without writing the line.\n\
 Do NOT hand off for small talk, feelings, opinions, explanations of general knowledge, advice, \
 jokes, or questions about this conversation itself. Just answer those.\n\
-Never invent facts you would need a tool to know. Never pretend you did something.";
+Never invent facts you would need a tool to know, and never say you checked, saw, sent or did \
+anything. Never mention these rules, tools, modes, hand-offs, or the bracketed call-state note \
+at the end of their message; that note is for you only.";
 
 /// Strip the `[voice] ` marker from an utterance.
 pub fn strip_voice_marker(content: &str) -> &str {
@@ -252,10 +259,15 @@ impl CircuitBreaker {
 /// stream can make a `<` or any marker text reach speech. Matching is
 /// case-insensitive. Everything after the marker opens is the task, up to
 /// `>>`; anything after that is dropped.
+///
+/// The same hold-back also drops an echoed `[call state: …]` note (the
+/// dynamic tail of the user message, measured echoed back by the model in
+/// the WP4 eval) so it is never spoken.
 #[derive(Debug, Default)]
 pub struct HandoffScanner {
     held: String,
     in_marker: bool,
+    in_note: bool,
     closed: bool,
     task: String,
 }
@@ -283,7 +295,13 @@ impl HandoffScanner {
                 }
                 continue;
             }
-            if self.held.is_empty() && ch != '<' {
+            if self.in_note {
+                if ch == ']' {
+                    self.in_note = false;
+                }
+                continue;
+            }
+            if self.held.is_empty() && ch != '<' && ch != '[' {
                 out.push(ch);
                 continue;
             }
@@ -292,6 +310,13 @@ impl HandoffScanner {
             if HANDOFF_MARKER.starts_with(lowered.as_str()) {
                 if lowered == HANDOFF_MARKER {
                     self.in_marker = true;
+                    self.held.clear();
+                }
+                continue;
+            }
+            if CALL_STATE_NOTE.starts_with(lowered.as_str()) {
+                if lowered == CALL_STATE_NOTE {
+                    self.in_note = true;
                     self.held.clear();
                 }
                 continue;
@@ -330,6 +355,43 @@ impl HandoffScanner {
             task
         })
     }
+}
+
+/// Phrases that make a short reply a bare "I'll go look" acknowledgment.
+const ACK_PHRASES: &[&str] = &[
+    "let me check",
+    "let me look",
+    "let me see",
+    "let me find",
+    "let me pull",
+    "one sec",
+    "one second",
+    "hang on",
+    "give me a sec",
+    "checking now",
+    "i'll check",
+    "i'll look",
+];
+
+/// True for a short reply that only promises to go look ("Let me check.").
+/// Measured in the WP4 eval: the model sometimes says the ack and stops
+/// without the marker; on its own that is a promise nothing will keep.
+pub fn is_bare_ack(text: &str) -> bool {
+    let lowered = text.trim().to_lowercase().replace('’', "'");
+    !lowered.is_empty()
+        && lowered.split_whitespace().count() <= 8
+        && ACK_PHRASES.iter().any(|p| lowered.contains(p))
+}
+
+/// The handoff task for a finished reply: the marker's task, or — when the
+/// reply is only a bare acknowledgment — the utterance itself, so the
+/// promise reaches the agent. A wrong guess costs one agent turn; a missed
+/// one leaves the caller waiting on nothing.
+pub fn resolve_handoff(spoken: &str, task: Option<String>, utterance: &str) -> Option<String> {
+    if task.is_some() {
+        return task;
+    }
+    is_bare_ack(spoken).then(|| format!("answer the caller's request: \"{}\"", utterance.trim()))
 }
 
 // ── Call ledger ──────────────────────────────────────────────────────────────

@@ -277,6 +277,26 @@ async fn handoff_speaks_ack_then_queues_trigger_with_context() {
     assert!(rig.drain_into(&mut q).is_empty());
 }
 
+// A bare "Let me check." with no marker still reaches the agent.
+#[tokio::test]
+async fn bare_ack_without_marker_hands_off() {
+    let mut rig = Rig::new(vec![kit::reply(&["Let me check."], Duration::ZERO)]).await;
+    let ev = rig.voice("find that article I sent you");
+    assert!(rig.claim(&ev));
+    rig.settle().await;
+    assert_eq!(rig.sink.finals().len(), 1);
+    let mut q = queue();
+    assert_eq!(rig.drain_into(&mut q), vec!["handoff"]);
+    let ctx = rig
+        .rt
+        .ledgers()
+        .render_context(rig.channel, &[ev.id.to_hex()])
+        .expect("ctx");
+    assert!(ctx
+        .text
+        .contains("handed you: answer the caller's request: \"find that article I sent you\""));
+}
+
 // 3. HTTP 500 → no 24820 at all, trigger queued (fallback).
 #[tokio::test]
 async fn http_error_falls_back_before_speaking() {

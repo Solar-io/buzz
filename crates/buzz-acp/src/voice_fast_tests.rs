@@ -228,10 +228,49 @@ fn scanner_unclosed_marker_still_hands_off() {
 }
 
 #[test]
+fn scanner_drops_echoed_call_state_note_at_any_split() {
+    let full = "Any time. [call state: agent idle] Bye.";
+    let chars: Vec<char> = full.chars().collect();
+    for i in 0..=chars.len() {
+        let a: String = chars[..i].iter().collect();
+        let b: String = chars[i..].iter().collect();
+        let (out, task) = scan(&[&a, &b]);
+        assert_eq!(out, "Any time.  Bye.", "split at {i}");
+        assert_eq!(task, None);
+    }
+}
+
+#[test]
+fn scanner_releases_other_brackets() {
+    let (out, _) = scan(&["[laughs] okay, [c", "all me] later"]);
+    assert_eq!(out, "[laughs] okay, [call me] later");
+}
+
+#[test]
 fn scanner_handles_extra_lt_before_marker() {
     let (out, task) = scan(&["x <<<handoff: t>>"]);
     assert_eq!(out, "x <");
     assert_eq!(task.as_deref(), Some("t"));
+}
+
+#[test]
+fn bare_ack_without_marker_becomes_a_handoff() {
+    assert!(is_bare_ack("Let me check."));
+    assert!(is_bare_ack("  One sec, I’ll look. "));
+    assert!(!is_bare_ack(""));
+    assert!(!is_bare_ack("Pasta would be easy tonight."));
+    assert!(!is_bare_ack(
+        "Let me check my notes on that, though honestly I think it was probably fine either way."
+    ));
+    assert_eq!(
+        resolve_handoff("Let me check.", None, " find the article "),
+        Some("answer the caller's request: \"find the article\"".to_string())
+    );
+    assert_eq!(
+        resolve_handoff("Let me check.", Some("t".into()), "x"),
+        Some("t".to_string())
+    );
+    assert_eq!(resolve_handoff("Sure, pasta.", None, "x"), None);
 }
 
 // ── ledger ───────────────────────────────────────────────────────────────────

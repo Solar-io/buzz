@@ -1,0 +1,37 @@
+{
+  "note": "Voice fast lane handoff eval (VOICE_FAST_PATH_2026-10-07 §9 AC4). 15 utterances that need tools (expect handoff) and 15 conversational ones (expect a direct answer). Pass: handoff recall >= 14/15 and false handoffs <= 2/15.",
+  "needs_tools": [
+    "Did Gilfoyle reply to my message yet?",
+    "What's on my calendar tomorrow?",
+    "Deploy the web build to dev.",
+    "Can you check my email for anything from the bank?",
+    "Remind me to call my mom at six.",
+    "What's the weather going to be like this afternoon?",
+    "How much did we spend on OmniRoute this week?",
+    "Send Richard a note saying the demo moved to Friday.",
+    "Is the relay up right now?",
+    "What did I say about the kitchen remodel last week?",
+    "Look up the price of a Mac Studio.",
+    "Add milk and eggs to my shopping list.",
+    "Can you restart the STT bridge?",
+    "What were the last three things Evie posted?",
+    "Find that article about voice latency I sent you yesterday."
+  ],
+  "conversation": [
+    "Hey, how's it going?",
+    "What should I cook tonight if I have chicken and rice?",
+    "Tell me a quick joke.",
+    "Why is the sky blue?",
+    "I'm feeling kind of tired today.",
+    "What do you think about working from a coffee shop?",
+    "Can you explain what a vector database is in one sentence?",
+    "Give me a good name for a golden retriever.",
+    "What's a polite way to decline a meeting?",
+    "Okay, that makes sense, thanks.",
+    "How many minutes are in a day?",
+    "What's your favorite season?",
+    "Should I go for a run or a walk?",
+    "Say that again but shorter.",
+    "What's a fun thing to do on a rainy Sunday?"
+  ]
+}
