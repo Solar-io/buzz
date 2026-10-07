@@ -73,8 +73,13 @@ send, check, look up, remember, remind, fix, build, restart or run. When you han
 short natural line like \"Let me check.\" and then write <<handoff: one line describing the \
 task>> on its own line and stop. The <<handoff: …>> line is what actually gets the work done: \
 saying \"Let me check\" without it does nothing, so never say it without writing the line.\n\
+Memory is never yours to answer here. Any question about earlier conversations, what they said, \
+asked, told you, decided, sent or did before (yesterday, last week, ever), their plans, schedule, \
+appointments or commitments, or anything you would have to remember or look up, is ALWAYS a \
+hand-off, even when you think you do not know. Never answer \"I don't remember\", \"you never told \
+me\" or \"I don't have that\": hand off instead, so your full self can look.\n\
 Do NOT hand off for small talk, feelings, opinions, explanations of general knowledge, advice, \
-jokes, or questions about this conversation itself. Just answer those.\n\
+jokes, or something said earlier in THIS call (it is written above). Just answer those.\n\
 Never invent facts you would need a tool to know, and never say you checked, saw, sent or did \
 anything. Never mention these rules, tools, modes, hand-offs, or the bracketed call-state note \
 at the end of their message; that note is for you only.";
@@ -378,20 +383,57 @@ const ACK_PHRASES: &[&str] = &[
 /// without the marker; on its own that is a promise nothing will keep.
 pub fn is_bare_ack(text: &str) -> bool {
     let lowered = text.trim().to_lowercase().replace('’', "'");
-    !lowered.is_empty()
-        && lowered.split_whitespace().count() <= 8
-        && ACK_PHRASES.iter().any(|p| lowered.contains(p))
+    if lowered.is_empty() || lowered.split_whitespace().count() > 20 {
+        return false;
+    }
+    // The promise must be how the reply ENDS ("I can't see weather from
+    // here — let me check."), not an aside before an answer ("Let me
+    // see… Biscuit.").
+    let body = lowered.trim_end_matches(|c: char| c.is_ascii_punctuation() || c.is_whitespace());
+    let last = body.rfind(['.', '!', '?']).map_or(body, |i| &body[i + 1..]);
+    ACK_PHRASES.iter().any(|p| last.contains(p))
+}
+
+/// Phrases that mean "I can't recall that" — a memory question the fast
+/// voice answered instead of handing off (measured in the WP4 eval: "What
+/// did I say about the kitchen remodel last week?" → "I don't remember you
+/// telling me…"). Only the full agent can actually look.
+const MEMORY_DEFLECTIONS: &[&str] = &[
+    "don't remember",
+    "do not remember",
+    "can't remember",
+    "cannot remember",
+    "don't recall",
+    "do not recall",
+    "can't recall",
+    "you never told me",
+    "you didn't tell me",
+    "you never mentioned",
+    "you haven't told me",
+    "you haven't mentioned",
+    "don't have any record",
+    "no record of",
+    "can't pull that up",
+    "can't look that up",
+    "can't check that",
+];
+
+/// True when a reply deflects a memory question ("I don't remember …").
+pub fn is_memory_deflection(text: &str) -> bool {
+    let lowered = text.to_lowercase().replace('’', "'");
+    MEMORY_DEFLECTIONS.iter().any(|p| lowered.contains(p))
 }
 
 /// The handoff task for a finished reply: the marker's task, or — when the
-/// reply is only a bare acknowledgment — the utterance itself, so the
-/// promise reaches the agent. A wrong guess costs one agent turn; a missed
-/// one leaves the caller waiting on nothing.
+/// reply is only a bare acknowledgment, or a memory deflection — the
+/// utterance itself, so it reaches the agent. A wrong guess costs one agent
+/// turn; a missed one leaves the caller with a wrong or empty answer.
 pub fn resolve_handoff(spoken: &str, task: Option<String>, utterance: &str) -> Option<String> {
     if task.is_some() {
         return task;
     }
-    is_bare_ack(spoken).then(|| format!("answer the caller's request: \"{}\"", utterance.trim()))
+    (is_bare_ack(spoken) || is_memory_deflection(spoken))
+        .then(|| format!("answer the caller's request: \"{}\"", utterance.trim()))
 }
 
 // ── Call ledger ──────────────────────────────────────────────────────────────

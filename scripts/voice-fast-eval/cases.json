@@ -1,5 +1,5 @@
 {
-  "note": "Voice fast lane handoff eval (VOICE_FAST_PATH_2026-10-07 §9 AC4). 15 utterances that need tools (expect handoff) and 15 conversational ones (expect a direct answer). Pass: handoff recall >= 14/15 and false handoffs <= 2/15.",
+  "note": "Voice fast lane handoff eval (VOICE_FAST_PATH_2026-10-07 §9 AC4). 19 utterances that need tools or memory (expect handoff; 4 memory cases added after the kitchen-remodel miss) and 15 conversational ones (expect a direct answer). Pass: handoff recall >= 18/19 and false handoffs <= 2/15.",
   "needs_tools": [
     "Did Gilfoyle reply to my message yet?",
     "What's on my calendar tomorrow?",
@@ -15,7 +15,11 @@
     "Add milk and eggs to my shopping list.",
     "Can you restart the STT bridge?",
     "What were the last three things Evie posted?",
-    "Find that article about voice latency I sent you yesterday."
+    "Find that article about voice latency I sent you yesterday.",
+    "What did we decide about the trip to Denver?",
+    "Did I tell you what time my dentist appointment is?",
+    "What were my plans for this weekend?",
+    "Remind me what I said I wanted for my birthday."
   ],
   "conversation": [
     "Hey, how's it going?",

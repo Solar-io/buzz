@@ -91,7 +91,7 @@ async fn voice_fast_handoff_eval() {
     };
     let tools = list("needs_tools");
     let talk = list("conversation");
-    assert_eq!((tools.len(), talk.len()), (15, 15), "labelled set size");
+    assert_eq!((tools.len(), talk.len()), (19, 15), "labelled set size");
 
     let base = std::env::var("BUZZ_VOICE_FAST_BASE_URL")
         .unwrap_or_else(|_| "https://pilot.tailb3d4b8.ts.net:6250".to_string());
@@ -168,9 +168,10 @@ async fn voice_fast_handoff_eval() {
         );
     }
     println!(
-        "RESULT handoff_recall={recall}/15 false_handoffs={false_handoffs}/15 reasoning_chars={reasoning_total}"
+        "RESULT handoff_recall={recall}/19 false_handoffs={false_handoffs}/15 reasoning_chars={reasoning_total}"
     );
-    assert!(recall >= 14, "handoff recall {recall}/15 < 14");
+    // Same bar as the plan's 14/15 (93%), on the grown set: 18/19.
+    assert!(recall >= 18, "handoff recall {recall}/19 < 18");
     assert!(
         false_handoffs <= 2,
         "false handoffs {false_handoffs}/15 > 2"

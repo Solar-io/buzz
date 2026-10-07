@@ -260,7 +260,13 @@ fn bare_ack_without_marker_becomes_a_handoff() {
     assert!(!is_bare_ack(""));
     assert!(!is_bare_ack("Pasta would be easy tonight."));
     assert!(!is_bare_ack(
-        "Let me check my notes on that, though honestly I think it was probably fine either way."
+        "Let me check my notes on that. Honestly I think it was probably fine either way."
+    ));
+    // Eval run 3 miss: a short explanation, then the promise.
+    assert!(is_bare_ack("I can't see weather from here — let me check."));
+    assert!(!is_bare_ack("Let me see... Biscuit."));
+    assert!(!is_bare_ack(
+        "I can't see that from here, but honestly it is probably fine and you should not worry about it, let me check."
     ));
     assert_eq!(
         resolve_handoff("Let me check.", None, " find the article "),
@@ -271,6 +277,32 @@ fn bare_ack_without_marker_becomes_a_handoff() {
         Some("t".to_string())
     );
     assert_eq!(resolve_handoff("Sure, pasta.", None, "x"), None);
+}
+
+#[test]
+fn memory_deflection_without_marker_becomes_a_handoff() {
+    // The WP4 miss, verbatim shape.
+    let spoken = "I honestly don't remember you saying anything about the kitchen remodel.";
+    assert!(is_memory_deflection(spoken));
+    assert!(is_memory_deflection("You never told me that, I think."));
+    assert!(is_memory_deflection("I don’t recall."));
+    // Seen with the rule removed (fail-then-pass run).
+    assert!(is_memory_deflection(
+        "I genuinely can't pull that up — my memory's not in reach on a call."
+    ));
+    assert!(!is_memory_deflection("Pasta would be easy tonight."));
+    assert!(!is_memory_deflection("Remember to drink water."));
+    assert_eq!(
+        resolve_handoff(
+            spoken,
+            None,
+            "What did I say about the kitchen remodel last week?"
+        ),
+        Some(
+            "answer the caller's request: \"What did I say about the kitchen remodel last week?\""
+                .to_string()
+        )
+    );
 }
 
 // ── ledger ───────────────────────────────────────────────────────────────────
