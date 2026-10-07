@@ -940,6 +940,8 @@ pub struct PromptContext {
     /// the desktop keys per (agent, relay) pair, e.g. `session_config_captured`,
     /// mirroring the `managed_agent_runtime_lifecycle` frames.
     pub relay_url: String,
+    /// Resume journal (`crate::resume`); `Default` is disabled.
+    pub(crate) resume: crate::resume::ResumeJournal,
 }
 
 impl AgentPool {
@@ -2396,6 +2398,12 @@ fn send_prompt_result(
     batch: Option<FlushBatch>,
 ) {
     agent.acp.clear_steer_rx();
+    if let PromptSource::Channel(scope) = &source {
+        agent.acp.resume.turn_ended(
+            scope,
+            crate::resume::TurnEnd::from_outcome(&outcome, batch.is_some()),
+        );
+    }
     let _ = result_tx.send(PromptResult {
         agent,
         source,
@@ -3179,6 +3187,9 @@ pub async fn run_prompt_task(
         });
     }
 
+    let prompt_sections =
+        crate::resume::with_resume_note(prompt_sections, batch.as_ref(), &ctx.resume);
+
     // Slash-command pass-through sends the bare command as the first text
     // block (so connector detection fires), then each prompt section as its
     // own block. Per-section blocks let the observer size trimmer elide a
@@ -3229,6 +3240,12 @@ pub async fn run_prompt_task(
     // the main loop can cancel, interrupt, or rotate it. Heartbeats
     // (control_rx=None) take the simple await path — they are not controllable.
     //
+    // Resume journal: remember this scope's request and which session
+    // answers it, so background work the turn leaves running is attributed.
+    if let Some(b) = &batch {
+        agent.acp.resume.begin_turn(&ctx.resume, &session_id, b);
+    }
+
     let prompt_result = match control_rx {
         None => {
             // Heartbeat / non-cancellable path.
@@ -7359,6 +7376,193 @@ done"#
         );
     }
 
+    fn resume_test_agent(acp: AcpClient, scope: &SessionScope) -> OwnedAgent {
+        let mut agent = OwnedAgent {
+            index: 0,
+            acp,
+            state: SessionState::default(),
+            model_capabilities: None,
+            desired_model: None,
+            model_overridden: false,
+            desired_model_request_id: None,
+            desired_model_pending_ack: false,
+            startup_effort: None,
+            agent_name: "legacy-test-agent".into(),
+            goose_system_prompt_supported: None,
+            protocol_version: 1,
+        };
+        agent
+            .state
+            .sessions
+            .insert(scope.clone(), "live-session".into());
+        agent
+            .state
+            .deliveries
+            .insert(scope.clone(), ChannelDeliveryState::default());
+        agent
+    }
+
+    fn resume_test_batch(scope: &SessionScope, text: &str) -> FlushBatch {
+        FlushBatch {
+            channel_id: scope.channel_id(),
+            scope: scope.clone(),
+            events: vec![crate::queue::BatchEvent {
+                edit: None,
+                event: EventBuilder::new(Kind::Custom(9), text)
+                    .sign_with_keys(&Keys::generate())
+                    .unwrap(),
+                prompt_tag: "test".into(),
+                received_at: std::time::Instant::now(),
+            }],
+            cancelled_events: vec![],
+            cancel_reason: None,
+        }
+    }
+
+    // A turn that leaves an AIR async task running is journaled as background
+    // work for its scope; a later prompt that reads the task's terminal update
+    // deletes the entry (and the file).
+    #[tokio::test]
+    async fn run_prompt_task_journals_background_task_until_terminal_update() {
+        // Payloads as claude-agent-acp 0.79.0 `async-tasks.js` publishes them.
+        let script = r#"count=0
+while IFS= read -r line; do
+  count=$((count + 1))
+  if [ "$count" -eq 1 ]; then
+    printf '%s\n' '{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"live-session","update":{"sessionUpdate":"async_task_spawned","asyncTaskId":"bash-1","name":"sleep 300","taskType":"Shell","description":"sleep 300","showInTranscript":true,"canStop":true,"outputFilePath":"/tmp/bash-1.output","toolCallId":"toolu_1"}}}'
+  else
+    printf '%s\n' '{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"live-session","update":{"sessionUpdate":"async_task_state_update","asyncTaskId":"bash-1","state":"completed","outputFilePath":"/tmp/bash-1.output"}}}'
+  fi
+  printf '%s\n' "{\"jsonrpc\":\"2.0\",\"id\":$((count - 1)),\"result\":{\"stopReason\":\"end_turn\"}}"
+done"#;
+        let acp = AcpClient::spawn("bash", &["-c".to_string(), script.to_string()], &[], false)
+            .await
+            .expect("spawn async-task ACP script");
+        let scope = conv(Uuid::new_v4());
+        let mut agent = resume_test_agent(acp, &scope);
+
+        let path = std::env::temp_dir().join(format!("buzz-resume-t4-{}.json", Uuid::new_v4()));
+        let journal = crate::resume::ResumeJournal::load(Some(path.clone()));
+        let mut ctx = make_prompt_context_no_owner();
+        ctx.resume = journal.clone();
+        let ctx = Arc::new(ctx);
+        let (result_tx, mut result_rx) = mpsc::unbounded_channel();
+
+        for turn in 1..=2 {
+            run_prompt_task(
+                agent,
+                Some(resume_test_batch(&scope, &format!("turn-{turn}"))),
+                None,
+                Arc::clone(&ctx),
+                result_tx.clone(),
+                None,
+                format!("turn-{turn}"),
+                Default::default(),
+            )
+            .await;
+            let result = result_rx.recv().await.expect("prompt result");
+            assert!(matches!(
+                result.outcome,
+                PromptOutcome::Ok(StopReason::EndTurn)
+            ));
+            agent = result.agent;
+            if turn == 1 {
+                let (tasks, _, durable) = journal
+                    .snapshot(&scope)
+                    .expect("background entry for the scope");
+                assert!(durable);
+                assert_eq!(tasks.len(), 1);
+                assert_eq!(tasks[0].id, "bash-1");
+                assert_eq!(tasks[0].output_file.as_deref(), Some("/tmp/bash-1.output"));
+                assert!(path.exists(), "background work is on disk");
+            }
+        }
+        assert!(
+            journal.snapshot(&scope).is_none(),
+            "terminal update deletes the entry"
+        );
+        assert!(!path.exists(), "no outstanding work leaves no journal file");
+        agent.acp.shutdown().await;
+    }
+
+    // The resume batch's prompt, as actually sent on the wire, carries the
+    // resume framing AND the journal's list of the work that was stopped.
+    #[tokio::test]
+    async fn run_prompt_task_sends_resume_note_for_resume_batch() {
+        let capture =
+            std::env::temp_dir().join(format!("buzz-acp-resume-prompt-{}.ndjson", Uuid::new_v4()));
+        let quoted_capture = capture.to_string_lossy().replace('\'', "'\\''");
+        let script = format!(
+            r#"count=0
+while IFS= read -r line; do
+  printf '%s\n' "$line" >> '{quoted_capture}'
+  printf '%s\n' "{{\"jsonrpc\":\"2.0\",\"id\":$count,\"result\":{{\"stopReason\":\"end_turn\"}}}}"
+  count=$((count + 1))
+done"#
+        );
+        let acp = AcpClient::spawn("bash", &["-c".to_string(), script], &[], false)
+            .await
+            .expect("spawn resume ACP script");
+        let scope = conv(Uuid::new_v4());
+        let mut agent = resume_test_agent(acp, &scope);
+
+        // A previous process left a background shell running on this scope.
+        let path = std::env::temp_dir().join(format!("buzz-resume-note-{}.json", Uuid::new_v4()));
+        let now = crate::resume::now_secs();
+        {
+            let previous = crate::resume::ResumeJournal::load(Some(path.clone()));
+            previous.begin_turn(&resume_test_batch(&scope, "build the release"), now);
+            previous.task_started(
+                &scope,
+                crate::resume::BackgroundTask {
+                    id: "bash-9".into(),
+                    title: "cargo build --release".into(),
+                    output_file: Some("/tmp/bash-9.output".into()),
+                    tool_call_id: None,
+                },
+                now,
+            );
+        }
+        let journal = crate::resume::ResumeJournal::load(Some(path.clone()));
+        let resume_batch = journal.take_startup(now).pop().expect("resume batch");
+
+        let mut ctx = make_prompt_context_no_owner();
+        ctx.resume = journal.clone();
+        let (result_tx, mut result_rx) = mpsc::unbounded_channel();
+        run_prompt_task(
+            agent,
+            Some(resume_batch),
+            None,
+            Arc::new(ctx),
+            result_tx,
+            None,
+            "turn-resume".into(),
+            Default::default(),
+        )
+        .await;
+        let result = result_rx.recv().await.expect("prompt result");
+        assert!(matches!(
+            result.outcome,
+            PromptOutcome::Ok(StopReason::EndTurn)
+        ));
+        agent = result.agent;
+        agent.acp.shutdown().await;
+
+        let sent = std::fs::read_to_string(&capture).expect("captured requests");
+        std::fs::remove_file(&capture).ok();
+        assert!(sent.contains("what-you-were-working-on-before-your-session-ended"));
+        assert!(sent.contains("build the release"));
+        assert!(
+            sent.contains("cargo build --release (output: /tmp/bash-9.output)"),
+            "stopped-work note reaches the agent: {sent}"
+        );
+        assert!(
+            journal.snapshot(&scope).is_none(),
+            "a completed resume turn with no new work clears the entry"
+        );
+        assert!(!path.exists());
+    }
+
     #[tokio::test]
     async fn channel_prompt_commits_delivery_state_only_after_acp_success() {
         let capture = std::env::temp_dir().join(format!(
@@ -10546,6 +10750,7 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
             memory_enabled: false,
             harness_name: "goose".to_string(),
             relay_url: "ws://127.0.0.1:3000".to_string(),
+            resume: Default::default(),
         }
     }
 

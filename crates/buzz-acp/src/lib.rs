@@ -18,6 +18,7 @@ mod prompt_project;
 mod queue;
 mod recovery_wake;
 mod relay;
+mod resume;
 mod run_task;
 mod runtime;
 use runtime::{AgentRuntime, PoolStartup, SessionMode};
@@ -3037,6 +3038,17 @@ async fn run_harness(
     let dedup_mode = config.dedup_mode;
     let mut queue =
         EventQueue::new(dedup_mode).with_in_flight_deadline(config.max_turn_duration_secs);
+    // Turns whose session died with background work outstanding (previous
+    // process): one resume batch each, spread by per-agent jitter.
+    queue.load_resume(
+        resume::path_for_agent(
+            config.resume_enabled,
+            config.resume_file.as_deref(),
+            &pubkey_hex,
+        ),
+        resume::now_secs(),
+        resume::startup_jitter(&pubkey_hex),
+    );
 
     // Online means the harness can receive work, not merely that its socket is
     // connected. Publishing after channel subscriptions gives desktop callers
@@ -3059,11 +3071,13 @@ async fn run_harness(
         );
     }
 
-    let ctx = Arc::new(runtime.prompt_context(
+    let mut prompt_context = runtime.prompt_context(
         relay.rest_client(),
         channel_info_map,
         SessionMode::Conversation,
-    )?);
+    )?;
+    prompt_context.resume = queue.resume_journal();
+    let ctx = Arc::new(prompt_context);
 
     if !config.memory_enabled {
         tracing::info!(
@@ -3229,6 +3243,10 @@ async fn run_harness(
     }
 
     loop {
+        // Sessions lost with a respawned slot (the old agent client's drop
+        // marks them): queue one resume turn per scope with background work.
+        queue.deliver_lost_resumes();
+
         // Whether buffered work is waiting on a lazy pool. Also gates the
         // retry-deadline sleep arm below: a `Failed` lifecycle keeps its
         // (possibly past) `retry_at` until the next wake, so sleeping on it
@@ -3326,6 +3344,10 @@ async fn run_harness(
         // wakes on its result/respawn instead of spinning on an expired retry.
         let retry_at = if pool_ready && pool.any_idle() {
             queue.next_retry_deadline()
+        } else if !pool_ready {
+            // A sleeping lazy pool must still wake for a jittered startup
+            // resume; the top of the loop then sees it as flushable work.
+            queue.next_resume_release()
         } else {
             None
         };
@@ -6030,10 +6052,21 @@ async fn shutdown_agent_pool(pool: &mut AgentPool) {
     while let Ok(mut result) = pool.result_rx_try_recv() {
         result.agent.acp.shutdown().await;
     }
-    for slot in pool.agents_mut() {
-        if let Some(mut agent) = slot.take() {
-            agent.acp.shutdown().await;
-        }
+    let mut idle: Vec<OwnedAgent> = pool
+        .agents_mut()
+        .iter_mut()
+        .filter_map(Option::take)
+        .collect();
+    // Read buffered between-turn updates first (all slots at once, 250 ms
+    // total), so a background task that finished while its slot was idle
+    // clears its resume entry instead of being resumed after the restart.
+    futures_util::future::join_all(
+        idle.iter_mut()
+            .map(|agent| agent.acp.drain_stale_responses(Duration::from_millis(250))),
+    )
+    .await;
+    for mut agent in idle {
+        agent.acp.shutdown().await;
     }
 }
 
@@ -10138,6 +10171,8 @@ mod build_mcp_servers_tests {
             agent_owner: None,
             no_base_prompt: false,
             base_prompt_content: None,
+            resume_enabled: true,
+            resume_file: None,
         }
     }
 
@@ -11236,6 +11271,8 @@ mod error_outcome_emission_tests {
             agent_owner: None,
             no_base_prompt: false,
             base_prompt_content: None,
+            resume_enabled: true,
+            resume_file: None,
         }
     }
 

@@ -242,6 +242,10 @@ pub struct AcpClient {
     /// finishes, so the outer channel can go quiet for a long time without
     /// the turn being hung. Reset at the start of every prompt.
     turn_has_background_subagent: bool,
+    /// Background-work bookkeeping for the resume journal (`crate::resume`):
+    /// maps this process's sessions to scopes and records every
+    /// `async_task_*` / background-subagent update read on the pipe.
+    pub(crate) resume: crate::resume::ResumeTracker,
 }
 
 /// Recursively merge `overlay` into `base`, with `overlay` winning on scalar/shape
@@ -436,7 +440,17 @@ fn build_client_capabilities() -> serde_json::Value {
             // Non-standard extension used by claude-agent-acp to advertise the
             // exact terminal login argv for subscription auth. Unknown `_meta`
             // keys are ignored by other adapters.
-            "terminal-auth": true
+            "terminal-auth": true,
+            // AIR extension (claude-agent-acp `air-extension.js`): with
+            // `asyncTasks` advertised the adapter publishes
+            // `async_task_spawned` / `async_task_state_update` for background
+            // shells and workflows, which the resume journal records.
+            "jetbrains": {
+                "air": {
+                    "version": 1,
+                    "capabilities": ["asyncTasks"]
+                }
+            }
         }
     })
 }
@@ -654,6 +668,7 @@ impl AcpClient {
             background_idle_timeout: None,
             turn_background_idle: None,
             turn_has_background_subagent: false,
+            resume: Default::default(),
         })
     }
 
@@ -1262,7 +1277,10 @@ impl AcpClient {
     ///
     /// This is a best-effort drain: it reads until the buffer is empty or
     /// `drain_timeout` elapses, whichever comes first. Errors are ignored.
-    #[allow(dead_code)] // Scaffolding for future model-switch timeout cleanup; not yet wired.
+    ///
+    /// Buffered `session/update` notifications are still handled (logged, and
+    /// fed to the resume journal), so an idle slot's terminal
+    /// `async_task_state_update` is not lost at shutdown.
     pub async fn drain_stale_responses(&mut self, drain_timeout: std::time::Duration) {
         let deadline = tokio::time::Instant::now() + drain_timeout;
         loop {
@@ -1274,9 +1292,14 @@ impl AcpClient {
             match read_result {
                 // Timeout or stream ended — buffer is empty or agent exited.
                 Err(_) | Ok(None) => break,
-                Ok(Some(Ok(_))) => {
+                Ok(Some(Ok(line))) => {
                     // Consumed one buffered line; loop to drain more.
                     tracing::debug!(target: "acp::wire", "drained stale buffered line");
+                    if let Ok(msg) = serde_json::from_str::<serde_json::Value>(&line) {
+                        if msg["method"] == "session/update" {
+                            self.handle_session_update(&msg);
+                        }
+                    }
                 }
                 Ok(Some(Err(_))) => break,
             }
@@ -1886,6 +1909,7 @@ impl AcpClient {
     /// leave it `None` and are steered via `_session/steering` instead, which
     /// needs no run id.
     fn handle_session_update(&mut self, msg: &serde_json::Value) -> bool {
+        self.resume.observe(msg);
         let update = &msg["params"]["update"];
         let update_type = update
             .get("sessionUpdate")
@@ -3513,6 +3537,25 @@ mod tests {
         assert!(!launches_background_subagent(&foreground));
         let streaming = serde_json::json!({"sessionUpdate": "tool_call", "rawInput": {}});
         assert!(!launches_background_subagent(&streaming));
+    }
+
+    // Without the AIR `asyncTasks` capability claude-agent-acp never emits
+    // `async_task_*` updates, so the resume journal could not see background
+    // work.
+    #[test]
+    fn client_capabilities_advertise_air_async_tasks() {
+        let caps = build_client_capabilities();
+        let air = &caps["_meta"]["jetbrains"]["air"];
+        assert_eq!(air["version"], 1);
+        assert!(
+            air["capabilities"]
+                .as_array()
+                .is_some_and(|c| c.iter().any(|v| v == "asyncTasks")),
+            "asyncTasks must be advertised: {air}"
+        );
+        // Existing extensions are untouched.
+        assert_eq!(caps["_meta"]["terminal-auth"], true);
+        assert_eq!(caps["_meta"]["goose"]["customNotifications"], true);
     }
 
     #[tokio::test]

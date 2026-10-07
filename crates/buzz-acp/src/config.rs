@@ -551,6 +551,16 @@ pub struct CliArgs {
     /// ignored (the watermark stays at startup time).
     #[arg(long, env = "BUZZ_ACP_REPLAY_FLOOR")]
     pub replay_floor: Option<u64>,
+
+    /// Disable the resume journal: turns whose session dies with background
+    /// work outstanding are not re-delivered after a respawn or restart.
+    #[arg(long, env = "BUZZ_ACP_NO_RESUME")]
+    pub no_resume: bool,
+
+    /// Path of this agent's resume journal. Defaults to
+    /// `~/.config/buzz-acp/resume/<pubkey>.json`.
+    #[arg(long, env = "BUZZ_ACP_RESUME_FILE")]
+    pub resume_file: Option<PathBuf>,
 }
 
 /// Merged NIP-01 subscription filter for a single channel.
@@ -659,6 +669,12 @@ pub struct Config {
     /// `from_cli()`. `None` when using the compiled-in default or when
     /// `--no-base-prompt` is set.
     pub base_prompt_content: Option<String>,
+    /// Whether the resume journal is on (`--no-resume` /
+    /// `BUZZ_ACP_NO_RESUME` turns it off).
+    pub resume_enabled: bool,
+    /// Explicit resume journal path (`--resume-file` /
+    /// `BUZZ_ACP_RESUME_FILE`); `None` = the default under the home dir.
+    pub resume_file: Option<PathBuf>,
 }
 
 /// Maximum length, in characters, of a session title sent to the adapter.
@@ -1262,6 +1278,8 @@ impl Config {
             agent_owner: args.agent_owner.map(|s| s.trim().to_ascii_lowercase()),
             no_base_prompt: args.no_base_prompt,
             base_prompt_content,
+            resume_enabled: !args.no_resume,
+            resume_file: args.resume_file,
         };
 
         Ok(config)
@@ -1642,6 +1660,8 @@ mod tests {
             agent_owner: None,
             no_base_prompt: false,
             base_prompt_content: None,
+            resume_enabled: true,
+            resume_file: None,
         }
     }
 
@@ -2903,6 +2923,32 @@ channels = "ALL"
                 DEFAULT_BACKGROUND_IDLE_TIMEOUT_SECS
             );
         }
+    }
+
+    #[test]
+    fn resume_options_reach_config() {
+        let parsed = CliArgs::parse_from([
+            "buzz-acp",
+            "--private-key",
+            TEST_PRIVATE_KEY,
+            "--resume-file",
+            "/tmp/resume.json",
+        ]);
+        let config = Config::from_args(parsed).expect("valid config");
+        assert_eq!(
+            config.resume_file.as_deref(),
+            Some(std::path::Path::new("/tmp/resume.json"))
+        );
+        if std::env::var_os("BUZZ_ACP_NO_RESUME").is_none() {
+            assert!(config.resume_enabled, "the journal is on by default");
+        }
+        let disabled =
+            CliArgs::parse_from(["buzz-acp", "--private-key", TEST_PRIVATE_KEY, "--no-resume"]);
+        assert!(
+            !Config::from_args(disabled)
+                .expect("valid config")
+                .resume_enabled
+        );
     }
 
     #[test]
