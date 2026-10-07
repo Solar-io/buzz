@@ -288,3 +288,5 @@ Deviations from the plan: the warm-up request is not built (the ledger is create
 Live: probe 465 ms first text, `reasoning_chars=0`; eval with Kaiya's persona 15/15 recall, 0/15 false handoffs on the last two runs (first run 14/15 with a hallucinated "I just checked the relay"). Re-run with `scripts/voice-fast-eval/run.sh <persona-file>`.
 
 Web: `voiceLatency` records `tSpeechEnd` and `path: "fast"`; prefs `output` with a Speakers/Headphones toggle in the huddle settings popover; `echoTailMs`; `MERGE_MS` 300; `lib/floorGate.ts`; `lib/pttCommit.ts`. Not unit-covered: the WebSocket wiring of the PTT commit inside `useHuddleVoiceMode` (no socket harness exists); it needs the live check in WP7.
+
+Follow-up (tester: recall sat exactly on the bar, kitchen-remodel miss): the rules now send every memory/past-conversation/plans/schedule question to the agent, a memory-deflection safety net catches "I don't remember…" replies, and the bare-ack net reads the last sentence. Eval grew to 19+15; three runs 19/19, 0/15 false. Removing the rule and net brought the kitchen-remodel miss back.
