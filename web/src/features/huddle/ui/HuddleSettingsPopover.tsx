@@ -18,7 +18,11 @@ import { cn } from "@/shared/lib/cn";
 import { Button } from "@/shared/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/shared/ui/popover";
 
-import type { HuddleDuplexMode, HuddlePrefs } from "../lib/huddlePrefs.ts";
+import type {
+  HuddleDuplexMode,
+  HuddleOutputMode,
+  HuddlePrefs,
+} from "../lib/huddlePrefs.ts";
 
 /**
  * The gear: this channel's voice and its duplex discipline.
@@ -208,6 +212,51 @@ export function HuddleSettingsPopover({
                   data-testid={`huddle-duplex-${choice.mode}`}
                   key={choice.mode}
                   onClick={() => onChange({ ...prefs, duplex: choice.mode })}
+                  type="button"
+                >
+                  <span className="block text-xs font-medium">
+                    {choice.title}
+                  </span>
+                  <span className="block text-2xs text-muted-foreground">
+                    {choice.note}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </section>
+
+        <section
+          aria-label="Audio output"
+          className="space-y-2 border-t border-border pt-3"
+        >
+          <h3 className="text-xs font-medium">Listening on</h3>
+          <div className="flex gap-1" data-testid="huddle-output">
+            {[
+              {
+                mode: "speakers" as HuddleOutputMode,
+                title: "Speakers",
+                note: "Waits out her echo before listening.",
+              },
+              {
+                mode: "headphones" as HuddleOutputMode,
+                title: "Headphones",
+                note: "Listens again almost at once.",
+              },
+            ].map((choice) => {
+              const active = (prefs.output ?? "speakers") === choice.mode;
+              return (
+                <button
+                  aria-pressed={active}
+                  className={cn(
+                    "flex-1 rounded-md border px-2 py-1.5 text-left",
+                    active
+                      ? "border-emerald-600/50 bg-emerald-600/10"
+                      : "border-border hover:bg-accent",
+                  )}
+                  data-testid={`huddle-output-${choice.mode}`}
+                  key={choice.mode}
+                  onClick={() => onChange({ ...prefs, output: choice.mode })}
                   type="button"
                 >
                   <span className="block text-xs font-medium">

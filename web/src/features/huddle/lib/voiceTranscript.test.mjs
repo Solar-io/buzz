@@ -5,6 +5,7 @@ import {
   ECHO_OVERLAP_RATIO,
   ECHO_SUBSTRING_MIN_CHARS,
   ECHO_TAIL_MS,
+  echoTailMs,
   gateFinalTranscript,
   gateVoiceMentions,
   isEchoOfUtterances,
@@ -576,4 +577,40 @@ test("waitForRosterInclusion clips the last step to the remaining budget", async
   assert.equal(included, false);
   // 250 + 50: the last step is clipped to the remaining budget.
   assert.equal(slept, 300);
+});
+
+test("echo tail follows the output/duplex profile (hardcoded values)", () => {
+  assert.equal(echoTailMs("speakers", "half"), 700);
+  assert.equal(echoTailMs("speakers", "barge"), 1500);
+  assert.equal(echoTailMs("headphones", "half"), 150);
+  assert.equal(echoTailMs("headphones", "barge"), 150);
+  // Prefs written before the toggle existed read as speakers.
+  assert.equal(echoTailMs(undefined, "half"), 700);
+  assert.equal(echoTailMs(undefined, undefined), 700);
+});
+
+test("the hold and the drain window take the profile's tail", () => {
+  // A quick reply 800 ms after she stopped: held at the old 1.5 s tail,
+  // published at the half-duplex speakers tail.
+  assert.equal(shouldHoldFinal(false, 800), true);
+  assert.equal(shouldHoldFinal(false, 800, 700), false);
+  assert.equal(shouldHoldFinal(false, 699, 700), true);
+  assert.equal(shouldHoldFinal(false, 200, 150), false);
+  assert.equal(shouldHoldFinal(true, 10_000, 150), true);
+  const ring = [
+    { text: "early", at: 1_000 },
+    { text: "late", at: 1_800 },
+  ];
+  assert.deepEqual(
+    utterancesForHold(ring, 2_000, 150).map((u) => u.text),
+    [],
+  );
+  assert.deepEqual(
+    utterancesForHold(ring, 2_000, 700).map((u) => u.text),
+    ["late"],
+  );
+  assert.deepEqual(
+    utterancesForHold(ring, 2_000).map((u) => u.text),
+    ["early", "late"],
+  );
 });

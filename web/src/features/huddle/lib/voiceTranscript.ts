@@ -184,6 +184,33 @@ export function nextVoiceStatus(
 export const ECHO_TAIL_MS = 1500;
 
 /**
+ * The full tail, kept for barge-in on speakers: the mic is hot while she
+ * talks, so the room hears all of her and the long window is earned.
+ */
+export const ECHO_TAIL_MS_BARGE = ECHO_TAIL_MS;
+/**
+ * Half-duplex on speakers (voice fast path plan §4.1): the mic is parked
+ * while she speaks, so only the room tail plus the output pipeline can
+ * echo — and a 1.5 s parked mic swallowed quick replies.
+ */
+export const ECHO_TAIL_SPEAKERS_MS = 700;
+/** Headphones: the mic cannot hear her; a sliver covers device latency. */
+export const ECHO_TAIL_HEADPHONES_MS = 150;
+
+/**
+ * The echo tail for this call's output and duplex mode. A mis-set toggle
+ * degrades to "an echo is dropped by similarity" (Layer 2 is unchanged),
+ * never to a feedback loop.
+ */
+export function echoTailMs(
+  output: "speakers" | "headphones" | undefined,
+  duplex: "half" | "barge" | undefined,
+): number {
+  if (output === "headphones") return ECHO_TAIL_HEADPHONES_MS;
+  return duplex === "barge" ? ECHO_TAIL_MS_BARGE : ECHO_TAIL_SPEAKERS_MS;
+}
+
+/**
  * Token-overlap ratio (Jaccard on word sets) at which a held final counts
  * as an echo of an utterance. 0.6 admits one garbled or inserted word in
  * an otherwise verbatim replay while keeping disjoint speech disjoint.
@@ -317,8 +344,9 @@ export function isEchoOfUtterances(
 export function shouldHoldFinal(
   speaking: boolean,
   msSinceSpoke: number,
+  tailMs: number = ECHO_TAIL_MS,
 ): boolean {
-  return speaking || msSinceSpoke < ECHO_TAIL_MS;
+  return speaking || msSinceSpoke < tailMs;
 }
 
 /**
@@ -348,8 +376,9 @@ export function recordUtterance(
 export function utterancesForHold(
   utterances: readonly RecentUtterance[],
   holdStartedAt: number,
+  tailMs: number = ECHO_TAIL_MS,
 ): RecentUtterance[] {
-  const cutoff = holdStartedAt - ECHO_TAIL_MS;
+  const cutoff = holdStartedAt - tailMs;
   return utterances.filter((entry) => entry.at >= cutoff);
 }
 

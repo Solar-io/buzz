@@ -27,7 +27,18 @@
  * unprompted is not a latency sample.
  */
 
-export type VoiceReplyPath = "stream" | "final";
+/**
+ * `fast` is a stream from the harness voice fast lane (stream id `vf-…`,
+ * plan VOICE_FAST_PATH_2026-10-07 §5) — kept apart so its latency can be
+ * compared with the agent path.
+ */
+export type VoiceReplyPath = "stream" | "fast" | "final";
+
+/** Stream-id prefix of voice fast lane replies. */
+export const FAST_STREAM_PREFIX = "vf-";
+
+/** A speech-end mark older than this before t0 belongs to an earlier turn. */
+export const SPEECH_END_LOOKBACK_MS = 30_000;
 
 export interface VoiceLatencyRecord {
   channelId: string;
@@ -36,6 +47,14 @@ export interface VoiceLatencyRecord {
   /** Lowercase pubkey of the agent whose reply paired, once one did. */
   agentPubkey: string | null;
   t0: number;
+  /**
+   * End of the caller's speech for this turn, on the same clock: the last
+   * local mic sample that read speaking before t0, or the push-to-talk
+   * release. The acceptance metric for the fast path is
+   * `tAudio0 - tSpeechEnd`. Null when nothing was noted (another person
+   * spoke, or the mic meter never fired).
+   */
+  tSpeechEnd: number | null;
   tSeg0: number | null;
   tTts0: number | null;
   tAudio0: number | null;
@@ -51,6 +70,12 @@ export interface VoiceLatencyReply {
 }
 
 export interface VoiceLatencyRecorder {
+  /**
+   * The local caller is speaking (a mic-meter sample), or just released
+   * push-to-talk, in `channelId`. The latest mark before a turn's t0
+   * becomes its `tSpeechEnd`.
+   */
+  noteSpeech(channelId: string): void;
   /** A `[voice]` message was observed in `channelId`. */
   voiceTurn(channelId: string, eventId: string): void;
   /**
@@ -62,6 +87,7 @@ export interface VoiceLatencyRecorder {
     agentPubkey: string,
     path: VoiceReplyPath,
     triggerId?: string | null,
+    streamId?: string | null,
   ): VoiceLatencyReply | null;
   /** The ring, oldest first (the same array `window.__buzzVoiceLatency` holds). */
   records(): readonly VoiceLatencyRecord[];
@@ -100,19 +126,38 @@ export function createVoiceLatencyRecorder(
   /** Unclaimed turns, oldest first. */
   const open: VoiceLatencyRecord[] = [];
 
+  /** Latest "caller is speaking" mark per channel. */
+  const lastSpeech = new Map<string, number>();
+
   const summary = (r: VoiceLatencyRecord) =>
     `channel=${r.channelId.slice(0, 8)} trigger=${r.triggerId.slice(0, 8)} ` +
     `path=${r.path ?? "-"} seg0=${ms(r.t0, r.tSeg0)} tts0=${ms(r.t0, r.tTts0)} ` +
-    `audio0=${ms(r.t0, r.tAudio0)}`;
+    `audio0=${ms(r.t0, r.tAudio0)}` +
+    (r.tSpeechEnd === null
+      ? ""
+      : ` speech_end=-${Math.round(r.t0 - r.tSpeechEnd)}ms` +
+        ` end_to_audio0=${ms(r.tSpeechEnd, r.tAudio0)}`);
 
   return {
+    noteSpeech(channelId) {
+      lastSpeech.set(channelId, now());
+    },
     voiceTurn(channelId, eventId) {
       if (ring.some((r) => r.triggerId === eventId)) return;
+      const t0 = now();
+      const mark = lastSpeech.get(channelId);
+      const tSpeechEnd =
+        mark !== undefined && mark <= t0 && t0 - mark <= SPEECH_END_LOOKBACK_MS
+          ? mark
+          : null;
+      // One mark per turn: the next turn needs speech of its own.
+      lastSpeech.delete(channelId);
       const record: VoiceLatencyRecord = {
         channelId,
         triggerId: eventId,
         agentPubkey: null,
-        t0: now(),
+        t0,
+        tSpeechEnd,
         tSeg0: null,
         tTts0: null,
         tAudio0: null,
@@ -123,7 +168,11 @@ export function createVoiceLatencyRecorder(
       open.push(record);
       log(`[voice-latency] t0 ${summary(record)}`);
     },
-    reply(channelId, agentPubkey, path, triggerId) {
+    reply(channelId, agentPubkey, requestedPath, triggerId, streamId) {
+      const path: VoiceReplyPath =
+        requestedPath === "stream" && streamId?.startsWith(FAST_STREAM_PREFIX)
+          ? "fast"
+          : requestedPath;
       const inChannel = open.filter((r) => r.channelId === channelId);
       if (inChannel.length === 0) return null;
       const byTag =
@@ -140,7 +189,7 @@ export function createVoiceLatencyRecorder(
       }
       record.agentPubkey = agentPubkey.toLowerCase();
       record.path = path;
-      if (path === "stream") record.tSeg0 = now();
+      if (path !== "final") record.tSeg0 = now();
       log(`[voice-latency] reply ${summary(record)}`);
       return {
         ttsRequested() {

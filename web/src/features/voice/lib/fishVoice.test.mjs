@@ -114,5 +114,7 @@ test("fish override round-trips with its stored label and remains the channel wi
   assert.deepEqual(loadHuddlePrefs(store, "room"), {
     voice: { ...selection, label: "Jame" },
     duplex: "half",
+    // Saved without an output: reads back as the safe default.
+    output: "speakers",
   });
 });

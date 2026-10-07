@@ -46,6 +46,7 @@ test("t0 pairs with the next reply in the SAME call, not another call's", () => 
     triggerId: "voice-1",
     agentPubkey: "a".repeat(64),
     t0: 0,
+    tSpeechEnd: null,
     tSeg0: 1_500,
     tTts0: 1_700,
     tAudio0: 2_100,
@@ -157,4 +158,46 @@ test("the shared recorder publishes its ring on window.__buzzVoiceLatency", () =
     console.info = savedInfo;
     globalThis.window = saved;
   }
+});
+
+test("speech end: the last mark before t0 becomes tSpeechEnd; vf- streams are the fast path", () => {
+  const { c, lines, recorder } = fixture();
+  c.t = 100;
+  recorder.noteSpeech(CALL);
+  c.t = 900;
+  recorder.noteSpeech(CALL);
+  recorder.noteSpeech(OTHER_CALL);
+  c.t = 2_900;
+  recorder.voiceTurn(CALL, "voice-1");
+  c.t = 3_400;
+  const reply = recorder.reply(CALL, AGENT, "stream", null, "vf-0123456789ab");
+  c.t = 3_900;
+  reply.audioStarted();
+  const [record] = recorder.records();
+  assert.equal(record.tSpeechEnd, 900);
+  assert.equal(record.path, "fast");
+  assert.equal(record.tSeg0, 3_400);
+  assert.equal(record.tAudio0 - record.tSpeechEnd, 3_000);
+  assert.equal(
+    lines.at(-1),
+    "[voice-latency] audio0 channel=call-111 trigger=voice-1 path=fast seg0=+500ms tts0=- audio0=+1000ms speech_end=-2000ms end_to_audio0=+3000ms",
+  );
+  // The mark is consumed: the next turn without new speech has none.
+  c.t = 5_000;
+  recorder.voiceTurn(CALL, "voice-2");
+  assert.equal(recorder.records()[1].tSpeechEnd, null);
+  // An agent-path stream stays "stream".
+  assert.equal(
+    recorder.reply(CALL, AGENT, "stream", null, "turn-7") !== null,
+    true,
+  );
+  assert.equal(recorder.records()[1].path, "stream");
+});
+
+test("a speech mark older than 30 s before t0 is not this turn's end", () => {
+  const { c, recorder } = fixture();
+  recorder.noteSpeech(CALL);
+  c.t = 30_001;
+  recorder.voiceTurn(CALL, "voice-1");
+  assert.equal(recorder.records()[0].tSpeechEnd, null);
 });

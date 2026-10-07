@@ -31,7 +31,13 @@ function seg(seq, offset, content, extra = {}) {
     ["buzz-speech", extra.sid ?? SID, String(seq), String(offset)],
   ];
   if (extra.trigger) tags.push(["e", extra.trigger, "", "reply"]);
-  if (extra.done !== undefined) tags.push(["done", String(extra.done)]);
+  if (extra.done !== undefined) {
+    tags.push(
+      extra.cut
+        ? ["done", String(extra.done), "cut"]
+        : ["done", String(extra.done)],
+    );
+  }
   return {
     kind: 24820,
     pubkey: extra.pubkey ?? AGENT,
@@ -76,6 +82,7 @@ test("parse: a well-formed segment decodes seq, offset, done and e", () => {
     seq: 2,
     offset: 42,
     done: 61,
+    cut: false,
     triggerId: "f".repeat(64),
   });
   assert.equal(parseSpeechSegment({ ...seg(0, 0, "x"), kind: 9 }), null);
@@ -363,4 +370,38 @@ test("speech queue: waits for a push, drains, then resolves null once closed", a
   assert.equal(await q.next(), null);
   q.push("late");
   assert.equal(await q.next(), null, "nothing is accepted after close");
+});
+
+test("harness cut (done…cut): the stream ends, nothing more is spoken, no final tail", () => {
+  const t = tracker();
+  const first = t.onSegment(seg(0, 0, "Okay so.", { sid: "vf-abc" }));
+  assert.deepEqual(first.speak, ["Okay so."]);
+  assert.equal(first.streamId, "vf-abc");
+  assert.equal(first.cut, false);
+  const cut = t.onSegment(seg(1, 8, "", { sid: "vf-abc", done: 8, cut: true }));
+  assert.deepEqual(cut.speak, []);
+  assert.equal(cut.ended, true);
+  assert.equal(cut.cut, true);
+  assert.equal(t.hasOpenStreams(), false);
+  // A late segment or a stray final of the cut stream says nothing.
+  assert.equal(t.onSegment(seg(2, 8, " more", { sid: "vf-abc" })), null);
+  const f = t.onFinal(final("Okay so. And more.", { sid: "vf-abc" }));
+  assert.equal(f.text, null);
+  // A plain done is NOT a cut.
+  const plain = t.onSegment(seg(0, 0, "Hi.", { sid: "vf-x", done: 3 }));
+  assert.equal(plain.cut, false);
+  assert.equal(plain.ended, true);
+});
+
+test("speech queue drop: unspoken items vanish and a waiter wakes with null", async () => {
+  const q = createSpeechQueue();
+  q.push("first");
+  q.push("second");
+  assert.equal(await q.next(), "first");
+  q.drop();
+  assert.equal(await q.next(), null, "second is dropped, not spoken");
+  const q2 = createSpeechQueue();
+  const waiting = q2.next();
+  q2.drop();
+  assert.equal(await waiting, null);
 });

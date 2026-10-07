@@ -31,10 +31,12 @@ import {
 } from "./lib/huddleVoicePersistence.ts";
 import { isSpeaking } from "./lib/micMeter.ts";
 import { publishVoiceFinal } from "./lib/voicePublish.ts";
+import { FloorGate } from "./lib/floorGate.ts";
 import {
-  ECHO_TAIL_MS,
+  echoTailMs,
   shouldRestoreSpeechOnVoiceOff,
 } from "./lib/voiceTranscript.ts";
+import { voiceLatency } from "../voice/lib/voiceLatency.ts";
 import { useHuddleAgentRoster } from "./useHuddleAgentRoster";
 import { useHuddleAgentSpeech } from "./useHuddleAgentSpeech";
 import { useHuddleAudio } from "./useHuddleAudio";
@@ -193,12 +195,19 @@ function useBrowserHuddleCall(options: {
     [parentChannelId],
   );
 
+  // Floor gate (voice fast path §4.2): a reply START waits while the
+  // local caller is still talking. Fed from the mic meter below.
+  const [floorGate] = useState(() => new FloorGate());
+  // Echo tail for this call: output profile x duplex (§4.1).
+  const echoTail = echoTailMs(prefs.output, prefs.duplex);
+
   const speech = useHuddleAgentSpeech({
     channelId: connected ? channelId : null,
     selfPubkey,
     audioPeerPubkeys,
     snapshot: ephemeralMembers,
     voiceOverride: prefs.voice,
+    floorGate,
   });
   const agentRoster = useHuddleAgentRoster({
     ephemeralChannelId: connected ? channelId : null,
@@ -251,6 +260,8 @@ function useBrowserHuddleCall(options: {
     micLive: huddle.micLive,
     avatarSpeaking: speech.speaking,
     avatarActivity: speech.speechActivity,
+    echoTailMs: echoTail,
+    pushToTalk: huddle.voiceInputMode === "push_to_talk",
   });
 
   // ── The duplex gate (S5) ────────────────────────────────────────────────
@@ -279,12 +290,27 @@ function useBrowserHuddleCall(options: {
     dispatchDuplex({ type: "user_mute", muted: huddle.muted });
   }, [huddle.muted, dispatchDuplex]);
   useEffect(() => {
+    const speaking = isSpeaking(huddle.micLevel);
     dispatchDuplex({
       type: "mic_level",
-      speaking: isSpeaking(huddle.micLevel),
+      speaking,
       at: Date.now(),
     });
-  }, [huddle.micLevel, dispatchDuplex]);
+    // A muted caller holds no floor; his speech-end mark (latency WP0) is
+    // the last live speaking sample.
+    const audible = speaking && !huddle.muted;
+    floorGate.noteMic(audible, Date.now());
+    if (audible && connected && channelId) {
+      voiceLatency().noteSpeech(channelId);
+    }
+  }, [
+    huddle.micLevel,
+    huddle.muted,
+    dispatchDuplex,
+    floorGate,
+    connected,
+    channelId,
+  ]);
   // Interims are the ONLY barge-in trigger: a final that is an echo of the
   // agent is caught downstream by the echo suppressor, and letting one
   // interrupt would let her interrupt herself on speakers.
@@ -307,10 +333,10 @@ function useBrowserHuddleCall(options: {
     }
     const timer = window.setTimeout(
       () => dispatchDuplex({ type: "agent_speech_end" }),
-      ECHO_TAIL_MS,
+      echoTail,
     );
     return () => window.clearTimeout(timer);
-  }, [speech.speaking, dispatchDuplex]);
+  }, [speech.speaking, dispatchDuplex, echoTail]);
   // The gate's verdict reaches the mic here — and ONLY here, so the user's
   // own mute is never written by it.
   const setHeld = huddle.setHeld;

@@ -84,6 +84,11 @@ export interface ParsedSegment {
   offset: number;
   /** `total_chars` from the `done` tag; null unless this is the last event. */
   done: number | null;
+  /**
+   * `["done", n, "cut"]`: the harness superseded this stream (voice fast
+   * path R5) — drop anything unspoken and expect no final.
+   */
+  cut: boolean;
   /** The triggering `[voice]` event id from the `e` tag, if present. */
   triggerId: string | null;
 }
@@ -106,12 +111,14 @@ export function parseSpeechSegment(
   if (seq === null || offset === null) return null;
   const doneTag = event.tags.find((t) => t[0] === "done");
   const done = doneTag ? nonNegativeInt(doneTag[1]) : null;
+  const cut = doneTag?.[2] === "cut";
   const eTag = event.tags.find((t) => t[0] === "e" && typeof t[1] === "string");
   return {
     streamId: tag[1],
     seq,
     offset,
     done,
+    cut,
     triggerId: eTag?.[1] ?? null,
   };
 }
@@ -155,6 +162,13 @@ export interface StreamUpdate {
   /** `${agentPubkeyLower}:${streamId}` — the hook's queue key. */
   key: string;
   agentPubkey: string;
+  /** The harness stream id (`vf-…` for the voice fast lane). */
+  streamId: string;
+  /**
+   * The harness cut this stream (superseded): drop what is still queued
+   * for it, not just close it.
+   */
+  cut: boolean;
   /** True the first time this stream is seen. */
   isNew: boolean;
   /** Text to speak now, in order. */
@@ -281,6 +295,8 @@ export function createSpeechStreamTracker(
   ): StreamUpdate => ({
     key: s.key,
     agentPubkey: s.agent,
+    streamId: s.key.slice(s.agent.length + 1),
+    cut: s.cut,
     isNew,
     speak,
     ended: s.ended,
@@ -322,6 +338,16 @@ export function createSpeechStreamTracker(
       }
       if (s.ended || s.cut) return null;
       s.lastActivity = now();
+      if (seg.cut) {
+        // Superseded by the harness: nothing more of it is spoken, and no
+        // final follows (its tail must not be spoken either).
+        s.cut = true;
+        s.ended = true;
+        s.pending.clear();
+        s.gapSince = null;
+        log(`[speech-stream] cut by harness stream=${seg.streamId}`);
+        return update(s, isNew, [], seg.triggerId);
+      }
       // Duplicate (already delivered, or already held).
       if (seg.seq < s.nextSeq || s.pending.has(seg.seq)) {
         return update(s, isNew, [], seg.triggerId);
@@ -453,6 +479,8 @@ export interface SpeechQueue {
   next(): Promise<string | null>;
   /** True when `next()` would resolve without waiting. */
   ready(): boolean;
+  /** Discard everything not yet taken, then close (a harness cut). */
+  drop(): void;
   readonly closed: boolean;
 }
 
@@ -488,6 +516,15 @@ export function createSpeechQueue(): SpeechQueue {
     },
     ready() {
       return items.length > 0 || closed;
+    },
+    drop() {
+      items.length = 0;
+      closed = true;
+      if (waiter) {
+        const wake = waiter;
+        waiter = null;
+        wake(null);
+      }
     },
     get closed() {
       return closed;

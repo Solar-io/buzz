@@ -12,7 +12,7 @@
  */
 
 /** Quiet after the last speech activity before the buffer publishes (ms). */
-export const MERGE_MS = 600;
+export const MERGE_MS = 300;
 /** Oldest a buffered run may get before it flushes regardless (ms). */
 export const MAX_RUN_MS = 30_000;
 

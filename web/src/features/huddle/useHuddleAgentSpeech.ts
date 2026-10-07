@@ -15,6 +15,7 @@ import {
   SPEECH_REPLAY_WINDOW_SECONDS,
   type SpeakRoute,
 } from "./lib/huddleAgentSpeech.ts";
+import { waitForFloor, type FloorGate } from "./lib/floorGate.ts";
 import { botPubkeys } from "./lib/huddleMembers.ts";
 import type { HuddleVoiceOverride } from "./lib/huddlePrefs.ts";
 import {
@@ -144,6 +145,12 @@ export function useHuddleAgentSpeech(options: {
    * `local-synth` row is demoted to "no selection".
    */
   voiceOverride?: HuddleVoiceOverride | null;
+  /**
+   * Floor gate (voice fast path §4.2): when given, a reply's START waits
+   * while the local caller is still talking (sentences inside a playing
+   * reply never wait). Null/absent = start at once, as before.
+   */
+  floorGate?: FloorGate | null;
 }): HuddleAgentSpeech {
   const { session } = useRelaySession();
   const { channelId, selfPubkey, audioPeerPubkeys, snapshot } = options;
@@ -166,6 +173,8 @@ export function useHuddleAgentSpeech(options: {
   audioPeersRef.current = audioPeerPubkeys;
   const selfPubkeyRef = useRef(selfPubkey);
   selfPubkeyRef.current = selfPubkey;
+  const floorGateRef = useRef(options.floorGate ?? null);
+  floorGateRef.current = options.floorGate ?? null;
 
   // Echo-suppression state. The ref is the SOURCE OF TRUTH for "is the
   // avatar audible right now": synthesis starts and stops update it in the
@@ -287,6 +296,23 @@ export function useHuddleAgentSpeech(options: {
     const queues = new Map<string, SpeechQueue>();
     streamsRef.current = { tracker, queues };
     const latency = voiceLatency();
+    /**
+     * A reply START waits for the floor (§4.2); the ordered speaker runs
+     * this when the reply is due, so the wait is exactly "about to play".
+     */
+    const floorClock = {
+      now: () => Date.now(),
+      sleep: (ms: number) =>
+        new Promise<void>((resolve) => window.setTimeout(resolve, ms)),
+    };
+    const awaitFloor = async () => {
+      const gate = floorGateRef.current;
+      if (!gate) return;
+      const waited = await waitForFloor(gate, floorClock);
+      if (waited > 0) {
+        console.info(`[huddle-agent-speech] floor gate held reply ${waited}ms`);
+      }
+    };
 
     /** Speak one whole message in order, with its latency handle. */
     const speakWhole = (
@@ -295,13 +321,23 @@ export function useHuddleAgentSpeech(options: {
       trigger: string | null,
     ) => {
       const reply = latency.reply(channelId, pubkey, "final", trigger);
-      speaker.enqueueTask(() =>
-        player.speak(text, pubkey, reply ? { latency: reply } : {}),
-      );
+      speaker.enqueueTask(async (stillCurrent) => {
+        await awaitFloor();
+        // A barge-in or toggle-off during the wait cancels this reply.
+        if (!stillCurrent()) return;
+        await player.speak(text, pubkey, reply ? { latency: reply } : {});
+      });
     };
     /** Feed one tracker update into its stream's queue. */
     const applyUpdate = (update: StreamUpdate) => {
       let queue = queues.get(update.key);
+      if (update.cut) {
+        // The harness superseded this stream: drop what is still queued
+        // (not just close — unspoken sentences must not play).
+        queue?.drop();
+        queues.delete(update.key);
+        return;
+      }
       if (update.isNew) {
         const fresh = createSpeechQueue();
         const reply = latency.reply(
@@ -309,14 +345,17 @@ export function useHuddleAgentSpeech(options: {
           update.agentPubkey,
           "stream",
           update.triggerId,
+          update.streamId,
         );
-        const accepted = speaker.enqueueTask(() =>
-          player.speakStream(
+        const accepted = speaker.enqueueTask(async (stillCurrent) => {
+          await awaitFloor();
+          if (!stillCurrent()) return;
+          await player.speakStream(
             fresh,
             update.agentPubkey,
             reply ? { latency: reply } : {},
-          ),
-        );
+          );
+        });
         if (accepted === "queued") {
           queue = fresh;
           queues.set(update.key, fresh);

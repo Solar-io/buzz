@@ -45,6 +45,13 @@ import { resolveEffectiveVoice } from "../../voice/lib/voicePrecedence.ts";
 export type HuddleDuplexMode = "half" | "barge";
 
 /**
+ * Where agent audio comes out (voice fast path plan §4.1). Headphones mean
+ * the mic cannot hear her, so the echo tail can drop to a sliver; speakers
+ * stay the safe default.
+ */
+export type HuddleOutputMode = "speakers" | "headphones";
+
+/**
  * The engines a per-channel override may name — the ones the bridge runs.
  * `pocket` is no longer OFFERED (the picker's Pocket tab became Chatterbox),
  * but an override stored before that still decodes and still speaks: the
@@ -64,11 +71,14 @@ export interface HuddlePrefs {
   /** null = "use default (Settings)", i.e. fall through to step 2. */
   voice: HuddleVoiceOverride | null;
   duplex: HuddleDuplexMode;
+  /** Audio output (echo-tail profile). Absent in old stores = speakers. */
+  output: HuddleOutputMode;
 }
 
 export const DEFAULT_HUDDLE_PREFS: HuddlePrefs = {
   voice: null,
   duplex: "half",
+  output: "speakers",
 };
 
 /** localStorage key prefix; the parent channel id completes it. */
@@ -112,6 +122,10 @@ function parseDuplex(raw: unknown): HuddleDuplexMode {
   return raw === "barge" ? "barge" : "half";
 }
 
+function parseOutput(raw: unknown): HuddleOutputMode {
+  return raw === "headphones" ? "headphones" : "speakers";
+}
+
 /**
  * Read one channel's prefs. Anything unreadable — absent key, malformed
  * JSON, a store that throws (private mode, blocked site data) — reads as
@@ -142,10 +156,15 @@ export function loadHuddlePrefs(
   if (parsed === null || typeof parsed !== "object") {
     return DEFAULT_HUDDLE_PREFS;
   }
-  const record = parsed as { voice?: unknown; duplex?: unknown };
+  const record = parsed as {
+    voice?: unknown;
+    duplex?: unknown;
+    output?: unknown;
+  };
   return {
     voice: parseVoice(record.voice),
     duplex: parseDuplex(record.duplex),
+    output: parseOutput(record.output),
   };
 }
 
@@ -164,7 +183,11 @@ export function saveHuddlePrefs(
   try {
     store.setItem(
       huddlePrefsKey(parentChannelId),
-      JSON.stringify({ voice: prefs.voice, duplex: prefs.duplex }),
+      JSON.stringify({
+        voice: prefs.voice,
+        duplex: prefs.duplex,
+        output: prefs.output ?? "speakers",
+      }),
     );
   } catch {
     // Preferences are a convenience; the call keeps running without them.

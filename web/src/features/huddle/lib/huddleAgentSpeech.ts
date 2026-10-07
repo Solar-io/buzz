@@ -800,9 +800,13 @@ export interface OrderedSpeaker {
   enqueue: (text: string, speakerPubkey: string) => "queued" | "disabled";
   /**
    * Queue an arbitrary speaking task in the same order (a streamed reply:
-   * one task that speaks a whole live stream).
+   * one task that speaks a whole live stream). The task gets a
+   * `stillCurrent` probe: false once speech was cancelled or disabled after
+   * the task started (a task that waits before speaking re-checks it).
    */
-  enqueueTask: (task: () => Promise<unknown>) => "queued" | "disabled";
+  enqueueTask: (
+    task: (stillCurrent: () => boolean) => Promise<unknown>,
+  ) => "queued" | "disabled";
   /** Turning speech off cancels everything still queued. */
   setEnabled: (enabled: boolean) => void;
   /** Drop everything queued without changing the enabled flag. */
@@ -825,7 +829,9 @@ export function createOrderedSpeaker(
   let tail = Promise.resolve();
   let enabled = initiallyEnabled;
   let generation = 0;
-  const enqueueTask = (task: () => Promise<unknown>): "queued" | "disabled" => {
+  const enqueueTask = (
+    task: (stillCurrent: () => boolean) => Promise<unknown>,
+  ): "queued" | "disabled" => {
     if (!enabled) {
       return "disabled";
     }
@@ -835,7 +841,7 @@ export function createOrderedSpeaker(
         if (!enabled || generation !== queuedGeneration) {
           return;
         }
-        await task();
+        await task(() => enabled && generation === queuedGeneration);
       })
       .catch(onError);
     return "queued";

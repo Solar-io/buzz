@@ -145,7 +145,7 @@ function speakableMessage(overrides = {}) {
   };
 }
 
-async function mountHook(voiceOverride) {
+async function mountHook(voiceOverride, extra = {}) {
   subscriptions.length = 0;
   const container = dom.window.document.createElement("div");
   dom.window.document.body.appendChild(container);
@@ -158,6 +158,7 @@ async function mountHook(voiceOverride) {
       audioPeerPubkeys: [],
       snapshot: snapshot(),
       voiceOverride: voiceOverride ?? null,
+      floorGate: extra.floorGate ?? null,
     });
     return null;
   }
@@ -495,9 +496,15 @@ let eventSeq = 0;
 function streamSegment(seq, offset, content, extra = {}) {
   const tags = [
     ["h", CHANNEL],
-    ["buzz-speech", SID, String(seq), String(offset)],
+    ["buzz-speech", extra.sid ?? SID, String(seq), String(offset)],
   ];
-  if (extra.done !== undefined) tags.push(["done", String(extra.done)]);
+  if (extra.done !== undefined) {
+    tags.push(
+      extra.cut
+        ? ["done", String(extra.done), "cut"]
+        : ["done", String(extra.done)],
+    );
+  }
   return {
     id: `seg-${eventSeq++}`,
     kind: 24820,
@@ -522,9 +529,9 @@ function taggedFinal(content) {
 }
 const STREAM_FINAL = "Sure. It's 72 degrees in Austin right now.";
 
-async function mountStreaming() {
+async function mountStreaming(extra = {}) {
   spoken.length = 0;
-  const harness = await mountHook();
+  const harness = await mountHook(undefined, extra);
   await act(async () => harness.captured.current.setEnabled(true));
   await harness.flush();
   const speechSub = subscriptions.find((sub) => sub.filter["#h"]);
@@ -651,6 +658,98 @@ test("latency: a human [voice] message pairs with the agent's streamed reply on 
     assert.equal(record.agentPubkey, "a".repeat(64));
     assert.ok(record.tSeg0 >= record.t0);
     assert.ok(record.tAudio0 >= record.tSeg0, "first audio recorded");
+    await harness.unmount();
+  } finally {
+    console.info = savedInfo;
+  }
+});
+
+test("harness cut (voice fast path R5): queued sentences of a cut stream are dropped, no final tail", async () => {
+  dom.window.localStorage.removeItem("buzz.voice.streamedReplies");
+  const { harness, deliver } = await mountStreaming();
+  const sid = "vf-0123456789ab";
+  // Both sentences are queued before the player takes the first one; the
+  // cut arrives in the same tick, so neither may be heard.
+  deliver(streamSegment(0, 0, "Okay so.", { sid }));
+  deliver(streamSegment(1, 8, " Here is the long part nobody hears.", { sid }));
+  deliver(streamSegment(2, 44, "", { sid, done: 44, cut: true }));
+  await harness.flush();
+  deliver({
+    ...taggedFinal("Okay so. Here is the long part nobody hears."),
+    tags: [
+      ["h", CHANNEL],
+      ["buzz-speech", sid, "3", "44"],
+    ],
+  });
+  await harness.flush();
+  assert.deepEqual(
+    spoken.map((u) => u.text),
+    [],
+  );
+  // The next reply (the one to the whole thought) speaks normally.
+  deliver(streamSegment(0, 0, "Dinner then.", { sid: "vf-next", done: 12 }));
+  await harness.flush();
+  assert.deepEqual(
+    spoken.map((u) => u.text),
+    ["Dinner then."],
+  );
+  await harness.unmount();
+});
+
+test("floor gate: a reply waits while the caller talks, then starts once he is quiet", async () => {
+  dom.window.localStorage.removeItem("buzz.voice.streamedReplies");
+  const { FloorGate } = await import("./lib/floorGate.ts");
+  const gate = new FloorGate();
+  gate.noteMic(true, Date.now());
+  const savedInfo = console.info;
+  console.info = () => {};
+  try {
+    const { harness, deliver } = await mountStreaming({ floorGate: gate });
+    deliver(streamSegment(0, 0, "Sure.", { sid: "vf-floor", done: 5 }));
+    await harness.flush();
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 200));
+    });
+    assert.deepEqual(
+      spoken.map((u) => u.text),
+      [],
+      "held while he talks",
+    );
+    gate.noteMic(false, Date.now());
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 700));
+    });
+    assert.deepEqual(
+      spoken.map((u) => u.text),
+      ["Sure."],
+    );
+    await harness.unmount();
+  } finally {
+    console.info = savedInfo;
+  }
+});
+
+test("latency: a vf- stream is recorded as the fast path", async () => {
+  dom.window.localStorage.removeItem("buzz.voice.streamedReplies");
+  const savedInfo = console.info;
+  console.info = () => {};
+  try {
+    const { harness, deliver } = await mountStreaming();
+    deliver({
+      id: "voice-turn-fast",
+      kind: 9,
+      pubkey: HUMAN,
+      created_at: Math.floor(Date.now() / 1000),
+      content: "[voice] how are you",
+      tags: [["h", CHANNEL]],
+    });
+    deliver(streamSegment(0, 0, "Good.", { sid: "vf-feedbeef0000", done: 5 }));
+    await harness.flush();
+    const record = dom.window.__buzzVoiceLatency.find(
+      (r) => r.triggerId === "voice-turn-fast",
+    );
+    assert.ok(record);
+    assert.equal(record.path, "fast");
     await harness.unmount();
   } finally {
     console.info = savedInfo;

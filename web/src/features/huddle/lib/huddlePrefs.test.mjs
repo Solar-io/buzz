@@ -60,6 +60,7 @@ test("a saved override round-trips through the store", () => {
   assert.deepEqual(loadHuddlePrefs(store, "other-channel"), {
     voice: null,
     duplex: "half",
+    output: "speakers",
   });
 });
 
@@ -172,4 +173,25 @@ test("a chatterbox override round-trips, and a stored legacy pocket one still lo
     engine: "pocket",
     key: "pocket:anna",
   });
+});
+
+test("output defaults to speakers and round-trips headphones", () => {
+  assert.equal(DEFAULT_HUDDLE_PREFS.output, "speakers");
+  const store = memoryStore();
+  saveHuddlePrefs(store, PARENT, {
+    voice: null,
+    duplex: "half",
+    output: "headphones",
+  });
+  assert.equal(loadHuddlePrefs(store, PARENT).output, "headphones");
+  // A store written before the toggle existed (no output key), or one
+  // holding junk, reads as speakers — the safe profile.
+  for (const raw of [
+    '{"voice":null,"duplex":"half"}',
+    '{"voice":null,"duplex":"half","output":"earbuds"}',
+    '{"voice":null,"duplex":"half","output":1}',
+  ]) {
+    const legacy = memoryStore({ [huddlePrefsKey(PARENT)]: raw });
+    assert.equal(loadHuddlePrefs(legacy, PARENT).output, "speakers", raw);
+  }
 });

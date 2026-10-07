@@ -11,6 +11,8 @@ import {
   PcmBatcher,
 } from "./lib/sttBridge.ts";
 import { FinalMerger } from "./lib/finalCoalescer.ts";
+import { COMMIT_CONTROL, CommitWindow, isPttRelease } from "./lib/pttCommit.ts";
+import { voiceLatency } from "../voice/lib/voiceLatency.ts";
 import { speechServiceUrl } from "@/shared/lib/relay-url";
 import {
   DUPLICATE_WINDOW,
@@ -158,6 +160,16 @@ export function useHuddleVoiceMode(options: {
    * same wiring pattern as `micLive`.
    */
   avatarActivity: RefObject<AgentSpeechActivity>;
+  /**
+   * Echo tail for this call (`echoTailMs(output, duplex)`); defaults to the
+   * full ECHO_TAIL_MS. Read live, like `micLive`.
+   */
+  echoTailMs?: number;
+  /**
+   * Push-to-talk mode: a release sends `{"type":"commit"}` so the bridge
+   * closes the utterance now, and its final publishes with no merge wait.
+   */
+  pushToTalk?: boolean;
 }): HuddleVoiceMode {
   const { channelId, onFinalTranscript, subscribeMicFrames, micLive } = options;
   const avatarSpeaking = options.avatarSpeaking;
@@ -182,6 +194,10 @@ export function useHuddleVoiceMode(options: {
   // without listing it as a dependency — the same treatment as micLive.
   const avatarActivityRef = useRef(avatarActivity);
   avatarActivityRef.current = avatarActivity;
+  const echoTailRef = useRef(options.echoTailMs ?? ECHO_TAIL_MS);
+  echoTailRef.current = options.echoTailMs ?? ECHO_TAIL_MS;
+  const pushToTalkRef = useRef(options.pushToTalk ?? false);
+  pushToTalkRef.current = options.pushToTalk ?? false;
 
   const transition = useCallback(
     (event: Parameters<typeof nextVoiceStatus>[1]) => {
@@ -215,6 +231,8 @@ export function useHuddleVoiceMode(options: {
      */
     let pendingHoldStartedAt: number | null = null;
     let echoDrainTimer: number | null = null;
+    /** Open while a push-to-talk commit awaits its final. */
+    const commitWindow = new CommitWindow();
 
     /** Layer 1's question: is the avatar speaking, or only just stopped? */
     const avatarNotQuiet = () => {
@@ -222,6 +240,7 @@ export function useHuddleVoiceMode(options: {
       return shouldHoldFinal(
         avatarSpeakingRef.current || activity.speaking,
         msSinceLastUtterance(activity.utterances, Date.now()),
+        echoTailRef.current,
       );
     };
 
@@ -259,7 +278,7 @@ export function useHuddleVoiceMode(options: {
       if (avatarNotQuiet()) {
         // The avatar started again (or stopped inside the tail window):
         // look again after another full tail.
-        echoDrainTimer = window.setTimeout(drainEchoHolds, ECHO_TAIL_MS);
+        echoDrainTimer = window.setTimeout(drainEchoHolds, echoTailRef.current);
         return;
       }
       const held = pendingEchoFinals;
@@ -269,6 +288,7 @@ export function useHuddleVoiceMode(options: {
       const utteranceTexts = utterancesForHold(
         avatarActivityRef.current.current.utterances,
         holdStartedAt,
+        echoTailRef.current,
       ).map((entry) => entry.text);
       for (const text of held) {
         if (!isEchoOfUtterances(text, utteranceTexts)) {
@@ -328,12 +348,17 @@ export function useHuddleVoiceMode(options: {
               if (echoDrainTimer === null) {
                 echoDrainTimer = window.setTimeout(
                   drainEchoHolds,
-                  ECHO_TAIL_MS,
+                  echoTailRef.current,
                 );
               }
               return;
             }
             merger.final(gate.text);
+            // The answer to a push-to-talk commit: he already said he is
+            // done by letting go, so it publishes with no merge wait.
+            if (commitWindow.takeImmediate(Date.now())) {
+              merger.flush();
+            }
             return;
           }
           case "done":
@@ -399,6 +424,24 @@ export function useHuddleVoiceMode(options: {
       const live = micLiveRef.current;
       if (live && !wasMicLive) {
         batcher = new PcmBatcher();
+      }
+      // Push-to-talk released: send the sub-batch tail of what he said
+      // (captured while live), then commit so the bridge closes the
+      // utterance now instead of waiting for frames that will not come.
+      // The current frame was captured dark and is never sent.
+      if (isPttRelease(wasMicLive, live, pushToTalkRef.current)) {
+        if (channelId !== null) voiceLatency().noteSpeech(channelId);
+        const socket = ws;
+        if (ready && socket && socket.readyState === WebSocket.OPEN) {
+          const tail = batcher.flush();
+          if (tail) {
+            socket.send(tail);
+          }
+          socket.send(COMMIT_CONTROL);
+          commitWindow.open(Date.now());
+        } else {
+          batcher.flush();
+        }
       }
       wasMicLive = live;
       const batch = batcher.push(frame, sampleRate);
