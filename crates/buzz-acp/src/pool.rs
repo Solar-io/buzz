@@ -890,6 +890,9 @@ pub struct PromptContext {
     pub mcp_servers: Vec<McpServer>,
     pub initial_message: Option<String>,
     pub idle_timeout: Duration,
+    /// Idle limit for a turn held open by an outstanding background subagent
+    /// (`--background-idle-timeout`). Equal to `idle_timeout` when disabled.
+    pub background_idle_timeout: Duration,
     pub max_turn_duration: Duration,
     /// Interval between per-turn `turn_liveness` observer pings. `Duration::ZERO`
     /// disables emission. This is the desktop crash-backstop signal — distinct
@@ -1902,6 +1905,9 @@ pub(crate) async fn run_isolated_prompt(
     );
     agent
         .acp
+        .set_background_idle_timeout(ctx.background_idle_timeout);
+    agent
+        .acp
         .session_prompt_with_idle_timeout(&session_id, &prompt, ctx.idle_timeout, max_duration)
         .await
 }
@@ -2453,6 +2459,10 @@ pub async fn run_prompt_task(
         turn_started_payload["threadRootEventId"] = serde_json::json!(root);
     }
     agent.acp.observe("turn_started", turn_started_payload);
+    // Applies to every prompt this turn sends (initial message included).
+    agent
+        .acp
+        .set_background_idle_timeout(ctx.background_idle_timeout);
 
     // Emits `turn_completed` on any exit path. Captures observer handle and
     // metadata now, before the agent is moved into PromptResult. It must be
@@ -7197,6 +7207,58 @@ pub(crate) mod tests {
         }
     }
 
+    /// `PromptContext::background_idle_timeout` reaches the client through
+    /// `run_prompt_task`: a turn that launches a background subagent and then
+    /// goes quiet past the plain idle timeout still completes.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn run_prompt_task_applies_background_idle_timeout_to_held_turns() {
+        let script = r#"IFS= read -r line
+printf '%s\n' '{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"live-session","update":{"sessionUpdate":"tool_call","toolCallId":"a1","name":"Agent","_meta":{"claudeCode":{"toolName":"Agent","subagent":true}},"rawInput":{"description":"long job","run_in_background":true}}}}'
+sleep 3
+printf '%s\n' '{"jsonrpc":"2.0","id":0,"result":{"stopReason":"end_turn"}}'
+while read -r _; do :; done"#;
+        let acp = AcpClient::spawn("bash", &["-c".to_string(), script.to_string()], &[], false)
+            .await
+            .expect("spawn background-hold ACP script");
+        let mut agent = OwnedAgent {
+            index: 0,
+            acp,
+            state: SessionState::default(),
+            model_capabilities: None,
+            desired_model: None,
+            model_overridden: false,
+            desired_model_request_id: None,
+            desired_model_pending_ack: false,
+            startup_effort: None,
+            agent_name: "legacy-test-agent".into(),
+            goose_system_prompt_supported: None,
+            protocol_version: 1,
+        };
+        agent.state.heartbeat_session = Some("live-session".into());
+        let mut ctx = make_prompt_context_no_owner();
+        ctx.idle_timeout = Duration::from_secs(1);
+        ctx.background_idle_timeout = Duration::from_secs(30);
+        let (result_tx, mut result_rx) = mpsc::unbounded_channel();
+        run_prompt_task(
+            agent,
+            None,
+            Some("wait for the helper".into()),
+            Arc::new(ctx),
+            result_tx,
+            None,
+            "held-turn".into(),
+            Default::default(),
+        )
+        .await;
+        let mut result = result_rx.recv().await.expect("prompt result");
+        assert!(
+            matches!(result.outcome, PromptOutcome::Ok(StopReason::EndTurn)),
+            "held turn must outlive the 1s idle timeout"
+        );
+        result.agent.acp.shutdown().await;
+    }
+
     #[tokio::test]
     async fn run_prompt_task_commits_standing_context_only_after_acp_success() {
         let capture = std::env::temp_dir().join(format!(
@@ -10451,6 +10513,7 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
             mcp_servers: vec![],
             initial_message: None,
             idle_timeout: Duration::from_secs(60),
+            background_idle_timeout: Duration::from_secs(60),
             max_turn_duration: Duration::from_secs(120),
             turn_liveness_interval: Duration::ZERO,
             dedup_mode: DedupMode::Drop,
