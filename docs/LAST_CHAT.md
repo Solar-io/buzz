@@ -276,3 +276,15 @@ Known limits: a resume on a lazy pool waits for the next loop iteration once its
 2026-10-06 — F2b: idle-slot drain for the resume journal
 
 claude-agent-acp self-wakes an idle session when a background shell finishes after `end_turn`; that turn's `async_task_*` updates sat unread in the idle slot's pipe, so the journal resumed a finished task and missed a new one. The main loop now reads every idle slot's stdout every 3 s (`drain_idle_agent_slots` in `lib.rs` → `AcpClient::drain_idle_updates`, 25 ms quiet window, 250 ms cap, slots concurrently), dispatching like the prompt read path (permission requests answered, unknown requests -32601). Test `pool::tests::idle_slot_drain_journals_updates_emitted_after_end_turn`; no-op'ing the drain or its `handle_session_update` call fails it. The 250 ms shutdown drain stays as a last pass. Not covered by a unit test: the main-loop wiring itself (tick + top-of-loop check); a live check on a seat with a self-waking background shell is still owed.
+
+2026-10-06 — Kaiya voice fast path: harness WP1-WP4, web WP0 + WP5
+
+Plan: `~/.buzz/PLANS/VOICE_FAST_PATH_2026-10-07.md`. Built on branch `claude/agent-a1c97454e8458c3db`; WP6 (STT bridge) is another coder's, WP7/WP8 not started. Everything ships inert: `voiceFast` defaults off and `~/.buzz/agent-effort.json` was not touched.
+
+Harness (`crates/buzz-acp`): `voice_fast.rs` (pure: `claim`, `CallLedger`, `HandoffScanner`, request builder, `[Voice Fast Context]`), `voice_fast_client.rs` (OmniRoute SSE, reasoning-delta counter, key lookup env > `omniroute-keys.json` > Infisical), `voice_fast_runner.rs` (runner, gated sink, supersede, fallback, handoff, digest). The intake now calls `route_inbound_event`, and the old push block moved verbatim into `accept_event`, which hand-backs reuse. `SpeechTap` gained `Cut`/`Abort`; a superseded stream sends `["done", n, "cut"]` and no final (NOSTR.md updated).
+
+Deviations from the plan: the warm-up request is not built (the ledger is created by the first utterance, so a warm-up would race the real call); the idle digest is a synthetic, never-published kind:9 signed by the agent and pushed into the local queue, because the pool has no channel-scoped prompt-text path; the transcript labels say "Caller"/"You" instead of a hardcoded name; the WP4 eval added two defences it proved necessary (dropping an echoed `[call state: …]` note, and treating a bare "Let me check." with no marker as a handoff of the utterance itself).
+
+Live: probe 465 ms first text, `reasoning_chars=0`; eval with Kaiya's persona 15/15 recall, 0/15 false handoffs on the last two runs (first run 14/15 with a hallucinated "I just checked the relay"). Re-run with `scripts/voice-fast-eval/run.sh <persona-file>`.
+
+Web: `voiceLatency` records `tSpeechEnd` and `path: "fast"`; prefs `output` with a Speakers/Headphones toggle in the huddle settings popover; `echoTailMs`; `MERGE_MS` 300; `lib/floorGate.ts`; `lib/pttCommit.ts`. Not unit-covered: the WebSocket wiring of the PTT commit inside `useHuddleVoiceMode` (no socket harness exists); it needs the live check in WP7.
